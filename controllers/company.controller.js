@@ -1,5 +1,6 @@
 import { errorHandler } from "../utils/errorHandler.js";
 import { pool } from "../utils/db.js";
+import bcrypt from "bcrypt";
 
 // Get COmpany Details
 export const getCompanyDetails = async (req, res, next) => {
@@ -507,6 +508,233 @@ export const getArticleCategories = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Error fetching article categories:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// Create a new user for the company and assign to a branch
+// This function creates a new user with a temporary password and hashes it before storing it in the database.
+export const createUser = async (req, res, next) => {
+  try {
+    const { email, full_name, designationId, contact_no, branch_id } = req.body;
+    if (!email || !full_name || !designationId || !contact_no) {
+      return next(errorHandler(400, "All fields are required"));
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return next(errorHandler(400, "Please provide a valid email address"));
+    }
+
+    const [existingUser] = await pool.query(
+      "SELECT idUser FROM user WHERE email = ?",
+      [email]
+    );
+    if (existingUser.length > 0) {
+      return next(errorHandler(400, "User with this email already exists"));
+    }
+
+    // Verify designation exists for this company
+    const [designationExists] = await pool.query(
+      "SELECT idDesignation FROM designation WHERE idDesignation = ? AND Company_idCompany = ?",
+      [designationId, req.companyId]
+    );
+    if (designationExists.length === 0) {
+      return next(errorHandler(404, "Designation not found for this company"));
+    }
+
+    // If branch_id is provided, verify it exists before creating user
+    if (branch_id) {
+      const [existingBranch] = await pool.query(
+        "SELECT idBranch FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
+        [branch_id, req.companyId]
+      );
+      if (existingBranch.length === 0) {
+        return next(errorHandler(404, "Branch not found for this company"));
+      }
+    }
+
+    const tempPassword = Math.random().toString(36).slice(-8); // Generate a temporary password
+    console.log("Temporary password generated:", tempPassword);
+
+    const hashedPassword = await bcrypt.hash(tempPassword, 10); // Hash the temporary password
+
+    const [result] = await pool.query(
+      "INSERT INTO user (email,password, full_name, Designation_idDesignation, Company_idCompany,Contact_no) VALUES (?, ?, ?, ?, ?,?)",
+      [
+        email,
+        hashedPassword,
+        full_name,
+        designationId,
+        req.companyId,
+        contact_no,
+      ]
+    );
+
+    if (result.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to create user"));
+    }
+
+    let branchAssignmentMessage = "";
+
+    // assign a branch to the user if branch_id is provided
+    if (branch_id) {
+      try {
+        const [branchResult] = await pool.query(
+          "INSERT INTO user_has_branch (User_idUser, Branch_idBranch) VALUES (?, ?)",
+          [result.insertId, branch_id]
+        );
+
+        if (branchResult.affectedRows === 0) {
+          branchAssignmentMessage =
+            " However, failed to assign user to the specified branch.";
+        } else {
+          branchAssignmentMessage =
+            " User has been successfully assigned to the branch.";
+        }
+      } catch (branchError) {
+        console.error("Error assigning user to branch:", branchError);
+        branchAssignmentMessage =
+          " However, failed to assign user to the specified branch due to a database error.";
+      }
+    }
+
+    res.status(201).json({
+      message: `User created successfully.${branchAssignmentMessage}`,
+    });
+  } catch (error) {
+    console.error("Error creating user:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// Create a new branch for the company
+export const createBranch = async (req, res, next) => {
+  try {
+    const { branchName, address, contact_no } = req.body;
+    if (!branchName || !address || !contact_no) {
+      return next(errorHandler(400, "All fields are required"));
+    }
+
+    const [existingBranch] = await pool.query(
+      "SELECT * FROM branch WHERE Name = ? OR address = ? AND Company_idCompany = ?",
+      [branchName, address, req.companyId]
+    );
+
+    if (existingBranch.length > 0) {
+      return next(
+        errorHandler(400, "Branch with this name or address already exists")
+      );
+    }
+
+    const [result] = await pool.query(
+      "INSERT INTO branch (Name, Address, Contact_No, Company_idCompany,Status) VALUES (?, ?, ?, ?, ?)",
+      [branchName, address, contact_no, req.companyId, "active"]
+    );
+
+    if (result.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to create branch"));
+    }
+    const [newBranch] = await pool.query(
+      "SELECT * FROM branch WHERE idBranch = ?",
+      [result.insertId]
+    );
+
+    if (!newBranch[0]) {
+      return next(errorHandler(404, "Created branch not found"));
+    }
+
+    res.status(201).json({
+      message: "Branch created successfully",
+      branch: newBranch[0],
+    });
+  } catch (error) {
+    console.error("Error creating branch:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// Assign users to branches (one user can be assigned to multiple branches)
+export const assignUserToBranch = async (req, res, next) => {
+  try {
+    const { userId, branchId } = req.body;
+    if (!userId || !branchId) {
+      return next(errorHandler(400, "User ID and Branch ID are required"));
+    }
+
+    // Check if the user exists
+    const [userExists] = await pool.query(
+      "SELECT idUser FROM user WHERE idUser = ? AND Company_idCompany = ?",
+      [userId, req.companyId]
+    );
+    if (userExists.length === 0) {
+      return next(errorHandler(404, "User not found for this company"));
+    }
+
+    // Check if the branch exists
+    const [branchExists] = await pool.query(
+      "SELECT idBranch FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
+      [branchId, req.companyId]
+    );
+
+    if (branchExists.length === 0) {
+      return next(errorHandler(404, "Branch not found for this company"));
+    }
+
+    // Check if the user is already assigned to the branch
+    const [assignmentExists] = await pool.query(
+      "SELECT * FROM user_has_branch WHERE User_idUser = ? AND Branch_idBranch = ?",
+      [userId, branchId]
+    );
+
+    if (assignmentExists.length > 0) {
+      return next(errorHandler(400, "User is already assigned to this branch"));
+    }
+
+    // Assign the user to the branch
+    const [result] = await pool.query(
+      "INSERT INTO user_has_branch (User_idUser, Branch_idBranch) VALUES (?, ?)",
+      [userId, branchId]
+    );
+
+    if (result.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to assign user to branch"));
+    }
+
+    res.status(201).json({
+      message: "User assigned to branch successfully",
+    });
+  } catch (error) {
+    console.error("Error assigning user to branch:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// Get branch data for a specific user (if user has the specified branches assigned)
+export const getBranchData = async (req, res, next) => {
+  try {
+    const { id: branchId } = req.params;
+    if (!branchId) {
+      return next(errorHandler(400, "Branch ID is required"));
+    }
+
+    // Check if the branch id matches with req.branches
+    if (!req.branches.includes(parseInt(branchId))) {
+      return next(errorHandler(403, "You do not have access to this branch"));
+    }
+
+    const [branchData] = await pool.query(
+      "SELECT * FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
+      [branchId, req.companyId]
+    );
+
+    res.status(200).json({
+      message: "Branch data fetched successfully",
+      branch: branchData[0] || {},
+    });
+  } catch (error) {
+    console.error("Error fetching branch data:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

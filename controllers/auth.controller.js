@@ -74,7 +74,7 @@ export const login = async (req, res, next) => {
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
-
+//changes on 
 export const logout = async (req, res) => {
   try {
     console.log("Logout request received");

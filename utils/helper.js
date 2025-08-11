@@ -1,7 +1,19 @@
 import jwt from "jsonwebtoken";
-export const jwtToken = (userId, email, company_id, designation_id) => {
+export const jwtToken = (
+  userId,
+  email,
+  company_id,
+  designation_id,
+  branches
+) => {
   const accessToken = jwt.sign(
-    { id: userId, email, company_id, designation_id },
+    {
+      id: userId,
+      email,
+      company_id,
+      designation_id,
+      branches: branches || [],
+    },
     process.env.JWT_ACCESS_SECRET,
     {
       expiresIn: "24h",

@@ -108,7 +108,7 @@ export const createCustomer = async (req, res, next) => {
       try {
         if (nicImage) {
           const nicImageUrl = await uploadImage(nicImage);
-          const [result] = await pool.query(
+          const [nicResult] = await pool.query(
             "INSERT INTO customer_documents (Document_Name,Path,Customer_idCustomer) VALUES (?,?,?)",
             ["NIC", nicImageUrl, result.insertId]
           );
@@ -118,7 +118,7 @@ export const createCustomer = async (req, res, next) => {
 
         if (customerImage) {
           const customerImageUrl = await uploadImage(customerImage);
-          const [result] = await pool.query(
+          const [customerResult] = await pool.query(
             "INSERT INTO customer_documents (Document_Name,Path,Customer_idCustomer) VALUES (?,?,?)",
             ["Customer Image", customerImageUrl, result.insertId]
           );

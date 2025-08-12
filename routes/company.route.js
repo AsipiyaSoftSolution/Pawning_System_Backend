@@ -14,6 +14,10 @@ import {
   updateArticleCategory,
   deleteArticleCategory,
   getArticleCategories,
+  createUser,
+  createBranch,
+  assignUserToBranch,
+  getBranchData,
 } from "../controllers/company.controller.js";
 const route = express.Router();
 
@@ -30,4 +34,9 @@ route.post("/article-category", protectedRoute, createArticleCategory); // Creat
 route.patch("/article-category/:id", protectedRoute, updateArticleCategory); // Update article category by ID
 route.delete("/article-category/:id", protectedRoute, deleteArticleCategory); // Delete article category by ID
 route.get("/article-categories/:id", protectedRoute, getArticleCategories); // Get all article categories
+route.post("/user", protectedRoute, createUser); // Create a new user
+route.post("/branch", protectedRoute, createBranch); // Create a new branch
+route.post("/user/assign-to-branch", protectedRoute, assignUserToBranch); // Assign users to branches
+route.get("/branch/:id", protectedRoute, getBranchData); // Get branch data by ID (for users that have assigned to specific branch)
+
 export default route;

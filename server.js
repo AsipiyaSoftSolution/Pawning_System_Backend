@@ -7,6 +7,8 @@ import { connectDB, pool } from "./utils/db.js";
 // routes import
 import authRoutes from "./routes/auth.route.js";
 import companyRoutes from "./routes/company.route.js";
+import customerRoutes from "./routes/customer.route.js"; // <-- ADD THIS
+
 dotenv.config();
 
 const app = express();
@@ -17,6 +19,7 @@ app.use(cookieParser());
 // routes
 app.use("/api/auth", authRoutes);
 app.use("/api/company", companyRoutes);
+app.use("/api", customerRoutes);   // <-- ADD THIS
 
 const PORT = process.env.PORT || 3000;
 
@@ -26,7 +29,7 @@ app.listen(PORT, () => {
     console.log("Database connected successfully");
   } catch (error) {
     console.error("Database connection failed:", error);
-    process.exit(1); // Exit the process if database connection fails
+    process.exit(1);
   }
   console.log(`Server is running on port ${PORT}`);
 });

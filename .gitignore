@@ -5,6 +5,8 @@
 .env.test.local
 .env.production.local
 
+Pawning_System_Frontend
+
 # Dependencies
 node_modules/
 

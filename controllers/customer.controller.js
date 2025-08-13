@@ -175,7 +175,7 @@ export const getCustomersForTheBranch = async (req, res, next) => {
 
       // get customers for the branch with search - Fixed parameter order and MySQL LIMIT syntax
       [customers] = await pool.query(
-        "SELECT idCustomer,First_Name,NIC,Address1,Mobile_No,Work_Place FROM customer WHERE Branch_idBranch = ? AND (First_Name LIKE ? OR NIC LIKE ? OR Mobile_No LIKE ? OR idCustomer LIKE ?) LIMIT ?, ?",
+        "SELECT idCustomer,Full_Name,NIC,Address1,Mobile_No,Work_Place,DOB FROM customer WHERE Branch_idBranch = ? AND (First_Name LIKE ? OR NIC LIKE ? OR Mobile_No LIKE ? OR idCustomer LIKE ?) LIMIT ?, ?",
         [
           branchId,
           `%${search}%`,
@@ -199,14 +199,14 @@ export const getCustomersForTheBranch = async (req, res, next) => {
 
       // get customers for the branch - Fixed MySQL LIMIT syntax
       [customers] = await pool.query(
-        "SELECT idCustomer,First_Name,NIC,Address1,Mobile_No,Work_Place FROM customer WHERE Branch_idBranch = ? LIMIT ?, ?",
+        "SELECT idCustomer,First_Name,Full_Name,NIC,Address1,Mobile_No,Work_Place,DOB FROM customer WHERE Branch_idBranch = ? LIMIT ?, ?",
         [branchId, offset, limit]
       );
     }
 
     res.status(200).json({
       message: "Customers fetched successfully",
-      data: customers,
+      customers,
       pagination: paginationData,
     });
   } catch (error) {
@@ -219,9 +219,6 @@ export const getCustomerById = async (req, res, next) => {
   try {
     const customerId = req.params.id || req.params.customerId; // extract customerId from the request
     const branchId = req.branchId; // extract branchId from the request
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const offset = (page - 1) * limit;
 
     if (!customerId) {
       return next(errorHandler(400, "Customer ID is required"));

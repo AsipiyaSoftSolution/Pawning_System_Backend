@@ -52,6 +52,8 @@ export const login = async (req, res, next) => {
       branches: branchIds,
     };
 
+    const { Password, ...userWithoutPassword } = user;
+
     // Generate tokens
     const { accessToken, refreshToken } = jwtToken(
       user.idUser,
@@ -78,7 +80,7 @@ export const login = async (req, res, next) => {
       .status(200)
       .json({
         message: "User logged in successfully",
-        user,
+        user: userWithoutPassword,
       });
   } catch (error) {
     console.error("Login error:", error);

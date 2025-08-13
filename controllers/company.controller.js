@@ -488,56 +488,6 @@ export const getArticleCategories = async (req, res, next) => {
       return next(errorHandler(404, "No article categories found"));
     }
 
-    // Create New User
-export const createUser = async (req, res, next) => {
-  try {
-    const { username, email, password, designationId } = req.body;
-
-    // Validate required fields
-    if (!username || !email || !password || !designationId) {
-      return next(errorHandler(400, "Username, email, password, and designation ID are required"));
-    }
-
-    // Check if user already exists
-    const [existingUser] = await pool.query(
-      "SELECT * FROM users WHERE email = ? AND Company_idCompany = ?",
-      [email, req.companyId]
-    );
-
-    if (existingUser.length > 0) {
-      return next(errorHandler(400, "User with this email already exists"));
-    }
-
-    // Hash password
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
-
-    // Insert user
-    const [result] = await pool.query(
-      "INSERT INTO users (username, email, password, Designation_idDesignation, Company_idCompany, created_at) VALUES (?, ?, ?, ?, ?, NOW())",
-      [username, email, hashedPassword, designationId, req.companyId]
-    );
-
-    if (result.affectedRows === 0) {
-      return next(errorHandler(500, "Failed to create user"));
-    }
-
-    // Fetch new user details (excluding password)
-    const [newUser] = await pool.query(
-      "SELECT idUser, username, email, Designation_idDesignation, Company_idCompany, created_at FROM users WHERE idUser = ?",
-      [result.insertId]
-    );
-
-    res.status(201).json({
-      message: "User created successfully",
-      user: newUser[0],
-    });
-  } catch (error) {
-    console.error("Error creating user:", error);
-    return next(errorHandler(500, "Internal Server Error"));
-  }
-};
-
     // Pagination metadata
     const totalPages = Math.ceil(totalRecords / limit);
     const hasNextPage = page < totalPages;

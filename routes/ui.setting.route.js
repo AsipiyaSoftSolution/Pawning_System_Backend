@@ -6,26 +6,23 @@ import {
   deleteDashboardCardVisibility,
   resetDashboardCardVisibility
 } from "../controllers/ui.setting.controller.js";
+
 import { protectedRoute } from "../middlewares/auth.middleware.js";
 
 const router = express.Router();
 
-// All routes require authentication
-router.use(protectedRoute);
-
-// Get dashboard card visibility settings for a specific branch
-router.get("/dashboard-cards/:branchId", getDashboardCardVisibility);
+router.get("/dashboard-cards/:branchId", protectedRoute, getDashboardCardVisibility);
 
 // Update single dashboard card visibility setting
-router.put("/dashboard-cards/:branchId", updateDashboardCardVisibility);
+router.put("/dashboard-cards/:branchId", protectedRoute, updateDashboardCardVisibility);
 
 // Bulk update dashboard card visibility settings
-router.put("/dashboard-cards/:branchId/bulk", bulkUpdateDashboardCardVisibility);
+router.put("/dashboard-cards/:branchId/bulk", protectedRoute, bulkUpdateDashboardCardVisibility);
 
 // Delete specific dashboard card visibility setting
-router.delete("/dashboard-cards/:branchId/:cardId", deleteDashboardCardVisibility);
+router.delete("/dashboard-cards/:branchId/:cardId", protectedRoute, deleteDashboardCardVisibility);
 
 // Reset all dashboard card visibility settings for a user in a branch
-router.delete("/dashboard-cards/:branchId/reset", resetDashboardCardVisibility);
+router.delete("/dashboard-cards/:branchId/reset", protectedRoute, resetDashboardCardVisibility);
 
 export default router;

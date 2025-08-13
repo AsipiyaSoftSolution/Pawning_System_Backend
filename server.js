@@ -24,7 +24,7 @@ app.use(cookieParser());
 app.use("/api/auth", authRoutes);
 app.use("/api/company", companyRoutes);
 app.use("/api/customer", customerRoutes);
-app.use("/api/dashboard", dashboardRoutes);
+
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {

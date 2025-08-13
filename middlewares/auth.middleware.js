@@ -25,6 +25,7 @@ export const protectedRoute = async (req, res, next) => {
       req.email = decoded.email;
       req.companyId = decoded.company_id;
       req.designationId = decoded.designation_id;
+      req.branches = decoded.branches || [];
 
       console.info(`Decoded token: ${JSON.stringify(decoded)}`);
       console.info(`User ID: ${req.userId}, Email: ${req.email}`);
@@ -33,11 +34,11 @@ export const protectedRoute = async (req, res, next) => {
       );
       next(); // Proceed to the next middleware or route handler
     } catch (error) {
-      logger.error("Error verifying token:", error);
+      console.error("Error verifying token:", error);
       return next(errorHandler(401, "Unauthorized access"));
     }
   } catch (error) {
-    logger.error("Error in protectedRoute middleware:", error);
+    console.error("Error in protectedRoute middleware:", error);
     return next(errorHandler(500, "Internal server error"));
   }
 };

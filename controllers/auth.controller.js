@@ -37,17 +37,28 @@ export const login = async (req, res, next) => {
       [user[0].Company_idCompany]
     );
 
+    const [branches] = await pool.query(
+      "SELECT Branch_idBranch FROM user_has_branch WHERE User_idUser = ?",
+      [user[0].idUser]
+    );
+
+    // Extract branch IDs from the branches array
+    const branchIds = branches.map((branch) => branch.Branch_idBranch);
+
     user = {
       ...user[0],
       designation: desgination[0]?.Description,
       company: company[0],
+      branches: branchIds,
     };
+
     // Generate tokens
     const { accessToken, refreshToken } = jwtToken(
       user.idUser,
       user.Email,
       user.Company_idCompany,
-      user.Designation_idDesignation
+      user.Designation_idDesignation,
+      branchIds
     );
 
     // Set cookies and send response

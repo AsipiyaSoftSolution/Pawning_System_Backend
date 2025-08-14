@@ -163,6 +163,7 @@ export const getCustomersForTheBranch = async (req, res, next) => {
     const search = req.query.search || "";
     let paginationData;
     let customers;
+    console.log("search:", search);
 
     // If search query is provided, filter customers based on search criteria and get pagination data
     if (search) {
@@ -175,7 +176,7 @@ export const getCustomersForTheBranch = async (req, res, next) => {
 
       // get customers for the branch with search - Fixed parameter order and MySQL LIMIT syntax
       [customers] = await pool.query(
-        "SELECT idCustomer,Full_Name,NIC,Address1,Mobile_No,Work_Place,DOB FROM customer WHERE Branch_idBranch = ? AND (First_Name LIKE ? OR NIC LIKE ? OR Mobile_No LIKE ? OR idCustomer LIKE ?) LIMIT ?, ?",
+        "SELECT idCustomer,Full_Name,First_Name,NIC,Address1,Mobile_No,Work_Place,DOB FROM customer WHERE Branch_idBranch = ? AND (First_Name LIKE ? OR NIC LIKE ? OR Mobile_No LIKE ? OR idCustomer LIKE ?) LIMIT ?, ?",
         [
           branchId,
           `%${search}%`,

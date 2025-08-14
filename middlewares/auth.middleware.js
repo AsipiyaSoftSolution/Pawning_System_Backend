@@ -26,12 +26,10 @@ export const protectedRoute = async (req, res, next) => {
       req.companyId = decoded.company_id;
       req.designationId = decoded.designation_id;
       req.branches = decoded.branches || [];
+      req.company_documents = decoded.company_documents || [];
 
       console.info(`Decoded token: ${JSON.stringify(decoded)}`);
-      console.info(`User ID: ${req.userId}, Email: ${req.email}`);
-      console.info(
-        `Company ID: ${req.companyId}, Designation ID: ${req.designationId}`
-      );
+
       next(); // Proceed to the next middleware or route handler
     } catch (error) {
       console.error("Error verifying token:", error);

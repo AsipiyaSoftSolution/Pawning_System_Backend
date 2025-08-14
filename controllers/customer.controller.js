@@ -42,8 +42,7 @@ export const createCustomer = async (req, res, next) => {
       Status,
       Behaviour_Status,
       Note,
-      nicImage,
-      customerImage,
+      documents,
     } = req.body;
 
     const Branch_idBranch = req.branchId; // get the branchId from the middleware
@@ -103,34 +102,50 @@ export const createCustomer = async (req, res, next) => {
       return next(errorHandler(500, "Failed to create customer"));
     }
 
-    let fileUploadMessage;
-    if (nicImage || customerImage) {
-      try {
-        if (nicImage) {
-          const nicImageUrl = await uploadImage(nicImage);
-          const [nicResult] = await pool.query(
-            "INSERT INTO customer_documents (Document_Name,Path,Customer_idCustomer) VALUES (?,?,?)",
-            ["NIC", nicImageUrl, result.insertId]
+    let fileUploadMessages = [];
+    if (documents && Array.isArray(documents)) {
+      for (const doc of documents) {
+        if (!doc.file) {
+          fileUploadMessages.push(
+            `No file provided for document Type ${doc.Document_Type}`
           );
-
-          fileUploadMessage = "NIC image and";
+          continue;
         }
 
-        if (customerImage) {
-          const customerImageUrl = await uploadImage(customerImage);
-          const [customerResult] = await pool.query(
-            "INSERT INTO customer_documents (Document_Name,Path,Customer_idCustomer) VALUES (?,?,?)",
-            ["Customer Image", customerImageUrl, result.insertId]
+        // Check if the document id is allowed
+        const isAllowed = req.company_documents.some(
+          (d) => d.idDocument === doc.idDocument
+        );
+        if (!isAllowed) {
+          fileUploadMessages.push(
+            `Invalid document type for id ${doc.idDocument}`
           );
-
-          fileUploadMessage = fileUploadMessage
-            ? `${fileUploadMessage} Customer image uploaded Successfully`
-            : "Customer image uploaded Successfully";
+          continue;
         }
-      } catch (error) {
-        fileUploadMessage = error.message || "File upload failed";
-        console.error("Error uploading images:", error);
-        throw new Error(fileUploadMessage);
+
+        const secureUrl = await uploadImage(doc.file);
+        if (!secureUrl) {
+          fileUploadMessages.push(
+            `Failed to upload document id ${doc.idDocument}`
+          );
+          continue;
+        }
+
+        const [docResult] = await pool.query(
+          "INSERT INTO customer_documents (Customer_idCustomer, Document_Name, Path) VALUES (?, ?, ?)",
+          [result.insertId, doc.Document_Type, secureUrl]
+        );
+
+        if (docResult.affectedRows === 0) {
+          fileUploadMessages.push(
+            `Failed to save document info for id ${doc.idDocument}`
+          );
+          continue;
+        }
+
+        fileUploadMessages.push(
+          `Document ${doc.Document_Type} uploaded successfully`
+        );
       }
     }
 

@@ -49,13 +49,18 @@ export const login = async (req, res, next) => {
 
     // Extract branch IDs from the branches array
     const branchIds = branches.map((branch) => branch.Branch_idBranch);
+    // Extract the document types from the documetTypes array
+    const companyDocuments = documetTypes.map((doc) => ({
+      idDocument: doc.idDocument,
+      Document_Type: doc.Document_Type,
+    }));
 
     user = {
       ...user[0],
       designation: desgination[0]?.Description,
       company: company[0],
       branches: branchIds,
-      companyDocuments: documetTypes,
+      companyDocuments: companyDocuments,
     };
 
     const { Password, ...userWithoutPassword } = user;
@@ -66,7 +71,8 @@ export const login = async (req, res, next) => {
       user.Email,
       user.Company_idCompany,
       user.Designation_idDesignation,
-      branchIds
+      branchIds,
+      companyDocuments
     );
 
     // Set cookies and send response

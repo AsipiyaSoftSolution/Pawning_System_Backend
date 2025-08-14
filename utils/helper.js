@@ -5,7 +5,8 @@ export const jwtToken = (
   email,
   company_id,
   designation_id,
-  branches
+  branches,
+  company_documents
 ) => {
   const accessToken = jwt.sign(
     {
@@ -14,6 +15,7 @@ export const jwtToken = (
       company_id,
       designation_id,
       branches: branches || [],
+      company_documents: company_documents || [],
     },
     process.env.JWT_ACCESS_SECRET,
     {

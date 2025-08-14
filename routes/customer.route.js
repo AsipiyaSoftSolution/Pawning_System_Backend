@@ -4,8 +4,9 @@ import {
   createCustomer,
   getCustomersForTheBranch,
   getCustomerById,
+  editCustomer,
 } from "../controllers/customer.controller.js";
-import { checkUserBranchAccess } from "../middlewares/branch.middlware.js"; 
+import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
 
 const router = express.Router();
 
@@ -29,5 +30,12 @@ router.get(
   getCustomerById
 );
 // Get a customer by ID for a specific branch
+
+router.patch(
+  "/:branchId/customer/:id/edit",
+  protectedRoute,
+  checkUserBranchAccess,
+  editCustomer
+); // Edit a customer by ID for a specific branch
 
 export default router;

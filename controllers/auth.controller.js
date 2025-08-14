@@ -42,14 +42,25 @@ export const login = async (req, res, next) => {
       [user[0].idUser]
     );
 
+    const [documetTypes] = await pool.query(
+      "SELECT * FROM company_documents WHERE Company_idCompany = ?",
+      [user[0].Company_idCompany]
+    );
+
     // Extract branch IDs from the branches array
     const branchIds = branches.map((branch) => branch.Branch_idBranch);
+    // Extract the document types from the documetTypes array
+    const companyDocuments = documetTypes.map((doc) => ({
+      idDocument: doc.idDocument,
+      Document_Type: doc.Document_Type,
+    }));
 
     user = {
       ...user[0],
       designation: desgination[0]?.Description,
       company: company[0],
       branches: branchIds,
+      companyDocuments: companyDocuments,
     };
 
     const { Password, ...userWithoutPassword } = user;
@@ -60,7 +71,8 @@ export const login = async (req, res, next) => {
       user.Email,
       user.Company_idCompany,
       user.Designation_idDesignation,
-      branchIds
+      branchIds,
+      companyDocuments
     );
 
     // Set cookies and send response

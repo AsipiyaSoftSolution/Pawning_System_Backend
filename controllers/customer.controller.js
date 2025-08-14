@@ -20,137 +20,133 @@ const customerLog = async (idCustomer, date, type, Description, userId) => {
     throw new Error("Failed to log customer action");
   }
 };
+
 export const createCustomer = async (req, res, next) => {
   try {
-    const {
-      Title,
-      First_Name,
-      Full_Name,
-      NIC,
-      DOB,
-      Address1,
-      Address2,
-      Address3,
-      Postal_Address01,
-      Postal_Address02,
-      Postal_Address03,
-      Mobile_No,
-      Occupation,
-      Work_Place,
-      Phone_No,
-      Phone_No2,
-      Status,
-      Behaviour_Status,
-      Note,
-      nicImage,
-      customerImage,
-    } = req.body;
+    const requiredFields = [
+      "First_Name",
+      "NIC",
+      "Address1",
+      "Mobile_No",
+      "Work_Place",
+    ];
+    const missingFields = requiredFields.filter((field) => !req.body[field]);
 
-    const Branch_idBranch = req.branchId; // get the branchId from the middleware
-    if (!First_Name || !NIC || !Address1 || !Mobile_No || !Work_Place) {
+    // Validate required fields
+    if (missingFields.length > 0) {
       return next(
         errorHandler(
           400,
-          "First name, NIC, address, mobile number, and workplace are required"
+          `Missing required fields: ${missingFields.join(", ")}`
         )
       );
     }
 
-    if (!Branch_idBranch) {
-      return next(
-        errorHandler(400, "Branch ID is required to create a customer")
-      );
+    if (!req.branchId) {
+      return next(errorHandler(400, "Branch ID is required"));
     }
 
+    // Check for existing customer with same NIC
     const [existingCustomer] = await pool.query(
-      "SELECT idCustomer FROM customer WHERE NIC = ? AND Branch_idBranch = ?",
-      [NIC, Branch_idBranch]
+      "SELECT 1 FROM customer WHERE NIC = ? AND Branch_idBranch = ? LIMIT 1",
+      [req.body.NIC, req.branchId]
     );
+
     if (existingCustomer.length > 0) {
       return next(
         errorHandler(
-          400,
+          409, // Server error code for conflict
           "Customer with this NIC already exists in this branch"
         )
       );
     }
 
-    const [result] = await pool.query("INSERT INTO customer SET ?", {
-      Title,
-      First_Name,
-      Full_Name,
-      NIC,
-      DOB,
-      Address1,
-      Address2,
-      Address3,
-      Postal_Address01,
-      Postal_Address02,
-      Postal_Address03,
-      Mobile_No,
-      Occupation,
-      Work_Place,
-      Phone_No,
-      Phone_No2,
-      Status,
-      Behaviour_Status,
-      Note,
-      Branch_idBranch,
-      emp_id: req.userId, // userId from middleware
-    });
+    // Prepare customer data
+    const customerData = {
+      ...req.body,
+      Branch_idBranch: req.branchId,
+      emp_id: req.userId,
+    };
 
-    if (result.affectedRows === 0) {
-      return next(errorHandler(500, "Failed to create customer"));
+    // Insert customer record to the db
+    const [result] = await pool.query(
+      "INSERT INTO customer SET ?",
+      customerData
+    );
+
+    if (!result.insertId) {
+      return next(errorHandler(500, "Failed to create customer record"));
     }
 
-    let fileUploadMessage;
-    if (nicImage || customerImage) {
-      try {
-        if (nicImage) {
-          const nicImageUrl = await uploadImage(nicImage);
-          const [nicResult] = await pool.query(
-            "INSERT INTO customer_documents (Document_Name,Path,Customer_idCustomer) VALUES (?,?,?)",
-            ["NIC", nicImageUrl, result.insertId]
-          );
+    // Process documents
+    let fileUploadMessages = [];
+    if (Array.isArray(req.body.documents)) {
+      fileUploadMessages = await Promise.all(
+        req.body.documents.map(async (doc) => {
+          try {
+            if (!doc.file) {
+              return `No file provided for document Type ${doc.Document_Type}`;
+            }
 
-          fileUploadMessage = "NIC image and";
-        }
+            if (
+              !req.company_documents?.some(
+                (d) => d.idDocument === doc.idDocument
+              )
+            ) {
+              return `Invalid document type for id ${doc.idDocument}`;
+            }
 
-        if (customerImage) {
-          const customerImageUrl = await uploadImage(customerImage);
-          const [customerResult] = await pool.query(
-            "INSERT INTO customer_documents (Document_Name,Path,Customer_idCustomer) VALUES (?,?,?)",
-            ["Customer Image", customerImageUrl, result.insertId]
-          );
+            const secureUrl = await uploadImage(doc.file);
+            if (!secureUrl) {
+              return `Failed to upload document id ${doc.idDocument}`;
+            }
 
-          fileUploadMessage = fileUploadMessage
-            ? `${fileUploadMessage} Customer image uploaded Successfully`
-            : "Customer image uploaded Successfully";
-        }
-      } catch (error) {
-        fileUploadMessage = error.message || "File upload failed";
-        console.error("Error uploading images:", error);
-        throw new Error(fileUploadMessage);
-      }
+            const [docResult] = await pool.query(
+              "INSERT INTO customer_documents SET ?",
+              {
+                Customer_idCustomer: result.insertId,
+                Document_Name: doc.Document_Type,
+                Path: secureUrl,
+              }
+            );
+
+            return docResult.affectedRows > 0
+              ? `Document ${doc.Document_Type} uploaded successfully`
+              : `Failed to save document info for id ${doc.idDocument}`;
+          } catch (error) {
+            console.error(`Document upload error:`, error);
+            return `Error processing document ${doc.Document_Type}`;
+          }
+        })
+      );
     }
 
-    customerLog(
+    // Log the creation
+    await customerLog(
       result.insertId,
       new Date(),
       "Create",
       "Customer created",
       req.userId
-    ); // Log the customer creation action to db
+    );
 
     res.status(201).json({
-      message: `Customer created successfully with ID ${result.insertId} and ${
-        fileUploadMessage || "no images uploaded"
-      }`,
+      success: true,
+      message: "Customer created successfully",
       customerId: result.insertId,
+      documentResults:
+        fileUploadMessages.length > 0 ? fileUploadMessages : undefined,
     });
   } catch (error) {
     console.error("Error creating customer:", error);
-    return next(errorHandler(500, "Internal Server Error"));
+    next(
+      errorHandler(
+        500,
+        error.code === "ER_DUP_ENTRY"
+          ? "Customer with these details already exists"
+          : "Internal Server Error"
+      )
+    );
   }
 };
 
@@ -260,87 +256,118 @@ export const getCustomerById = async (req, res, next) => {
 export const editCustomer = async (req, res, next) => {
   try {
     const customerId = req.params.id || req.params.customerId;
-    const {
-      Title,
-      First_Name,
-      Full_Name,
-      NIC,
-      DOB,
-      Address1,
-      Address2,
-      Address3,
-      Postal_Address01,
-      Postal_Address02,
-      Postal_Address03,
-      Mobile_No,
-      Occupation,
-      Work_Place,
-      Phone_No,
-      Phone_No2,
-      Status,
-      Behaviour_Status,
-      Note,
-      nicImage,
-      customerImage,
-    } = req.body;
-
-    const [existingCustomer] = await pool.query(
-      "SELECT idCustomer FROM customer WHERE idCustomer = ? AND Branch_idBranch = ?",
-      [customerId, req.branchId]
-    );
-
-    if (existingCustomer.length === 0) {
-      return next(errorHandler(404, "Customer not found to update"));
+    if (!customerId) {
+      return next(errorHandler(400, "Customer ID is required"));
     }
 
-    const [result] = await pool.query(
-      "UPDATE customer SET Title = ?, First_Name = ?, Full_Name = ?, NIC = ?, DOB = ?, Address1 = ?, Address2 = ?, Address3 = ?, Postal_Address01 = ?, Postal_Address02 = ?, Postal_Address03 = ?, Mobile_No = ?, Occupation = ?, Work_Place = ?, Phone_No = ?, Phone_No2 = ?, Status = ?, Behaviour_Status = ?, Note = ? WHERE idCustomer = ? AND Branch_idBranch = ?",
-      [
-        Title,
-        First_Name,
-        Full_Name,
-        NIC,
-        DOB,
-        Address1,
-        Address2,
-        Address3,
-        Postal_Address01,
-        Postal_Address02,
-        Postal_Address03,
-        Mobile_No,
-        Occupation,
-        Work_Place,
-        Phone_No,
-        Phone_No2,
-        Status,
-        Behaviour_Status,
-        Note,
-        customerId,
-        req.branchId,
-      ]
-    );
+    // Filter out undefined values and create update object
+    const updateFields = {};
+    const fields = [
+      "Title",
+      "First_Name",
+      "Full_Name",
+      "NIC",
+      "DOB",
+      "Address1",
+      "Address2",
+      "Address3",
+      "Postal_Address01",
+      "Postal_Address02",
+      "Postal_Address03",
+      "Mobile_No",
+      "Occupation",
+      "Work_Place",
+      "Phone_No",
+      "Phone_No2",
+      "Status",
+      "Behaviour_Status",
+      "Note",
+    ];
 
-    if (result.affectedRows === 0) {
-      return next(errorHandler(500, "Failed to update customer"));
+    fields.forEach((field) => {
+      if (req.body[field] !== undefined) {
+        updateFields[field] = req.body[field];
+      }
+    });
+
+    // If no fields to update and no documents provided, return an error
+    if (Object.keys(updateFields).length === 0 && !req.body.documents) {
+      return next(errorHandler(400, "No fields to update"));
     }
 
-    if (nicImage || customerImage) {
-      // to be discussed with the team
+    // Perform update if there are fields to update
+    if (Object.keys(updateFields).length > 0) {
+      const [result] = await pool.query(
+        "UPDATE customer SET ? WHERE idCustomer = ? AND Branch_idBranch = ?",
+        [updateFields, customerId, req.branchId]
+      );
+
+      if (result.affectedRows === 0) {
+        return next(errorHandler(404, "Customer not found or no changes made"));
+      }
     }
 
+    // Handle document uploads
+    let fileUploadMessages = [];
+    const { documents } = req.body;
+
+    if (documents && Array.isArray(documents)) {
+      const uploadPromises = documents.map(async (doc) => {
+        if (!doc.file) {
+          return `No file provided for document Type ${doc.Document_Type}`;
+        }
+
+        if (
+          !req.company_documents.some((d) => d.idDocument === doc.idDocument)
+        ) {
+          return `Invalid document type for id ${doc.idDocument}`;
+        }
+
+        try {
+          const secureUrl = await uploadImage(doc.file);
+          if (!secureUrl) {
+            return `Failed to upload document id ${doc.idDocument}`;
+          }
+
+          const [docResult] = await pool.query(
+            "INSERT INTO customer_documents (Customer_idCustomer, Document_Name, Path) VALUES (?, ?, ?)",
+            [customerId, doc.Document_Type, secureUrl]
+          );
+
+          return docResult.affectedRows > 0
+            ? `Document ${doc.Document_Type} uploaded successfully`
+            : `Failed to save document info for id ${doc.idDocument}`;
+        } catch (error) {
+          console.error(`Document upload error: ${error}`);
+          return `Error uploading document ${doc.Document_Type}`;
+        }
+      });
+
+      fileUploadMessages = await Promise.all(uploadPromises);
+    }
+
+    // Log the update
     customerLog(
       customerId,
       new Date(),
       "Update",
       "Customer updated",
       req.userId
-    ); // Log the customer update action to db
+    );
+
     res.status(200).json({
       message: "Customer updated successfully",
       customerId,
+      details: {
+        updatedFields: Object.keys(updateFields),
+        documentUploads:
+          fileUploadMessages.length > 0
+            ? fileUploadMessages
+            : "No documents uploaded",
+      },
     });
   } catch (error) {
     console.error("Error editing customer:", error);
-    return next(errorHandler(500, "Internal Server Error"));
+    next(errorHandler(500, "Internal Server Error"));
   }
 };

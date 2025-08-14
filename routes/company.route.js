@@ -18,11 +18,12 @@ import {
   createBranch,
   assignUserToBranch,
   getBranchData,
+  updateCustomerandPawningTicketNumberFormats,
 } from "../controllers/company.controller.js";
 const route = express.Router();
 
 route.get("/", protectedRoute, getCompanyDetails); // Get company details
-route.post("/designation", protectedRoute, creteDesignation);// <- should be createDesignation
+route.post("/designation", protectedRoute, creteDesignation); // <- should be createDesignation
 route.get("/designations", protectedRoute, getDesignations); // Get all designations of the company
 route.get("/designation/privileges", protectedRoute, getDesignationPrivileges); // Get privileges that can be assigned to designations
 route.post("/designation", protectedRoute, creteDesignation); // Create new designation
@@ -39,5 +40,10 @@ route.post("/user", protectedRoute, createUser); // Create a new user
 route.post("/branch", protectedRoute, createBranch); // Create a new branch
 route.post("/user/assign-to-branch", protectedRoute, assignUserToBranch); // Assign users to branches
 route.get("/branch/:id", protectedRoute, getBranchData); // Get branch data by ID (for users that have assigned to specific branch)
+route.patch(
+  "/update-formats",
+  protectedRoute,
+  updateCustomerandPawningTicketNumberFormats
+); // Update customer and pawning ticket number formats
 
 export default route;

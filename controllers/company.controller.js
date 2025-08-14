@@ -738,3 +738,71 @@ export const getBranchData = async (req, res, next) => {
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
+
+// Create or update company customer number fomats and pawning ticket number formats in the company
+export const updateCustomerandPawningTicketNumberFormats = async (
+  req,
+  res,
+  next
+) => {
+  try {
+    const {
+      customerNumberFormat,
+      customerNumberFormatType,
+      customerNumberAutoGenerateStartFrom,
+      pawningTicketNumberFormat,
+      pawningTicketNumberFormatType,
+      pawningTicketNumberAutoGenerateStartFrom,
+    } = req.body;
+
+    const availableFormatTypes = ["customize", "auto"];
+    if (!customerNumberFormatType && !pawningTicketNumberFormatType) {
+      return next(errorHandler(400, "Format type must be provided"));
+    }
+
+    if (
+      customerNumberFormatType &&
+      !availableFormatTypes.includes(customerNumberFormatType)
+    ) {
+      return next(errorHandler(400, "Invalid Customer Number Format Type"));
+    }
+
+    if (
+      pawningTicketNumberFormatType &&
+      !availableFormatTypes.includes(pawningTicketNumberFormatType)
+    ) {
+      return next(
+        errorHandler(400, "Invalid Pawning Ticket Number Format Type")
+      );
+    }
+
+    const [result] = await pool.query(
+      "UPDATE company SET Customer_No_Format_Type = ? , Customer_No_Format = ?,Customer_No_Auto_Generate_Number_Start_From = ?, Pawning_Ticket_No_Format = ?,Pawning_Ticket_No_Format_Type = ?, Pawning_Ticket_No_Auto_Generate_Number_Start_From = ? WHERE idCompany = ?",
+      [
+        customerNumberFormatType,
+        customerNumberFormat,
+        customerNumberAutoGenerateStartFrom,
+        pawningTicketNumberFormat,
+        pawningTicketNumberFormatType,
+        pawningTicketNumberAutoGenerateStartFrom,
+        req.companyId,
+      ]
+    );
+
+    if (result.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to update number formats"));
+    }
+
+    res.status(200).json({
+      message:
+        "Customer and Pawning Ticket number formats updated successfully",
+      success: true,
+    });
+  } catch (error) {
+    console.error(
+      "Error updating customer and pawning ticket number formats:",
+      error
+    );
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};

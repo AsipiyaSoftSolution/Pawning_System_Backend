@@ -22,6 +22,7 @@ import {
 const route = express.Router();
 
 route.get("/", protectedRoute, getCompanyDetails); // Get company details
+route.post("/designation", protectedRoute, creteDesignation);// <- should be createDesignation
 route.get("/designations", protectedRoute, getDesignations); // Get all designations of the company
 route.get("/designation/privileges", protectedRoute, getDesignationPrivileges); // Get privileges that can be assigned to designations
 route.post("/designation", protectedRoute, creteDesignation); // Create new designation

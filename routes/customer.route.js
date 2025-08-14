@@ -5,7 +5,7 @@ import {
   getCustomersForTheBranch,
   getCustomerById,
 } from "../controllers/customer.controller.js";
-import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
+import { checkUserBranchAccess } from "../middlewares/branch.middlware.js"; 
 
 const router = express.Router();
 

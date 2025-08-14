@@ -28,7 +28,7 @@ export const protectedRoute = async (req, res, next) => {
       req.branches = decoded.branches || [];
       req.company_documents = decoded.company_documents || [];
 
-      console.info(`Decoded token: ${JSON.stringify(decoded)}`);
+      // console.info(`Decoded token: ${JSON.stringify(decoded)}`);
 
       next(); // Proceed to the next middleware or route handler
     } catch (error) {

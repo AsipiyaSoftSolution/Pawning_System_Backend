@@ -1,5 +1,8 @@
-import express from "express";
 import dotenv from "dotenv";
+import express from "express";
+
+dotenv.config();
+
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import { connectDB, pool } from "./utils/db.js";
@@ -8,7 +11,7 @@ import { connectDB, pool } from "./utils/db.js";
 import authRoutes from "./routes/auth.route.js";
 import companyRoutes from "./routes/company.route.js";
 import customerRoutes from "./routes/customer.route.js";
-dotenv.config();
+
 
 const app = express();
 app.use(
@@ -24,7 +27,7 @@ app.use(cookieParser());
 app.use("/api/auth", authRoutes);
 app.use("/api/company", companyRoutes);
 app.use("/api/customer", customerRoutes);
-app.use("/api/dashboard", dashboardRoutes);
+//app.use("/api/dashboard", dashboardRoutes);
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {

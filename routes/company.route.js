@@ -18,12 +18,17 @@ import {
   createBranch,
   assignUserToBranch,
   getBranchData,
-  updateCustomerandPawningTicketNumberFormats,
+  updateCustomerNumberFormat,
+  updatePawningTicketNumberFormat,
+  createArticleCondition,
+  getArticlesConditions,
+  updateArticleCondition,
+  deleteArticleCondition,
 } from "../controllers/company.controller.js";
 const route = express.Router();
 
 route.get("/", protectedRoute, getCompanyDetails); // Get company details
-route.post("/designation", protectedRoute, creteDesignation); // <- should be createDesignation
+route.post("/designation", protectedRoute, creteDesignation); // create new designation
 route.get("/designations", protectedRoute, getDesignations); // Get all designations of the company
 route.get("/designation/privileges", protectedRoute, getDesignationPrivileges); // Get privileges that can be assigned to designations
 route.post("/designation", protectedRoute, creteDesignation); // Create new designation
@@ -41,9 +46,18 @@ route.post("/branch", protectedRoute, createBranch); // Create a new branch
 route.post("/user/assign-to-branch", protectedRoute, assignUserToBranch); // Assign users to branches
 route.get("/branch/:id", protectedRoute, getBranchData); // Get branch data by ID (for users that have assigned to specific branch)
 route.patch(
-  "/update-formats",
+  "/update-customer-no-format",
   protectedRoute,
-  updateCustomerandPawningTicketNumberFormats
-); // Update customer and pawning ticket number formats
+  updateCustomerNumberFormat
+); // Update customer and pawning ticket number formats for the company
+route.patch(
+  "/update-pawning-ticket-no-format",
+  protectedRoute,
+  updatePawningTicketNumberFormat
+); // Update pawning ticket number format for the company
+route.post("/article-condition", protectedRoute, createArticleCondition); // Create article condition
+route.get("/article-conditions", protectedRoute, getArticlesConditions); // Get all article conditions
+route.patch("/article-condition/:id", protectedRoute, updateArticleCondition); // Update article condition by ID
+route.delete("/article-condition/:id", protectedRoute, deleteArticleCondition); // Delete article condition by ID
 
 export default route;

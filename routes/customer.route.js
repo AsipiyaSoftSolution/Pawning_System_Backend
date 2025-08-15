@@ -5,6 +5,8 @@ import {
   getCustomersForTheBranch,
   getCustomerById,
   editCustomer,
+  checkCustomerByNICWhenCreating,
+  getCustomerDataByNIC,
 } from "../controllers/customer.controller.js";
 import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
 
@@ -37,5 +39,19 @@ router.patch(
   checkUserBranchAccess,
   editCustomer
 ); // Edit a customer by ID for a specific branch
+
+router.post(
+  "/:branchId/check-customer-nic",
+  protectedRoute,
+  checkUserBranchAccess,
+  checkCustomerByNICWhenCreating
+); // Check if a customer with the given NIC exists in the system when creating a new customer
+
+router.get(
+  "/:branchId/customer-data-by-nic/:NIC",
+  protectedRoute,
+  checkUserBranchAccess,
+  getCustomerDataByNIC
+); // Get customer data by NIC if there is a user in the system
 
 export default router;

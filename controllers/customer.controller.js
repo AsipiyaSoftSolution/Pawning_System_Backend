@@ -21,6 +21,7 @@ const customerLog = async (idCustomer, date, type, Description, userId) => {
   }
 };
 
+// NIC edit
 export const createCustomer = async (req, res, next) => {
   try {
     const requiredFields = [
@@ -147,6 +148,64 @@ export const createCustomer = async (req, res, next) => {
           : "Internal Server Error"
       )
     );
+  }
+};
+
+// Check if there is a customer in the system when user type the NIC in the frontend
+export const checkCustomerByNICWhenCreating = async (req, res, next) => {
+  try {
+    const { NIC } = req.body;
+    if (!NIC) {
+      return next(errorHandler(400, "NIC is required"));
+    }
+
+    const { existingCustomer } = await pool.query(
+      "SELECT * FROM customer WHERE NIC = ?",
+      [NIC]
+    );
+
+    if (existingCustomer.length > 0) {
+      return (
+        res.status(200),
+        json({
+          message: "Customer found with this NIC in the system",
+          sucess: true,
+        })
+      );
+    }
+
+    res.status(404).json({
+      message: "No customer found with this NIC",
+      success: false,
+    });
+  } catch (error) {
+    console.error("Error checking customer by NIC:", error);
+    next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+export const getCustomerDataByNIC = async (req, res, next) => {
+  try {
+    const { NIC } = req.params; // extract NIC from the request parameters
+    if (!NIC) {
+      return next(errorHandler(400, "NIC is required"));
+    }
+
+    const [customer] = await pool.query(
+      "SELECT * FROM customer WHERE NIC = ?",
+      [NIC]
+    );
+    if (customer.length === 0) {
+      return next(errorHandler(404, "Customer not found with this NIC"));
+    }
+
+    res.status(200).json({
+      message: "Customer data fetched successfully",
+      customer: customer[0], // Return the first customer found
+    });
+  } catch (error) {
+    console.log("Error in getCustomerDataByNIC:", error);
+    return next(errorHandler(500, "Internal Server Error"));
   }
 };
 

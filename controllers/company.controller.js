@@ -1,6 +1,7 @@
 import { errorHandler } from "../utils/errorHandler.js";
 import { pool } from "../utils/db.js";
 import bcrypt from "bcrypt";
+import { getPaginationData } from "../utils/helper.js";
 
 // Get COmpany Details
 export const getCompanyDetails = async (req, res, next) => {
@@ -739,23 +740,18 @@ export const getBranchData = async (req, res, next) => {
   }
 };
 
+// Format type for customer number and pawning ticket number
+const availableFormatTypes = ["customize", "auto"];
+
 // Create or update company customer number fomats and pawning ticket number formats in the company
-export const updateCustomerandPawningTicketNumberFormats = async (
-  req,
-  res,
-  next
-) => {
+export const updateCustomerNumberFormat = async (req, res, next) => {
   try {
     const {
       customerNumberFormat,
       customerNumberFormatType,
       customerNumberAutoGenerateStartFrom,
-      pawningTicketNumberFormat,
-      pawningTicketNumberFormatType,
-      pawningTicketNumberAutoGenerateStartFrom,
     } = req.body;
 
-    const availableFormatTypes = ["customize", "auto"];
     if (!customerNumberFormatType && !pawningTicketNumberFormatType) {
       return next(errorHandler(400, "Format type must be provided"));
     }
@@ -767,24 +763,12 @@ export const updateCustomerandPawningTicketNumberFormats = async (
       return next(errorHandler(400, "Invalid Customer Number Format Type"));
     }
 
-    if (
-      pawningTicketNumberFormatType &&
-      !availableFormatTypes.includes(pawningTicketNumberFormatType)
-    ) {
-      return next(
-        errorHandler(400, "Invalid Pawning Ticket Number Format Type")
-      );
-    }
-
     const [result] = await pool.query(
-      "UPDATE company SET Customer_No_Format_Type = ? , Customer_No_Format = ?,Customer_No_Auto_Generate_Number_Start_From = ?, Pawning_Ticket_No_Format = ?,Pawning_Ticket_No_Format_Type = ?, Pawning_Ticket_No_Auto_Generate_Number_Start_From = ? WHERE idCompany = ?",
+      "UPDATE company SET Customer_No_Format_Type = ? , Customer_No_Format = ?,Customer_No_Auto_Generate_Number_Start_From = ? WHERE idCompany = ?",
       [
         customerNumberFormatType,
         customerNumberFormat,
         customerNumberAutoGenerateStartFrom,
-        pawningTicketNumberFormat,
-        pawningTicketNumberFormatType,
-        pawningTicketNumberAutoGenerateStartFrom,
         req.companyId,
       ]
     );
@@ -794,8 +778,7 @@ export const updateCustomerandPawningTicketNumberFormats = async (
     }
 
     res.status(200).json({
-      message:
-        "Customer and Pawning Ticket number formats updated successfully",
+      message: "Customer number format updated successfully.",
       success: true,
     });
   } catch (error) {
@@ -803,6 +786,182 @@ export const updateCustomerandPawningTicketNumberFormats = async (
       "Error updating customer and pawning ticket number formats:",
       error
     );
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+export const updatePawningTicketNumberFormat = async (req, res, next) => {
+  try {
+    const {
+      pawningTicketNumberFormat,
+      pawningTicketNumberFormatType,
+      pawningTicketNumberAutoGenerateStartFrom,
+    } = req.body;
+
+    if (!pawningTicketNumberFormatType) {
+      return next(
+        errorHandler(400, "Pawning Ticket Number Format Type must be provided")
+      );
+    }
+
+    if (
+      pawningTicketNumberFormatType &&
+      !availableFormatTypes.includes(pawningTicketNumberFormatType)
+    ) {
+      return next(
+        errorHandler(400, "Invalid Pawning Ticket Number Format Type")
+      );
+    }
+
+    /* const [result] = await pool.query(
+      "UPDATE pawning_ticket SET Pawning_Ticket_No_Format_Type = ?, Pawning_Ticket_No_Format = ?, Pawning_Ticket_No_Auto_Generate_Number_Start_From = ? WHERE idCompany = ?",
+      [
+        pawningTicketNumberFormatType,
+        pawningTicketNumberFormat,
+        pawningTicketNumberAutoGenerateStartFrom,
+        req.companyId,
+      ]
+    );
+    */
+
+    res.status(200).json({
+      message: "Pawning ticket number format updated successfully.",
+      success: true,
+    });
+  } catch (error) {
+    console.error("Error updating pawning ticket number format:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+export const createArticleCondition = async (req, res, next) => {
+  try {
+    const { articleCondition } = req.body;
+    if (!articleCondition) {
+      return next(errorHandler(400, "Article condition is required"));
+    }
+
+    const [existingCondition] = await pool.query(
+      "SELECT * FROM article_conditions WHERE Description Like ? AND Company_idCompany = ?",
+      [articleCondition, req.companyId]
+    );
+    if (existingCondition.length > 0) {
+      return next(errorHandler(400, "Article condition already exists"));
+    }
+
+    const [result] = await pool.query(
+      "INSERT INTO article_conditions (Description, Company_idCompany,created_at) VALUES (?, ?, NOW())",
+      [articleCondition, req.companyId]
+    );
+
+    res.status(201).json({
+      message: "Article condition created successfully",
+      aritcleConditionId: result.insertId,
+    });
+  } catch (error) {
+    console.error("Error creating article condition:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+export const getArticlesConditions = async (req, res, next) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    const paginationData = await getPaginationData(
+      "SELECT COUNT(*) as total FROM article_conditions WHERE Company_idCompany = ?",
+      [req.companyId],
+      page,
+      limit
+    );
+
+    const [conditions] = await pool.query(
+      "SELECT * FROM article_conditions WHERE Company_idCompany = ? LIMIT ? OFFSET ?",
+      [req.companyId, limit, offset]
+    );
+
+    res.status(200).json({
+      message: "Article conditions fetched successfully",
+      conditions,
+      pagination: paginationData,
+    });
+  } catch (error) {
+    console.error("Error fetching article conditions:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+export const updateArticleCondition = async (req, res, next) => {
+  try {
+    console.log("Updating article condition with body:", req.body);
+    const articleId = req.params.id || req.params.articleId;
+    const { articleCondition } = req.body;
+
+    if (!articleId) {
+      return next(errorHandler(400, "Article condition ID is required"));
+    }
+
+    const [existingCondition] = await pool.query(
+      "SELECT * FROM article_conditions WHERE idArticle_conditions = ? AND Company_idCompany =?",
+      [articleId, req.companyId]
+    );
+
+    if (existingCondition.length === 0) {
+      return next(errorHandler(404, "Article condition not found"));
+    }
+
+    const [result] = await pool.query(
+      "UPDATE article_conditions SET Description = ?, updated_at = NOW() WHERE idArticle_conditions = ?",
+      [articleCondition, existingCondition[0].idArticle_conditions]
+    );
+    console.log("Update result:", result);
+    if (result.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to update article condition"));
+    }
+
+    res.status(200).json({
+      message: "Article condition updated successfully",
+      articleConditionId: existingCondition[0].idArticle_conditions,
+    });
+  } catch (error) {
+    console.error("Error updating article condition:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+export const deleteArticleCondition = async (req, res, next) => {
+  try {
+    const articleId = req.params.id || req.params.articleId;
+    if (!articleId) {
+      return next(errorHandler(400, "Article condition ID is required"));
+    }
+
+    const [existingCondition] = await pool.query(
+      "SELECT * FROM article_conditions WHERE idArticle_conditions = ? AND Company_idCompany =?",
+      [articleId, req.companyId]
+    );
+
+    if (existingCondition.length === 0) {
+      return next(errorHandler(404, "Article condition not found"));
+    }
+
+    const [result] = await pool.query(
+      "DELETE FROM article_conditions WHERE idArticle_conditions = ?",
+      [existingCondition[0].idArticle_conditions]
+    );
+
+    if (result.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to delete article condition"));
+    }
+
+    res.status(200).json({
+      message: "Article condition deleted successfully",
+      articleConditionId: existingCondition[0].idArticle_conditions,
+    });
+  } catch (error) {
+    console.error("Error deleting article condition:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

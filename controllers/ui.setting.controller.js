@@ -83,27 +83,4 @@ export const updateDashboardCardVisibility = async (req, res, next) => {
 
 
 
-// Reset all dashboard card visibility settings for a branch
-export const resetDashboardCardVisibility = async (req, res, next) => {
-  try {
-    const { branchId, companyId } = req.params;
-    const branchIdNum = parseInt(branchId);
-    const companyIdNum = parseInt(companyId);
-
-    // Delete all card visibility settings for this branch and company
-    const [result] = await pool.query(
-      `DELETE FROM user_card_visibility 
-       WHERE branch_id = ? AND company_id = ?`,
-      [branchIdNum, companyIdNum]
-    );
-
-    console.log("Dashboard card visibility reset successfully");
-    res.status(200).json({
-      message: "Dashboard card visibility reset successfully",
-    });
-  } catch (error) {
-    console.error("Error resetting dashboard card visibility:", error);
-    return next(errorHandler(500, "Internal Server Error"));
-  }
-};
 

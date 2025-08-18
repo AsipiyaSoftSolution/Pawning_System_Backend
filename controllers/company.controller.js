@@ -656,6 +656,36 @@ export const createBranch = async (req, res, next) => {
   }
 };
 
+// Get all branches for the company
+export const getAllBranches = async (req, res, next) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+
+    const offset = (page - 1) * limit;
+
+    const paginationData = await getPaginationData(
+      "SELECT COUNT(*) as total FROM branch WHERE Company_idCompany = ?",
+      [req.companyId],
+      page,
+      limit
+    );
+    const [branches] = await pool.query(
+      "SELECT * FROM branch WHERE Company_idCompany = ? LIMIT ? OFFSET ?",
+      [req.companyId, limit, offset]
+    );
+
+    res.status(200).json({
+      message: "Branches fetched successfully",
+      branches,
+      pagination: paginationData,
+    });
+  } catch (error) {
+    console.error("Error fetching branches:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
 // Assign users to branches (one user can be assigned to multiple branches)
 export const assignUserToBranch = async (req, res, next) => {
   try {

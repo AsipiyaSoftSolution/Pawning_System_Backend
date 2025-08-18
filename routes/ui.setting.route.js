@@ -9,8 +9,8 @@ import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
 
 const router = express.Router();
 
-router.get("/dashboard-cards/:branchId/:companyId", protectedRoute, checkUserBranchAccess, getDashboardCardVisibility);
-router.put("/dashboard-cards/:branchId/:companyId", protectedRoute, checkUserBranchAccess, updateDashboardCardVisibility);
+router.get("/dashboard-cards/:branchId", protectedRoute, checkUserBranchAccess, getDashboardCardVisibility);
+router.put("/dashboard-cards/:branchId", protectedRoute, checkUserBranchAccess, updateDashboardCardVisibility);
  
 
 export default router;

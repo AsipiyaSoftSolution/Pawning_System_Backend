@@ -4,9 +4,8 @@ import { pool } from "../utils/db.js";
 // Get dashboard card visibility settings
 export const getDashboardCardVisibility = async (req, res, next) => {
   try {
-    const { branchId, companyId } = req.params;
-    const branchIdNum = parseInt(branchId);
-    const companyIdNum = parseInt(companyId);
+    const branchIdNum = req.branchId; // Get from branch middleware
+    const companyIdNum = req.companyId; // Get from auth middleware
 
     // Get card visibility settings for the branch and company
     const [visibilityData] = await pool.query(
@@ -30,9 +29,8 @@ export const getDashboardCardVisibility = async (req, res, next) => {
 // Update or create dashboard card visibility setting
 export const updateDashboardCardVisibility = async (req, res, next) => {
   try {
-    const { branchId, companyId } = req.params;
-    const branchIdNum = parseInt(branchId);
-    const companyIdNum = parseInt(companyId);
+    const branchIdNum = req.branchId; // Get from branch middleware
+    const companyIdNum = req.companyId; // Get from auth middleware
     const { card_id, is_visible, bg_color = '#ffffff', font_color = '#000000' } = req.body;
 
     // Validate required fields

@@ -1,7 +1,6 @@
 import { errorHandler } from "../utils/errorHandler.js";
 import { pool } from "../utils/db.js";
 import { getPaginationData } from "../utils/helper.js";
-import e from "express";
 
 export const createPawningProduct = async (req, res, next) => {
   try {
@@ -145,7 +144,6 @@ export const createPawningProduct = async (req, res, next) => {
       Name,
       Service_Charge,
       Service_Charge_Create_As,
-
       Service_Charge_Value_type,
       Service_Charge_Value,
       Early_Settlement_Charge,
@@ -171,9 +169,10 @@ export const createPawningProduct = async (req, res, next) => {
         Pawning_Product_idPawning_Product, Period_Type, Minimum_Period, Maximum_Period,
         Minimum_Amount, Maximum_Amount, Interest_type, Interest, Interest_Calculate_After,
         Service_Charge_Value_type, Service_Charge_Value, Early_Settlement_Charge_Value_type,
-        Early_Settlement_Charge_Value, Late_Charge, Amount_For_22_Caratage,Last_Updated_User, Last_Updated_Time
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?,?)
+        Early_Settlement_Charge_Value, Late_Charge, Amount_For_22_Caratage, Last_Updated_User, Last_Updated_Time
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
+
     const [productPlanResult] = await pool.query(productPlanQuery, [
       pawningProductResult.insertId,
       Period_Type,
@@ -184,12 +183,12 @@ export const createPawningProduct = async (req, res, next) => {
       Interest_type,
       Interest,
       Interest_Calculate_After,
-      Service_Charge_Value_type_for_product_plan,
-      Service_Charge_Value_for_product_plan,
-      Early_Settlement_Charge_Value_type_for_product_plan,
-      Early_Settlement_Charge_Value_for_product_plan,
-      Late_Charge_for_product_plan,
-      Amount_For_22_Caratage || 0, // Default to 0 if not provided
+      Service_Charge_Value_type_for_product_plan || null,
+      Service_Charge_Value_for_product_plan || 0,
+      Early_Settlement_Charge_Value_type_for_product_plan || null,
+      Early_Settlement_Charge_Value_for_product_plan || 0,
+      Late_Charge_for_product_plan || 0,
+      Amount_For_22_Caratage || 0,
       req.userId,
       new Date(),
     ]);

@@ -130,6 +130,40 @@ export const createPawningProduct = async (req, res, next) => {
       }
     }
 
+    if (Interest_Method === "interest-for-pawning-amount") {
+      if (!Minimum_Amount || !Maximum_Amount) {
+        return next(
+          errorHandler(
+            400,
+            "Minimum Amount and Maximum Amount are required when Interest Method is interest-for-pawning-amount"
+          )
+        );
+      }
+    }
+
+    if (Interest_Method === "interest-for-period") {
+      if (!Minimum_Period || !Maximum_Period) {
+        return next(
+          errorHandler(
+            400,
+            "Minimum Period and Maximum Period are required when Interest Method is interest-for-period"
+          )
+        );
+      }
+    }
+    if (
+      !Period_Type ||
+      !Interest_type ||
+      !Interest_Calculate_After | Amount_For_22_Caratage
+    ) {
+      return next(
+        errorHandler(
+          400,
+          "Period Type, Interest Type, Interest Calculate After and Amount For 22 Caratage are required for product plan"
+        )
+      );
+    }
+
     // Insert data into Pawning Product table
     const productQuery = `
       INSERT INTO pawning_product (
@@ -359,3 +393,5 @@ export const deletePawningProductById = async (req, res, next) => {
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
+
+// Update a pawning product by ID

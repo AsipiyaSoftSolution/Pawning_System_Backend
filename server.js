@@ -12,9 +12,9 @@ import authRoutes from "./routes/auth.route.js";
 import companyRoutes from "./routes/company.route.js";
 import customerRoutes from "./routes/customer.route.js";
 import uiSettingRoutes from "./routes/ui.setting.route.js";
+import pawningProductRoutes from "./routes/pawning.product.route.js";
 
 dotenv.config();
-
 
 const app = express();
 app.use(
@@ -31,7 +31,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/company", companyRoutes);
 app.use("/api/customer", customerRoutes);
 app.use("/api/ui-settings", uiSettingRoutes);
-
+app.use("/api/pawning-product", pawningProductRoutes);
 
 const PORT = process.env.PORT || 3000;
 

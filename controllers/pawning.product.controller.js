@@ -159,7 +159,7 @@ export const createPawningProduct = async (req, res, next) => {
       return next(
         errorHandler(
           400,
-          "Period Type, Interest Type, Interest Calculate After and Amount For 22 Caratage are required for product plan"
+          "Period Type, Interest Type, Interest Calculate After and Amount For 22 Caratage are required."
         )
       );
     }
@@ -393,5 +393,3 @@ export const deletePawningProductById = async (req, res, next) => {
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
-
-// Update a pawning product by ID

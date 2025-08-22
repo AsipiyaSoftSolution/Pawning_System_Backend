@@ -150,19 +150,16 @@ export const checkCustomerByNICWhenCreating = async (req, res, next) => {
       return next(errorHandler(400, "NIC is required"));
     }
 
-    const { existingCustomer } = await pool.query(
+    const [customer] = await pool.query(
       "SELECT * FROM customer WHERE NIC = ?",
       [NIC]
     );
 
-    if (existingCustomer.length > 0) {
-      return (
-        res.status(200),
-        json({
-          message: "Customer found with this NIC in the system",
-          sucess: true,
-        })
-      );
+    if (customer.length > 0) {
+      return res.status(200).json({
+        message: "Customer found with this NIC in the system",
+        success: true,
+      });
     }
 
     res.status(404).json({
@@ -175,24 +172,29 @@ export const checkCustomerByNICWhenCreating = async (req, res, next) => {
   }
 };
 
+// Get customer data by NIC if there is a user in the system
+// This function is used to get customer data by NIC when user type the NIC in the frontend and check if there is a customer in the system by above function
 export const getCustomerDataByNIC = async (req, res, next) => {
   try {
-    const { NIC } = req.params; // extract NIC from the request parameters
+    const NIC = req.params.nic; // extract NIC from the request parameters
     if (!NIC) {
       return next(errorHandler(400, "NIC is required"));
     }
 
+    // Fetch customer all data by the customer Id and the branch Id
     const [customer] = await pool.query(
       "SELECT * FROM customer WHERE NIC = ?",
       [NIC]
     );
+
     if (customer.length === 0) {
-      return next(errorHandler(404, "Customer not found with this NIC"));
+      return next(errorHandler(404, "Customer not found"));
     }
 
     res.status(200).json({
-      message: "Customer data fetched successfully",
-      customer: customer[0], // Return the first customer found
+      success: true,
+      message: "Customer fetched successfully",
+      customer: customer[0],
     });
   } catch (error) {
     console.log("Error in getCustomerDataByNIC:", error);

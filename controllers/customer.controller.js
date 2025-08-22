@@ -31,7 +31,9 @@ export const createCustomer = async (req, res, next) => {
       "Mobile_No",
       "Work_Place",
     ];
-    const missingFields = requiredFields.filter((field) => !req.body[field]);
+    const missingFields = requiredFields.filter(
+      (field) => !req.body.data[field]
+    );
 
     // Validate required fields
     if (missingFields.length > 0) {
@@ -43,14 +45,10 @@ export const createCustomer = async (req, res, next) => {
       );
     }
 
-    if (!req.branchId) {
-      return next(errorHandler(400, "Branch ID is required"));
-    }
-
     // Check for existing customer with same NIC
     const [existingCustomer] = await pool.query(
       "SELECT 1 FROM customer WHERE NIC = ? AND Branch_idBranch = ? LIMIT 1",
-      [req.body.NIC, req.branchId]
+      [req.body.data.NIC, req.branchId]
     );
 
     if (existingCustomer.length > 0) {
@@ -62,9 +60,12 @@ export const createCustomer = async (req, res, next) => {
       );
     }
 
+    // Extract documents and other customer fields
+    const { documents, ...customerFields } = req.body.data;
+
     // Prepare customer data
     const customerData = {
-      ...req.body,
+      ...customerFields,
       Branch_idBranch: req.branchId,
       emp_id: req.userId,
     };
@@ -81,9 +82,9 @@ export const createCustomer = async (req, res, next) => {
 
     // Process documents
     let fileUploadMessages = [];
-    if (Array.isArray(req.body.documents)) {
+    if (Array.isArray(documents) && documents.length > 0) {
       fileUploadMessages = await Promise.all(
-        req.body.documents.map(async (doc) => {
+        documents.map(async (doc) => {
           try {
             if (!doc.file) {
               return `No file provided for document Type ${doc.Document_Type}`;
@@ -134,20 +135,10 @@ export const createCustomer = async (req, res, next) => {
     res.status(201).json({
       success: true,
       message: "Customer created successfully",
-      customerId: result.insertId,
-      documentResults:
-        fileUploadMessages.length > 0 ? fileUploadMessages : undefined,
     });
   } catch (error) {
     console.error("Error creating customer:", error);
-    next(
-      errorHandler(
-        500,
-        error.code === "ER_DUP_ENTRY"
-          ? "Customer with these details already exists"
-          : "Internal Server Error"
-      )
-    );
+    return next(errorHandler(500, "Internal Server Error"));
   }
 };
 

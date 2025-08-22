@@ -31,7 +31,7 @@ export const getDashboardUIComponents = async (req, res, next) => {
         category: row.category,
       };
 
-      base.visibility = row.is_visible || null;
+      base.visibility = row.is_visible || 0;
       base.bg_color = row.bg_color || null;
       base.font_color = row.font_color || null;
 

@@ -188,25 +188,34 @@ export const checkCustomerByNICWhenCreating = async (req, res, next) => {
 // This function is used to get customer data by NIC when user type the NIC in the frontend and check if there is a customer in the system by above function
 export const getCustomerDataByNIC = async (req, res, next) => {
   try {
-    const NIC = req.params.nic; // extract NIC from the request parameters
+    const NIC = req.params.nic;
     if (!NIC) {
       return next(errorHandler(400, "NIC is required"));
     }
 
-    // Fetch customer all data by the customer Id and the branch Id
-    const [customer] = await pool.query(
+    // Fetch customer by NIC
+    const [customerRows] = await pool.query(
       "SELECT * FROM customer WHERE NIC = ?",
       [NIC]
     );
 
-    if (customer.length === 0) {
+    if (!customerRows || customerRows.length === 0) {
       return next(errorHandler(404, "Customer not found"));
     }
+
+    const customer = customerRows[0];
+
+    // Fetch documents for this customer
+    const [customerDocuments] = await pool.query(
+      "SELECT * FROM customer_documents WHERE Customer_idCustomer = ?",
+      [customer.idCustomer]
+    );
+    customer.documents = customerDocuments || [];
 
     res.status(200).json({
       success: true,
       message: "Customer fetched successfully",
-      customer: customer[0],
+      customer,
     });
   } catch (error) {
     console.log("Error in getCustomerDataByNIC:", error);

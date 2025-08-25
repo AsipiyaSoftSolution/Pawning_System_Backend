@@ -136,8 +136,8 @@ export const updateDashboardCardColors = async (req, res, next) => {
     // Insert the record if it doesn't exist
     else {
       [result] = await pool.query(
-        "INSERT INTO user_card_visibility (card_id, branch_id, company_id, bg_color, font_color) VALUES (?, ?, ?, ?, ?)",
-        [card_id, req.branchId, req.companyId, bg_color, font_color]
+        "INSERT INTO user_card_visibility (card_id, branch_id, company_id, bg_color, font_color, is_visible) VALUES (?, ?, ?, ?, ?, ?)",
+        [card_id, req.branchId, req.companyId, bg_color, font_color, 1]
       );
     }
 

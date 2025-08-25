@@ -150,9 +150,21 @@ export const checkCustomerByNICWhenCreating = async (req, res, next) => {
       return next(errorHandler(400, "NIC is required"));
     }
 
+    // Get all the branches for this company
+    const [branches] = await pool.query(
+      "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
+      [req.companyId]
+    );
+
+    if (branches.length === 0) {
+      return next(errorHandler(404, "No branches found for this company"));
+    }
+
+    // Check if there is a customer with the NIC in any of the branches of this company
+
     const [customer] = await pool.query(
-      "SELECT * FROM customer WHERE NIC = ?",
-      [NIC]
+      "SELECT * FROM customer WHERE NIC = ? AND Branch_idBranch IN (?)",
+      [NIC, branches.map((b) => b.idBranch)]
     );
 
     if (customer.length > 0) {

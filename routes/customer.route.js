@@ -48,7 +48,7 @@ router.post(
 ); // Check if a customer with the given NIC exists in the system when creating a new customer
 
 router.get(
-  "/:branchId/customer-data-by-nic/:NIC",
+  "/:branchId/customer-data-by-nic/:nic",
   protectedRoute,
   checkUserBranchAccess,
   getCustomerDataByNIC

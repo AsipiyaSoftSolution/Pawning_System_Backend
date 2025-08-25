@@ -31,7 +31,9 @@ export const createCustomer = async (req, res, next) => {
       "Mobile_No",
       "Work_Place",
     ];
-    const missingFields = requiredFields.filter((field) => !req.body[field]);
+    const missingFields = requiredFields.filter(
+      (field) => !req.body.data[field]
+    );
 
     // Validate required fields
     if (missingFields.length > 0) {
@@ -43,14 +45,10 @@ export const createCustomer = async (req, res, next) => {
       );
     }
 
-    if (!req.branchId) {
-      return next(errorHandler(400, "Branch ID is required"));
-    }
-
     // Check for existing customer with same NIC
     const [existingCustomer] = await pool.query(
       "SELECT 1 FROM customer WHERE NIC = ? AND Branch_idBranch = ? LIMIT 1",
-      [req.body.NIC, req.branchId]
+      [req.body.data.NIC, req.branchId]
     );
 
     if (existingCustomer.length > 0) {
@@ -62,9 +60,12 @@ export const createCustomer = async (req, res, next) => {
       );
     }
 
+    // Extract documents and other customer fields
+    const { documents, ...customerFields } = req.body.data;
+
     // Prepare customer data
     const customerData = {
-      ...req.body,
+      ...customerFields,
       Branch_idBranch: req.branchId,
       emp_id: req.userId,
     };
@@ -81,9 +82,9 @@ export const createCustomer = async (req, res, next) => {
 
     // Process documents
     let fileUploadMessages = [];
-    if (Array.isArray(req.body.documents)) {
+    if (Array.isArray(documents) && documents.length > 0) {
       fileUploadMessages = await Promise.all(
-        req.body.documents.map(async (doc) => {
+        documents.map(async (doc) => {
           try {
             if (!doc.file) {
               return `No file provided for document Type ${doc.Document_Type}`;
@@ -134,20 +135,10 @@ export const createCustomer = async (req, res, next) => {
     res.status(201).json({
       success: true,
       message: "Customer created successfully",
-      customerId: result.insertId,
-      documentResults:
-        fileUploadMessages.length > 0 ? fileUploadMessages : undefined,
     });
   } catch (error) {
     console.error("Error creating customer:", error);
-    next(
-      errorHandler(
-        500,
-        error.code === "ER_DUP_ENTRY"
-          ? "Customer with these details already exists"
-          : "Internal Server Error"
-      )
-    );
+    return next(errorHandler(500, "Internal Server Error"));
   }
 };
 
@@ -159,19 +150,16 @@ export const checkCustomerByNICWhenCreating = async (req, res, next) => {
       return next(errorHandler(400, "NIC is required"));
     }
 
-    const { existingCustomer } = await pool.query(
+    const [customer] = await pool.query(
       "SELECT * FROM customer WHERE NIC = ?",
       [NIC]
     );
 
-    if (existingCustomer.length > 0) {
-      return (
-        res.status(200),
-        json({
-          message: "Customer found with this NIC in the system",
-          sucess: true,
-        })
-      );
+    if (customer.length > 0) {
+      return res.status(200).json({
+        message: "Customer found with this NIC in the system",
+        success: true,
+      });
     }
 
     res.status(404).json({
@@ -184,24 +172,29 @@ export const checkCustomerByNICWhenCreating = async (req, res, next) => {
   }
 };
 
+// Get customer data by NIC if there is a user in the system
+// This function is used to get customer data by NIC when user type the NIC in the frontend and check if there is a customer in the system by above function
 export const getCustomerDataByNIC = async (req, res, next) => {
   try {
-    const { NIC } = req.params; // extract NIC from the request parameters
+    const NIC = req.params.nic; // extract NIC from the request parameters
     if (!NIC) {
       return next(errorHandler(400, "NIC is required"));
     }
 
+    // Fetch customer all data by the customer Id and the branch Id
     const [customer] = await pool.query(
       "SELECT * FROM customer WHERE NIC = ?",
       [NIC]
     );
+
     if (customer.length === 0) {
-      return next(errorHandler(404, "Customer not found with this NIC"));
+      return next(errorHandler(404, "Customer not found"));
     }
 
     res.status(200).json({
-      message: "Customer data fetched successfully",
-      customer: customer[0], // Return the first customer found
+      success: true,
+      message: "Customer fetched successfully",
+      customer: customer[0],
     });
   } catch (error) {
     console.log("Error in getCustomerDataByNIC:", error);

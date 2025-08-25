@@ -245,7 +245,7 @@ export const getCustomersForTheBranch = async (req, res, next) => {
 
       // get customers for the branch with search - Fixed parameter order and MySQL LIMIT syntax
       [customers] = await pool.query(
-        "SELECT idCustomer,Full_Name,First_Name,NIC,Address1,Mobile_No,Work_Place,DOB FROM customer WHERE Branch_idBranch = ? AND (First_Name LIKE ? OR NIC LIKE ? OR Mobile_No LIKE ? OR idCustomer LIKE ?) LIMIT ?, ?",
+        "SELECT idCustomer,Full_Name,First_Name,NIC,Address1,Mobile_No,Work_Place,DOB,Status FROM customer WHERE Branch_idBranch = ? AND (First_Name LIKE ? OR NIC LIKE ? OR Mobile_No LIKE ? OR idCustomer LIKE ?) LIMIT ?, ?",
         [
           branchId,
           `%${search}%`,
@@ -269,7 +269,7 @@ export const getCustomersForTheBranch = async (req, res, next) => {
 
       // get customers for the branch - Fixed MySQL LIMIT syntax
       [customers] = await pool.query(
-        "SELECT idCustomer,First_Name,Full_Name,NIC,Address1,Mobile_No,Work_Place,DOB FROM customer WHERE Branch_idBranch = ? LIMIT ?, ?",
+        "SELECT idCustomer,First_Name,Full_Name,NIC,Address1,Mobile_No,Work_Place,DOB,Status FROM customer WHERE Branch_idBranch = ? LIMIT ?, ?",
         [branchId, offset, limit]
       );
     }
@@ -358,13 +358,13 @@ export const editCustomer = async (req, res, next) => {
     ];
 
     fields.forEach((field) => {
-      if (req.body[field] !== undefined) {
-        updateFields[field] = req.body[field];
+      if (req.body.data[field] !== undefined) {
+        updateFields[field] = req.body.data[field];
       }
     });
 
     // If no fields to update and no documents provided, return an error
-    if (Object.keys(updateFields).length === 0 && !req.body.documents) {
+    if (Object.keys(updateFields).length === 0 && !req.body.data.documents) {
       return next(errorHandler(400, "No fields to update"));
     }
 
@@ -382,41 +382,60 @@ export const editCustomer = async (req, res, next) => {
 
     // Handle document uploads
     let fileUploadMessages = [];
-    const { documents } = req.body;
+    const { documents } = req.body.data;
 
     if (documents && Array.isArray(documents)) {
       const uploadPromises = documents.map(async (doc) => {
-        if (!doc.file) {
-          return `No file provided for document Type ${doc.Document_Type}`;
-        }
-
-        if (
-          !req.company_documents.some((d) => d.idDocument === doc.idDocument)
-        ) {
-          return `Invalid document type for id ${doc.idDocument}`;
-        }
-
-        try {
-          const secureUrl = await uploadImage(doc.file);
-          if (!secureUrl) {
-            return `Failed to upload document id ${doc.idDocument}`;
+        if (doc.isExisting === false && doc.originalId === undefined) {
+          if (!doc.file) {
+            return `No file provided for document Type ${doc.Document_Type}`;
           }
-
-          const [docResult] = await pool.query(
-            "INSERT INTO customer_documents (Customer_idCustomer, Document_Name, Path) VALUES (?, ?, ?)",
-            [customerId, doc.Document_Type, secureUrl]
-          );
-
-          return docResult.affectedRows > 0
-            ? `Document ${doc.Document_Type} uploaded successfully`
-            : `Failed to save document info for id ${doc.idDocument}`;
-        } catch (error) {
-          console.error(`Document upload error: ${error}`);
-          return `Error uploading document ${doc.Document_Type}`;
+          if (
+            !req.company_documents.some((d) => d.idDocument === doc.idDocument)
+          ) {
+            return `Invalid document type for id ${doc.idDocument}`;
+          }
+          try {
+            // Check if the user has an existing document of this type
+            const [existingDoc] = await pool.query(
+              "SELECT * FROM customer_documents WHERE Document_Name = ? AND Customer_idCustomer = ?",
+              [doc.Document_Type, customerId]
+            );
+            const secureUrl = await uploadImage(doc.file);
+            if (!secureUrl) {
+              return `Failed to upload document id ${doc.idDocument}`;
+            }
+            if (existingDoc.length > 0) {
+              // UPDATE the existing document
+              const [docResult] = await pool.query(
+                "UPDATE customer_documents SET Path = ? WHERE idCustomer_Documents = ?",
+                [secureUrl, existingDoc[0].idCustomer_Documents]
+              );
+              return docResult.affectedRows > 0
+                ? `Document ${doc.Document_Type} updated successfully`
+                : `Failed to update document info for id ${doc.idDocument}`;
+            } else {
+              // INSERT a new document
+              const [docResult] = await pool.query(
+                "INSERT INTO customer_documents SET ?",
+                {
+                  Customer_idCustomer: customerId,
+                  Document_Name: doc.Document_Type,
+                  Path: secureUrl,
+                }
+              );
+              return docResult.affectedRows > 0
+                ? `Document ${doc.Document_Type} uploaded successfully`
+                : `Failed to save document info for id ${doc.idDocument}`;
+            }
+          } catch (error) {
+            console.error(`Document upload error:`, error);
+            return `Error processing document ${doc.Document_Type}`;
+          }
         }
+        return null;
       });
-
-      fileUploadMessages = await Promise.all(uploadPromises);
+      fileUploadMessages = (await Promise.all(uploadPromises)).filter(Boolean);
     }
 
     // Log the update

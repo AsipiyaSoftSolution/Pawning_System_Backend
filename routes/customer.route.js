@@ -7,6 +7,7 @@ import {
   editCustomer,
   checkCustomerByNICWhenCreating,
   getCustomerDataByNIC,
+  deleteDocuments,
 } from "../controllers/customer.controller.js";
 import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
 
@@ -53,5 +54,12 @@ router.get(
   checkUserBranchAccess,
   getCustomerDataByNIC
 ); // Get customer data by NIC if there is a user in the system
+
+router.delete(
+  "/:branchId/customer/:customerId/delete-documents/:documentId",
+  protectedRoute,
+  checkUserBranchAccess,
+  deleteDocuments
+);
 
 export default router;

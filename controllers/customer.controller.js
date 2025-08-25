@@ -468,3 +468,64 @@ export const editCustomer = async (req, res, next) => {
     next(errorHandler(500, "Internal Server Error"));
   }
 };
+
+export const deleteDocuments = async (req, res, next) => {
+  try {
+    console.log("Params ", req.params);
+    const { customerId, documentId } = req.params;
+    console.log("customerId:", customerId, "documentId:", documentId);
+    if (!documentId) {
+      return next(errorHandler(400, "No document ID provided for deletion"));
+    }
+
+    // Find the document that belongs to this customer
+    const [existingDocs] = await pool.query(
+      `SELECT * FROM customer_documents WHERE idCustomer_Documents = ? AND Customer_idCustomer = ?`,
+      [documentId, customerId]
+    );
+
+    if (!existingDocs || existingDocs.length === 0) {
+      return next(errorHandler(404, "No matching document found for deletion"));
+    }
+
+    // Delete from Cloudinary if Path exists
+    const { v2: cloudinary } = await import("cloudinary");
+    let documentTypeDeleted = null;
+    const doc = existingDocs[0];
+    if (doc.Path) {
+      // Extract public_id from Cloudinary URL
+      const matches = doc.Path.match(/\/([^\/]+)\.[a-zA-Z0-9]+$/);
+      if (matches && matches[1]) {
+        try {
+          await cloudinary.uploader.destroy(matches[1]);
+        } catch (err) {
+          console.warn(`Cloudinary deletion failed for ${doc.Path}:`, err);
+        }
+      }
+    }
+    documentTypeDeleted = doc.Document_Name || doc.idCustomer_Documents;
+
+    // Delete from database
+    const [deleteResult] = await pool.query(
+      `DELETE FROM customer_documents WHERE idCustomer_Documents = ?`,
+      [documentId]
+    );
+
+    await customerLog(
+      customerId,
+      new Date(),
+      "Delete",
+      `Customer document deleted. Deleted document: ${documentTypeDeleted}`,
+      req.userId
+    );
+
+    res.status(200).json({
+      success: true,
+      message: `Deleted document successfully.`,
+      deletedDocument: documentTypeDeleted,
+    });
+  } catch (error) {
+    console.error("Error deleting documents:", error);
+    next(errorHandler(500, "Internal Server Error"));
+  }
+};

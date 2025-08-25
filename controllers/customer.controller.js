@@ -338,7 +338,7 @@ export const editCustomer = async (req, res, next) => {
     const fields = [
       "Title",
       "First_Name",
-      "Full_Name",
+      "Full_name",
       "NIC",
       "DOB",
       "Address1",
@@ -438,6 +438,12 @@ export const editCustomer = async (req, res, next) => {
       fileUploadMessages = (await Promise.all(uploadPromises)).filter(Boolean);
     }
 
+    // Get updated customer details
+    const [updatedCustomerRows] = await pool.query(
+      "SELECT idCustomer,First_Name,Full_Name,NIC,Address1,Mobile_No,Work_Place,DOB,Status FROM customer  WHERE idCustomer = ? ",
+      [customerId]
+    );
+
     // Log the update
     customerLog(
       customerId,
@@ -448,15 +454,14 @@ export const editCustomer = async (req, res, next) => {
     );
 
     res.status(200).json({
-      message: "Customer updated successfully",
-      customerId,
-      details: {
-        updatedFields: Object.keys(updateFields),
-        documentUploads:
-          fileUploadMessages.length > 0
-            ? fileUploadMessages
-            : "No documents uploaded",
-      },
+      success: true,
+      message:
+        fileUploadMessages.length > 0
+          ? `Customer updated successfully. Document results: ${fileUploadMessages.join(
+              " ; "
+            )}`
+          : "Customer updated successfully.",
+      customer: updatedCustomerRows[0] || [],
     });
   } catch (error) {
     console.error("Error editing customer:", error);

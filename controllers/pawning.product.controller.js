@@ -2,291 +2,175 @@ import { errorHandler } from "../utils/errorHandler.js";
 import { pool } from "../utils/db.js";
 import { getPaginationData } from "../utils/helper.js";
 
-export const createPawningProduct = async (req, res, next) => {
+// Function to get user  data by userId and companyId to display last updated user info when fetching pawning product details
+const returnUserData = async (userId, companyId) => {
   try {
-    const {
-      // Data from Pawning Product table
-      Name,
-      Service_Charge,
-      Service_Charge_Create_As,
-      Service_Charge_Value_type,
-      Service_Charge_Value,
-      Early_Settlement_Charge,
-      Early_Settlement_Charge_Create_As,
-      Early_Settlement_Charge_Value_type,
-      Late_Charge_Status,
-      Early_Settlement_Charge_Value,
-      Late_Charge_Create_As,
-      Late_Charge,
-      Interest_Method,
-
-      // Data from Product Plan table
-      Period_Type,
-      Minimum_Period,
-      Maximum_Period,
-      Minimum_Amount,
-      Maximum_Amount,
-      Interest_type,
-      Interest,
-      Interest_Calculate_After,
-      Service_Charge_Value_type_for_product_plan,
-      Service_Charge_Value_for_product_plan,
-      Early_Settlement_Charge_Value_type_for_product_plan,
-      Early_Settlement_Charge_Value_for_product_plan,
-      Late_Charge_for_product_plan,
-      Amount_For_22_Caratage,
-    } = req.body;
-
-    if (!req.branchId) {
-      return next(errorHandler(400, "Branch ID is required"));
-    }
-
-    if (!Service_Charge || !Early_Settlement_Charge || !Late_Charge_Status) {
-      return next(
-        errorHandler(
-          400,
-          "Service Charge, Early Settlement Charge and Late Charge Status are required to create a pawning product"
-        )
-      );
-    }
-
-    if (Service_Charge === "active") {
-      if (Service_Charge_Create_As === "charge-for-product") {
-        if (!Service_Charge_Value_type || !Service_Charge_Value) {
-          return next(
-            errorHandler(
-              400,
-              "Service Charge Value Type and Value are required when Service Charge is active and Service Charge Create As is charge-for-product"
-            )
-          );
-        }
-      } else if (Service_Charge_Create_As === "charge-for-product-item") {
-        if (
-          !Service_Charge_Value_type_for_product_plan ||
-          !Service_Charge_Value_for_product_plan
-        ) {
-          return next(
-            errorHandler(
-              400,
-              "Service Charge Value Type and Value for product plan are required when Service Charge is active and Service Charge Create As is charge-for-product-item"
-            )
-          );
-        }
-      }
-    }
-
-    if (Early_Settlement_Charge === "active") {
-      if (
-        Early_Settlement_Charge_Create_As === "charge-for-product" ||
-        Early_Settlement_Charge_Create_As === "charge-for-settlement-amount"
-      ) {
-        if (
-          !Early_Settlement_Charge_Value_type ||
-          !Early_Settlement_Charge_Value
-        ) {
-          return next(
-            errorHandler(
-              400,
-              "Early Settlement Charge Value Type and Value are required when Early Settlement Charge is active and Early Settlement Charge Create As is charge-for-product"
-            )
-          );
-        }
-      } else if (
-        Early_Settlement_Charge_Create_As === "charge-for-product-item"
-      ) {
-        if (
-          !Early_Settlement_Charge_Value_type_for_product_plan ||
-          !Early_Settlement_Charge_Value_for_product_plan
-        ) {
-          return next(
-            errorHandler(
-              400,
-              "Early Settlement Charge Value Type and Value for product plan are required when Early Settlement Charge is active and Early Settlement Charge Create As is charge-for-product-item"
-            )
-          );
-        }
-      }
-    }
-
-    if (Late_Charge_Status === "active") {
-      if (Late_Charge_Create_As === "charge-for-product") {
-        if (!Late_Charge) {
-          return next(
-            errorHandler(
-              400,
-              "Late Charge is required when Late Charge Status is active and Late Charge Create As is charge-for-product"
-            )
-          );
-        }
-      } else if (Late_Charge_Create_As === "charge-for-product-item") {
-        if (!Late_Charge_for_product_plan) {
-          return next(
-            errorHandler(
-              400,
-              "Late Charge for product item is required when Late Charge Status is active and Late Charge Create As is charge-for-product-item"
-            )
-          );
-        }
-      }
-    }
-
-    if (Interest_Method === "interest-for-pawning-amount") {
-      if (!Minimum_Amount || !Maximum_Amount) {
-        return next(
-          errorHandler(
-            400,
-            "Minimum Amount and Maximum Amount are required when Interest Method is interest-for-pawning-amount"
-          )
-        );
-      }
-    }
-
-    if (Interest_Method === "interest-for-period") {
-      if (!Minimum_Period || !Maximum_Period) {
-        return next(
-          errorHandler(
-            400,
-            "Minimum Period and Maximum Period are required when Interest Method is interest-for-period"
-          )
-        );
-      }
-    }
-    if (
-      !Period_Type ||
-      !Interest_type ||
-      !Interest_Calculate_After | Amount_For_22_Caratage
-    ) {
-      return next(
-        errorHandler(
-          400,
-          "Period Type, Interest Type, Interest Calculate After and Amount For 22 Caratage are required."
-        )
-      );
-    }
-
-    // Insert data into Pawning Product table
-    const productQuery = `
-      INSERT INTO pawning_product (
-        Name, Service_Charge, Service_Charge_Create_As, Service_Charge_Value_type,
-        Service_Charge_Value, Early_Settlement_Charge, Early_Settlement_Charge_Create_As,
-        Early_Settlement_Charge_Value_type,Early_Settlement_Charge_Value, Late_Charge_Status, 
-        Late_Charge_Create_As, Late_Charge, Interest_Method, Branch_idBranch, Last_Updated_User, Last_Updated_Time
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `;
-
-    const [pawningProductResult] = await pool.query(productQuery, [
-      Name,
-      Service_Charge,
-      Service_Charge_Create_As,
-      Service_Charge_Value_type,
-      Service_Charge_Value,
-      Early_Settlement_Charge,
-      Early_Settlement_Charge_Create_As,
-      Early_Settlement_Charge_Value_type,
-      Early_Settlement_Charge_Value,
-      Late_Charge_Status,
-      Late_Charge_Create_As,
-      Late_Charge,
-      Interest_Method,
-      req.branchId,
-      req.userId,
-      new Date(),
-    ]);
-
-    if (pawningProductResult.affectedRows === 0) {
-      return next(errorHandler(500, "Failed to create pawning product"));
-    }
-
-    // Insert data into Product Plan table
-    const productPlanQuery = `
-      INSERT INTO product_plan (
-        Pawning_Product_idPawning_Product, Period_Type, Minimum_Period, Maximum_Period,
-        Minimum_Amount, Maximum_Amount, Interest_type, Interest, Interest_Calculate_After,
-        Service_Charge_Value_type, Service_Charge_Value, Early_Settlement_Charge_Value_type,
-        Early_Settlement_Charge_Value, Late_Charge, Amount_For_22_Caratage, Last_Updated_User, Last_Updated_Time
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `;
-
-    const [productPlanResult] = await pool.query(productPlanQuery, [
-      pawningProductResult.insertId,
-      Period_Type,
-      Minimum_Period,
-      Maximum_Period,
-      Minimum_Amount,
-      Maximum_Amount,
-      Interest_type,
-      Interest,
-      Interest_Calculate_After,
-      Service_Charge_Value_type_for_product_plan || null,
-      Service_Charge_Value_for_product_plan || 0,
-      Early_Settlement_Charge_Value_type_for_product_plan || null,
-      Early_Settlement_Charge_Value_for_product_plan || 0,
-      Late_Charge_for_product_plan || 0,
-      Amount_For_22_Caratage || 0,
-      req.userId,
-      new Date(),
-    ]);
-
-    if (productPlanResult.affectedRows === 0) {
-      return next(
-        errorHandler(500, "Product created but failed to create product plan")
-      );
-    }
-
-    res.status(201).json({
-      success: true,
-      message: "Pawning product created successfully",
-      productId: pawningProductResult.insertId,
-    });
+    if (!userId || !companyId) return null;
+    const [user] = await pool.query(
+      "SELECT idUser,Full_name,Email FROM user WHERE idUser = ? AND Company_idCompany = ?",
+      [userId, companyId]
+    );
+    if (user.length === 0) return null;
+    return user[0];
   } catch (error) {
-    console.error("Error creating pawning product:", error);
-    return next(errorHandler(500, "Internal Server Error"));
+    console.error("Error fetching user data:", error);
+    throw new Error("Failed to fetch user data", error);
   }
 };
 
 // Get a specific pawning product's all data by ID
 export const getPawningProductById = async (req, res, next) => {
   try {
-    const productId = req.params.productId || req.params.id;
-    if (!productId) {
+    const idPawning_Product = req.params.productId || req.params.id;
+
+    if (!idPawning_Product) {
       return next(errorHandler(400, "Product ID is required"));
     }
-    if (!req.branchId) {
-      return next(errorHandler(400, "Branch ID is required"));
-    }
 
-    // Get data from Pawning Product table
-    let pawningProduct;
-
-    const [productTable] = await pool.query(
-      `SELECT * FROM pawning_product WHERE idPawning_Product = ? AND Branch_idBranch = ?`,
-      [productId, req.branchId]
+    // Get main pawning product data
+    const [productRows] = await pool.query(
+      `SELECT 
+        idPawning_Product,
+        Branch_idBranch,
+        Name,
+        Service_Charge,
+        Service_Charge_Create_As,
+        Service_Charge_Value_type,
+        Service_Charge_Value,
+        Early_Settlement_Charge,
+        Early_Settlement_Charge_Create_As,
+        Early_Settlement_Charge_Value_type,
+        Early_Settlement_Charge_Value,
+        Late_Charge_Status,
+        Late_Charge_Create_As,
+        Late_Charge,
+        Interest_Method,
+        Last_Updated_User,
+        Last_Updated_Time
+      FROM pawning_product 
+      WHERE idPawning_Product = ?`,
+      [idPawning_Product]
     );
 
-    if (productTable.length === 0) {
+    if (productRows.length === 0) {
       return next(errorHandler(404, "Pawning product not found"));
     }
 
-    pawningProduct = productTable[0];
+    const product = productRows[0];
 
-    // Get data from Product Plan table
-
-    const [productPlan] = await pool.query(
-      `SELECT * FROM product_plan WHERE Pawning_Product_idPawning_Product = ?`,
-      [productId]
+    // Get early settlement charges if they exist
+    const [earlySettlementRows] = await pool.query(
+      `SELECT 
+        idEarly_Settlement_Charges,
+        From_Amount,
+        To_Amount,
+        Value_Type,
+        Amount
+      FROM early_settlement_charges 
+      WHERE Pawning_Product_idPawning_Product = ?`,
+      [idPawning_Product]
     );
 
-    pawningProduct = {
-      ...pawningProduct,
-      ProductPlan: productPlan.length > 0 ? productPlan[0] : null,
+    // Get product plans
+    const [productPlanRows] = await pool.query(
+      `SELECT 
+        idProduct_Plan,
+        Period_Type,
+        Minimum_Period,
+        Maximum_Period,
+        Minimum_Amount,
+        Maximum_Amount,
+        Interest_type,
+        Interest,
+        Interest_Calculate_After,
+        Service_Charge_Value_type,
+        Service_Charge_Value,
+        Early_Settlement_Charge_Value_type,
+        Early_Settlement_Charge_Value,
+        Late_Charge,
+        Amount_For_22_Caratage,
+        Last_Updated_User,
+        Last_Updated_Time
+      FROM product_plan 
+      WHERE Pawning_Product_idPawning_Product = ?`,
+      [idPawning_Product]
+    );
+
+    // Structure the response data similar to the input format
+    const responseData = {
+      idPawning_Product: product.idPawning_Product,
+      branchId: product.Branch_idBranch,
+      productName: product.Name,
+      interestMethod: product.Interest_Method,
+
+      // Service charge data
+      serviceCharge: {
+        status: product.Service_Charge === 1 ? "Active" : "Inactive",
+        chargeType: product.Service_Charge_Create_As,
+        valueType: product.Service_Charge_Value_type,
+        value: product.Service_Charge_Value,
+      },
+
+      // Late charge data
+      lateCharge: {
+        status: product.Late_Charge_Status === 1 ? "Active" : "Inactive",
+        chargeType: product.Late_Charge_Create_As,
+        percentage: product.Late_Charge,
+      },
+
+      // Early settlement data
+      earlysettlementsData: {
+        newEarlySettlement: {
+          status: product.Early_Settlement_Charge === 1 ? "Active" : "Inactive",
+          chargeType: product.Early_Settlement_Charge_Create_As,
+          valueType: product.Early_Settlement_Charge_Value_type,
+          value: product.Early_Settlement_Charge_Value,
+        },
+        earlySettlements: earlySettlementRows.map((settlement) => ({
+          id: settlement.idEarly_Settlement_Charges,
+          lessThan: settlement.From_Amount,
+          endAmount: settlement.To_Amount,
+          valueType: settlement.Value_Type,
+          value: settlement.Amount,
+        })),
+      },
+
+      // Product items/plans
+      productItems: productPlanRows.map((plan) => ({
+        id: plan.idProduct_Plan,
+        periodType: plan.Period_Type,
+        minPeriod: plan.Minimum_Period,
+        maxPeriod: plan.Maximum_Period,
+        minAmount: plan.Minimum_Amount,
+        maxAmount: plan.Maximum_Amount,
+        interestType: plan.Interest_type,
+        interest: plan.Interest,
+        interestAfter: plan.Interest_Calculate_After,
+        serviceChargeValueType: plan.Service_Charge_Value_type,
+        serviceChargeValue: plan.Service_Charge_Value,
+        earlySettlementChargeValueType: plan.Early_Settlement_Charge_Value_type,
+        earlySettlementChargeValue: plan.Early_Settlement_Charge_Value,
+        lateChargePerDay: plan.Late_Charge,
+        amount22Carat: plan.Amount_For_22_Caratage,
+        lastUpdatedUser: plan.Last_Updated_User,
+        lastUpdatedTime: plan.Last_Updated_Time,
+      })),
+
+      lastUpdatedUser: await returnUserData(
+        product.Last_Updated_User,
+        req.companyId
+      ),
+      lastUpdatedTime: product.Last_Updated_Time,
     };
 
+    // Return success response
     res.status(200).json({
       success: true,
-      pawningProduct,
+      message: "Pawning product retrieved successfully",
+      pawningProduct: responseData,
     });
   } catch (error) {
-    console.error("Error fetching pawning product by ID:", error);
+    console.error("Error retrieving pawning product:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
@@ -297,10 +181,8 @@ export const getPawningProducts = async (req, res, next) => {
     const page = parseInt(req.query.page) || 1; // Default to page 1
     const limit = parseInt(req.query.limit) || 10; // Default to 10
     const offset = (page - 1) * limit;
-
-    if (!req.branchId) {
-      return next(errorHandler(400, "Branch ID is required"));
-    }
+    console.log("params of get pawning products", req.query);
+    console.log("page", page, "limit", limit, "offset", offset);
 
     const paginationData = await getPaginationData(
       "SELECT COUNT(*) AS total FROM pawning_product WHERE Branch_idBranch = ?",
@@ -309,37 +191,16 @@ export const getPawningProducts = async (req, res, next) => {
       limit
     );
 
-    let pawningProducts;
-    // Get data from Pawning Product table
-    const [dataFromPawningProductTable] = await pool.query(
-      `SELECT idPawning_Product,Name FROM pawning_product WHERE Branch_idBranch = ? LIMIT ? OFFSET ?`,
+    const [pawningProducts] = await pool.query(
+      `SELECT idPawning_Product,Name,Interest_Method FROM pawning_product WHERE Branch_idBranch = ? LIMIT ? OFFSET ?`,
       [req.branchId, limit, offset]
     );
+    console.log("fetched pawning products:", pawningProducts);
 
-    if (dataFromPawningProductTable.length === 0) {
+    if (pawningProducts.length === 0) {
       return next(
         errorHandler(404, "No pawning products found for this branch")
       );
-    }
-
-    // Map the data to the desired format
-    pawningProducts = dataFromPawningProductTable.map((product) => ({
-      id: product.idPawning_Product,
-      name: product.Name,
-    }));
-
-    for (const product of pawningProducts) {
-      // Get product plan for each pawning product
-      const [productPlan] = await pool.query(
-        `SELECT Interest_type,Interest_Calculate_After,Interest FROM product_plan WHERE Pawning_Product_idPawning_Product = ?`,
-        [product.id]
-      );
-      product.interestType =
-        productPlan.length > 0 ? productPlan[0].Interest_type : null;
-      product.interestCalculateAfter =
-        productPlan.length > 0 ? productPlan[0].Interest_Calculate_After : null;
-      product.interest =
-        productPlan.length > 0 ? productPlan[0].Interest : null;
     }
 
     res.status(200).json({
@@ -390,6 +251,166 @@ export const deletePawningProductById = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Error deleting pawning product:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// Create a new pawning product for a specific branch
+// Create a new pawning product for a specific branch
+export const createPawningProduct = async (req, res, next) => {
+  try {
+    const { data } = req.body;
+    if (!data) {
+      return next(errorHandler(400, "Product data is required"));
+    }
+
+    // Ready the data of service charge for pawning product table
+    const serviceCharge = data.serviceCharge?.status === "Active" ? 1 : 0;
+    const serviceChargeCreateAs = data.serviceCharge?.chargeType || null;
+    const serviceChargeValueType = data.serviceCharge?.valueType || null;
+    const serviceChargeValue = data.serviceCharge?.value || 0;
+
+    // Ready the data of early settlement for pawning product table and early settlement charges table
+    const earlySettlementCharge =
+      data.earlysettlementsData?.newEarlySettlement?.status === "Active"
+        ? 1
+        : 0;
+    const earlySettlementChargeCreateAs =
+      data.earlysettlementsData?.newEarlySettlement?.chargeType || null;
+    let earlySettlementChargeValueType = null;
+    let earlySettlementChargeValue = null;
+
+    // Handle different early settlement charge types
+    if (earlySettlementChargeCreateAs === "Charge For Product") {
+      earlySettlementChargeValueType =
+        data.earlysettlementsData?.newEarlySettlement?.valueType || null;
+      earlySettlementChargeValue =
+        data.earlysettlementsData?.newEarlySettlement?.value || null;
+    }
+
+    // Ready the late charge data for pawning product table
+    const lateCharge = data.lateCharge.status === "Active" ? 1 : 0;
+    const lateChargeCreateAs = data.lateCharge.chargeType || null;
+    const lateChargePresentage = data.lateCharge.percentage || 0;
+
+    // Insert into Pawning product table first
+    const [result] = await pool.query(
+      "INSERT INTO pawning_product (Branch_idBranch,Name,Service_Charge,Service_Charge_Create_As,Service_Charge_Value_type,Service_Charge_Value,Early_Settlement_Charge,Early_Settlement_Charge_Create_As,Early_Settlement_Charge_Value_type,Early_Settlement_Charge_Value,Late_Charge_Status,Late_Charge_Create_As,Late_Charge,Interest_Method,Last_Updated_User,Last_Updated_Time) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      [
+        req.branchId,
+        data.productName || "Unnamed Product",
+        serviceCharge,
+        serviceChargeCreateAs,
+        serviceChargeValueType,
+        serviceChargeValue,
+        earlySettlementCharge,
+        earlySettlementChargeCreateAs,
+        earlySettlementChargeValueType,
+        earlySettlementChargeValue,
+        lateCharge,
+        lateChargeCreateAs,
+        lateChargePresentage,
+        data.interestMethod || null,
+        req.userId,
+        new Date(),
+      ]
+    );
+
+    if (result.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to create pawning product"));
+    }
+
+    // Handle early settlement charges if charge type is "Charge For Settlement Amount"
+    if (earlySettlementChargeCreateAs === "Charge For Settlement Amount") {
+      const earlySettlements = data.earlysettlementsData?.earlySettlements;
+
+      if (!earlySettlements) {
+        return next(
+          errorHandler(
+            400,
+            "Early settlement data is required for settlement amount charges"
+          )
+        );
+      }
+
+      // Convert to array if it's a single object
+      const settlementsArray = Array.isArray(earlySettlements)
+        ? earlySettlements
+        : [earlySettlements];
+
+      // Insert multiple early settlement charges
+      const insertPromises = settlementsArray.map(async (settlement) => {
+        const fromAmount = settlement.lessThan || 0;
+        const toAmount = settlement.endAmount || 0;
+        const valueType = settlement.valueType || null;
+        const value = settlement.value || null;
+
+        const [earlySettlementResult] = await pool.query(
+          "INSERT INTO early_settlement_charges (From_Amount,To_Amount,Value_Type,Amount,Pawning_Product_idPawning_Product) VALUES (?,?,?,?,?)",
+          [fromAmount, toAmount, valueType, value, result.insertId]
+        );
+
+        if (earlySettlementResult.affectedRows === 0) {
+          throw new Error("Failed to create early settlement charge record");
+        }
+
+        return earlySettlementResult;
+      });
+
+      // Wait for all insertions to complete
+      try {
+        await Promise.all(insertPromises);
+      } catch (error) {
+        console.error("Error inserting early settlement charges:", error);
+        return next(
+          errorHandler(500, "Failed to create early settlement charges")
+        );
+      }
+    }
+
+    // Insert into product plan table
+    const productPlans = data.productItems;
+
+    if (!productPlans || productPlans.length === 0) {
+      return next(errorHandler(400, "At least one product item is required"));
+    }
+
+    for (const plan of productPlans) {
+      const [productPlanResult] = await pool.query(
+        "INSERT INTO product_plan (Period_Type,Minimum_Period,Maximum_Period,Minimum_Amount,Maximum_Amount,Interest_type,Interest,Interest_Calculate_After,Service_Charge_Value_type,Service_Charge_Value,Early_Settlement_Charge_Value_type,Early_Settlement_Charge_Value,Late_Charge,Amount_For_22_Caratage,Last_Updated_User,Last_Updated_Time,Pawning_Product_idPawning_Product)  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        [
+          plan.periodType,
+          plan.minPeriod,
+          plan.maxPeriod,
+          plan.minAmount,
+          plan.maxAmount,
+          plan.interestType,
+          plan.interest || 0,
+          plan.interestAfter,
+          plan.serviceChargeValueType,
+          plan.serviceChargeValue || 0,
+          plan.earlySettlementChargeValueType,
+          plan.earlySettlementChargeValue || 0,
+          plan.lateChargePerDay || 0,
+          plan.amount22Carat,
+          req.userId,
+          new Date(),
+          result.insertId,
+        ]
+      );
+
+      if (productPlanResult.affectedRows === 0) {
+        return next(errorHandler(500, "Failed to create product plan"));
+      }
+    }
+
+    // Return success response
+    res.status(201).json({
+      success: true,
+      message: "Pawning product created successfully",
+    });
+  } catch (error) {
+    console.error("Error creating pawning product:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

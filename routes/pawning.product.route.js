@@ -15,7 +15,7 @@ route.post(
   protectedRoute,
   checkUserBranchAccess,
   createPawningProduct
-); // Create a new product for a specific branch
+); // Create a new product for a specific branch */
 
 route.get(
   "/:branchId/:productId",

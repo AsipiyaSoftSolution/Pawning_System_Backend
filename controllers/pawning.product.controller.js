@@ -55,10 +55,8 @@ export const getPawningProducts = async (req, res, next) => {
     const page = parseInt(req.query.page) || 1; // Default to page 1
     const limit = parseInt(req.query.limit) || 10; // Default to 10
     const offset = (page - 1) * limit;
-
-    if (!req.branchId) {
-      return next(errorHandler(400, "Branch ID is required"));
-    }
+    console.log("params of get pawning products", req.query);
+    console.log("page", page, "limit", limit, "offset", offset);
 
     const paginationData = await getPaginationData(
       "SELECT COUNT(*) AS total FROM pawning_product WHERE Branch_idBranch = ?",
@@ -67,37 +65,16 @@ export const getPawningProducts = async (req, res, next) => {
       limit
     );
 
-    let pawningProducts;
-    // Get data from Pawning Product table
-    const [dataFromPawningProductTable] = await pool.query(
-      `SELECT idPawning_Product,Name FROM pawning_product WHERE Branch_idBranch = ? LIMIT ? OFFSET ?`,
+    const [pawningProducts] = await pool.query(
+      `SELECT idPawning_Product,Name,Interest_Method FROM pawning_product WHERE Branch_idBranch = ? LIMIT ? OFFSET ?`,
       [req.branchId, limit, offset]
     );
+    console.log("fetched pawning products:", pawningProducts);
 
-    if (dataFromPawningProductTable.length === 0) {
+    if (pawningProducts.length === 0) {
       return next(
         errorHandler(404, "No pawning products found for this branch")
       );
-    }
-
-    // Map the data to the desired format
-    pawningProducts = dataFromPawningProductTable.map((product) => ({
-      id: product.idPawning_Product,
-      name: product.Name,
-    }));
-
-    for (const product of pawningProducts) {
-      // Get product plan for each pawning product
-      const [productPlan] = await pool.query(
-        `SELECT Interest_type,Interest_Calculate_After,Interest FROM product_plan WHERE Pawning_Product_idPawning_Product = ?`,
-        [product.id]
-      );
-      product.interestType =
-        productPlan.length > 0 ? productPlan[0].Interest_type : null;
-      product.interestCalculateAfter =
-        productPlan.length > 0 ? productPlan[0].Interest_Calculate_After : null;
-      product.interest =
-        productPlan.length > 0 ? productPlan[0].Interest : null;
     }
 
     res.status(200).json({

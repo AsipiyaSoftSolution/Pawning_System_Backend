@@ -150,9 +150,21 @@ export const checkCustomerByNICWhenCreating = async (req, res, next) => {
       return next(errorHandler(400, "NIC is required"));
     }
 
+    // Get all the branches for this company
+    const [branches] = await pool.query(
+      "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
+      [req.companyId]
+    );
+
+    if (branches.length === 0) {
+      return next(errorHandler(404, "No branches found for this company"));
+    }
+
+    // Check if there is a customer with the NIC in any of the branches of this company
+
     const [customer] = await pool.query(
-      "SELECT * FROM customer WHERE NIC = ?",
-      [NIC]
+      "SELECT * FROM customer WHERE NIC = ? AND Branch_idBranch IN (?)",
+      [NIC, branches.map((b) => b.idBranch)]
     );
 
     if (customer.length > 0) {
@@ -176,25 +188,34 @@ export const checkCustomerByNICWhenCreating = async (req, res, next) => {
 // This function is used to get customer data by NIC when user type the NIC in the frontend and check if there is a customer in the system by above function
 export const getCustomerDataByNIC = async (req, res, next) => {
   try {
-    const NIC = req.params.nic; // extract NIC from the request parameters
+    const NIC = req.params.nic;
     if (!NIC) {
       return next(errorHandler(400, "NIC is required"));
     }
 
-    // Fetch customer all data by the customer Id and the branch Id
-    const [customer] = await pool.query(
+    // Fetch customer by NIC
+    const [customerRows] = await pool.query(
       "SELECT * FROM customer WHERE NIC = ?",
       [NIC]
     );
 
-    if (customer.length === 0) {
+    if (!customerRows || customerRows.length === 0) {
       return next(errorHandler(404, "Customer not found"));
     }
+
+    const customer = customerRows[0];
+
+    // Fetch documents for this customer
+    const [customerDocuments] = await pool.query(
+      "SELECT * FROM customer_documents WHERE Customer_idCustomer = ?",
+      [customer.idCustomer]
+    );
+    customer.documents = customerDocuments || [];
 
     res.status(200).json({
       success: true,
       message: "Customer fetched successfully",
-      customer: customer[0],
+      customer,
     });
   } catch (error) {
     console.log("Error in getCustomerDataByNIC:", error);
@@ -224,7 +245,7 @@ export const getCustomersForTheBranch = async (req, res, next) => {
 
       // get customers for the branch with search - Fixed parameter order and MySQL LIMIT syntax
       [customers] = await pool.query(
-        "SELECT idCustomer,Full_Name,First_Name,NIC,Address1,Mobile_No,Work_Place,DOB FROM customer WHERE Branch_idBranch = ? AND (First_Name LIKE ? OR NIC LIKE ? OR Mobile_No LIKE ? OR idCustomer LIKE ?) LIMIT ?, ?",
+        "SELECT idCustomer,Full_Name,First_Name,NIC,Address1,Mobile_No,Work_Place,DOB,Status FROM customer WHERE Branch_idBranch = ? AND (First_Name LIKE ? OR NIC LIKE ? OR Mobile_No LIKE ? OR idCustomer LIKE ?) LIMIT ?, ?",
         [
           branchId,
           `%${search}%`,
@@ -248,7 +269,7 @@ export const getCustomersForTheBranch = async (req, res, next) => {
 
       // get customers for the branch - Fixed MySQL LIMIT syntax
       [customers] = await pool.query(
-        "SELECT idCustomer,First_Name,Full_Name,NIC,Address1,Mobile_No,Work_Place,DOB FROM customer WHERE Branch_idBranch = ? LIMIT ?, ?",
+        "SELECT idCustomer,First_Name,Full_Name,NIC,Address1,Mobile_No,Work_Place,DOB,Status FROM customer WHERE Branch_idBranch = ? LIMIT ?, ?",
         [branchId, offset, limit]
       );
     }
@@ -317,7 +338,7 @@ export const editCustomer = async (req, res, next) => {
     const fields = [
       "Title",
       "First_Name",
-      "Full_Name",
+      "Full_name",
       "NIC",
       "DOB",
       "Address1",
@@ -337,13 +358,13 @@ export const editCustomer = async (req, res, next) => {
     ];
 
     fields.forEach((field) => {
-      if (req.body[field] !== undefined) {
-        updateFields[field] = req.body[field];
+      if (req.body.data[field] !== undefined) {
+        updateFields[field] = req.body.data[field];
       }
     });
 
     // If no fields to update and no documents provided, return an error
-    if (Object.keys(updateFields).length === 0 && !req.body.documents) {
+    if (Object.keys(updateFields).length === 0 && !req.body.data.documents) {
       return next(errorHandler(400, "No fields to update"));
     }
 
@@ -361,42 +382,67 @@ export const editCustomer = async (req, res, next) => {
 
     // Handle document uploads
     let fileUploadMessages = [];
-    const { documents } = req.body;
+    const { documents } = req.body.data;
 
     if (documents && Array.isArray(documents)) {
       const uploadPromises = documents.map(async (doc) => {
-        if (!doc.file) {
-          return `No file provided for document Type ${doc.Document_Type}`;
-        }
-
-        if (
-          !req.company_documents.some((d) => d.idDocument === doc.idDocument)
-        ) {
-          return `Invalid document type for id ${doc.idDocument}`;
-        }
-
-        try {
-          const secureUrl = await uploadImage(doc.file);
-          if (!secureUrl) {
-            return `Failed to upload document id ${doc.idDocument}`;
+        if (doc.isExisting === false && doc.originalId === undefined) {
+          if (!doc.file) {
+            return `No file provided for document Type ${doc.Document_Type}`;
           }
-
-          const [docResult] = await pool.query(
-            "INSERT INTO customer_documents (Customer_idCustomer, Document_Name, Path) VALUES (?, ?, ?)",
-            [customerId, doc.Document_Type, secureUrl]
-          );
-
-          return docResult.affectedRows > 0
-            ? `Document ${doc.Document_Type} uploaded successfully`
-            : `Failed to save document info for id ${doc.idDocument}`;
-        } catch (error) {
-          console.error(`Document upload error: ${error}`);
-          return `Error uploading document ${doc.Document_Type}`;
+          if (
+            !req.company_documents.some((d) => d.idDocument === doc.idDocument)
+          ) {
+            return `Invalid document type for id ${doc.idDocument}`;
+          }
+          try {
+            // Check if the user has an existing document of this type
+            const [existingDoc] = await pool.query(
+              "SELECT * FROM customer_documents WHERE Document_Name = ? AND Customer_idCustomer = ?",
+              [doc.Document_Type, customerId]
+            );
+            const secureUrl = await uploadImage(doc.file);
+            if (!secureUrl) {
+              return `Failed to upload document id ${doc.idDocument}`;
+            }
+            if (existingDoc.length > 0) {
+              // UPDATE the existing document
+              const [docResult] = await pool.query(
+                "UPDATE customer_documents SET Path = ? WHERE idCustomer_Documents = ?",
+                [secureUrl, existingDoc[0].idCustomer_Documents]
+              );
+              return docResult.affectedRows > 0
+                ? `Document ${doc.Document_Type} updated successfully`
+                : `Failed to update document info for id ${doc.idDocument}`;
+            } else {
+              // INSERT a new document
+              const [docResult] = await pool.query(
+                "INSERT INTO customer_documents SET ?",
+                {
+                  Customer_idCustomer: customerId,
+                  Document_Name: doc.Document_Type,
+                  Path: secureUrl,
+                }
+              );
+              return docResult.affectedRows > 0
+                ? `Document ${doc.Document_Type} uploaded successfully`
+                : `Failed to save document info for id ${doc.idDocument}`;
+            }
+          } catch (error) {
+            console.error(`Document upload error:`, error);
+            return `Error processing document ${doc.Document_Type}`;
+          }
         }
+        return null;
       });
-
-      fileUploadMessages = await Promise.all(uploadPromises);
+      fileUploadMessages = (await Promise.all(uploadPromises)).filter(Boolean);
     }
+
+    // Get updated customer details
+    const [updatedCustomerRows] = await pool.query(
+      "SELECT idCustomer,First_Name,Full_Name,NIC,Address1,Mobile_No,Work_Place,DOB,Status FROM customer  WHERE idCustomer = ? ",
+      [customerId]
+    );
 
     // Log the update
     customerLog(
@@ -408,18 +454,78 @@ export const editCustomer = async (req, res, next) => {
     );
 
     res.status(200).json({
-      message: "Customer updated successfully",
-      customerId,
-      details: {
-        updatedFields: Object.keys(updateFields),
-        documentUploads:
-          fileUploadMessages.length > 0
-            ? fileUploadMessages
-            : "No documents uploaded",
-      },
+      success: true,
+      message:
+        fileUploadMessages.length > 0
+          ? `Customer updated successfully. Document results: ${fileUploadMessages.join(
+              " ; "
+            )}`
+          : "Customer updated successfully.",
+      customer: updatedCustomerRows[0] || [],
     });
   } catch (error) {
     console.error("Error editing customer:", error);
+    next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+export const deleteDocuments = async (req, res, next) => {
+  try {
+    console.log("Params ", req.params);
+    const { customerId, documentId } = req.params;
+    console.log("customerId:", customerId, "documentId:", documentId);
+    if (!documentId) {
+      return next(errorHandler(400, "No document ID provided for deletion"));
+    }
+
+    // Find the document that belongs to this customer
+    const [existingDocs] = await pool.query(
+      `SELECT * FROM customer_documents WHERE idCustomer_Documents = ? AND Customer_idCustomer = ?`,
+      [documentId, customerId]
+    );
+
+    if (!existingDocs || existingDocs.length === 0) {
+      return next(errorHandler(404, "No matching document found for deletion"));
+    }
+
+    // Delete from Cloudinary if Path exists
+    const { v2: cloudinary } = await import("cloudinary");
+    let documentTypeDeleted = null;
+    const doc = existingDocs[0];
+    if (doc.Path) {
+      // Extract public_id from Cloudinary URL
+      const matches = doc.Path.match(/\/([^\/]+)\.[a-zA-Z0-9]+$/);
+      if (matches && matches[1]) {
+        try {
+          await cloudinary.uploader.destroy(matches[1]);
+        } catch (err) {
+          console.warn(`Cloudinary deletion failed for ${doc.Path}:`, err);
+        }
+      }
+    }
+    documentTypeDeleted = doc.Document_Name || doc.idCustomer_Documents;
+
+    // Delete from database
+    const [deleteResult] = await pool.query(
+      `DELETE FROM customer_documents WHERE idCustomer_Documents = ?`,
+      [documentId]
+    );
+
+    await customerLog(
+      customerId,
+      new Date(),
+      "Delete",
+      `Customer document deleted. Deleted document: ${documentTypeDeleted}`,
+      req.userId
+    );
+
+    res.status(200).json({
+      success: true,
+      message: `Deleted document successfully.`,
+      deletedDocument: documentTypeDeleted,
+    });
+  } catch (error) {
+    console.error("Error deleting documents:", error);
     next(errorHandler(500, "Internal Server Error"));
   }
 };

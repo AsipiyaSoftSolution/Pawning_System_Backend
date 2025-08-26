@@ -2,49 +2,175 @@ import { errorHandler } from "../utils/errorHandler.js";
 import { pool } from "../utils/db.js";
 import { getPaginationData } from "../utils/helper.js";
 
+// Function to get user  data by userId and companyId to display last updated user info when fetching pawning product details
+const returnUserData = async (userId, companyId) => {
+  try {
+    if (!userId || !companyId) return null;
+    const [user] = await pool.query(
+      "SELECT idUser,Full_name,Email FROM user WHERE idUser = ? AND Company_idCompany = ?",
+      [userId, companyId]
+    );
+    if (user.length === 0) return null;
+    return user[0];
+  } catch (error) {
+    console.error("Error fetching user data:", error);
+    throw new Error("Failed to fetch user data", error);
+  }
+};
+
 // Get a specific pawning product's all data by ID
 export const getPawningProductById = async (req, res, next) => {
   try {
-    const productId = req.params.productId || req.params.id;
-    if (!productId) {
+    const idPawning_Product = req.params.productId || req.params.id;
+
+    if (!idPawning_Product) {
       return next(errorHandler(400, "Product ID is required"));
     }
-    if (!req.branchId) {
-      return next(errorHandler(400, "Branch ID is required"));
-    }
 
-    // Get data from Pawning Product table
-    let pawningProduct;
-
-    const [productTable] = await pool.query(
-      `SELECT * FROM pawning_product WHERE idPawning_Product = ? AND Branch_idBranch = ?`,
-      [productId, req.branchId]
+    // Get main pawning product data
+    const [productRows] = await pool.query(
+      `SELECT 
+        idPawning_Product,
+        Branch_idBranch,
+        Name,
+        Service_Charge,
+        Service_Charge_Create_As,
+        Service_Charge_Value_type,
+        Service_Charge_Value,
+        Early_Settlement_Charge,
+        Early_Settlement_Charge_Create_As,
+        Early_Settlement_Charge_Value_type,
+        Early_Settlement_Charge_Value,
+        Late_Charge_Status,
+        Late_Charge_Create_As,
+        Late_Charge,
+        Interest_Method,
+        Last_Updated_User,
+        Last_Updated_Time
+      FROM pawning_product 
+      WHERE idPawning_Product = ?`,
+      [idPawning_Product]
     );
 
-    if (productTable.length === 0) {
+    if (productRows.length === 0) {
       return next(errorHandler(404, "Pawning product not found"));
     }
 
-    pawningProduct = productTable[0];
+    const product = productRows[0];
 
-    // Get data from Product Plan table
-
-    const [productPlan] = await pool.query(
-      `SELECT * FROM product_plan WHERE Pawning_Product_idPawning_Product = ?`,
-      [productId]
+    // Get early settlement charges if they exist
+    const [earlySettlementRows] = await pool.query(
+      `SELECT 
+        idEarly_Settlement_Charges,
+        From_Amount,
+        To_Amount,
+        Value_Type,
+        Amount
+      FROM early_settlement_charges 
+      WHERE Pawning_Product_idPawning_Product = ?`,
+      [idPawning_Product]
     );
 
-    pawningProduct = {
-      ...pawningProduct,
-      ProductPlan: productPlan.length > 0 ? productPlan[0] : null,
+    // Get product plans
+    const [productPlanRows] = await pool.query(
+      `SELECT 
+        idProduct_Plan,
+        Period_Type,
+        Minimum_Period,
+        Maximum_Period,
+        Minimum_Amount,
+        Maximum_Amount,
+        Interest_type,
+        Interest,
+        Interest_Calculate_After,
+        Service_Charge_Value_type,
+        Service_Charge_Value,
+        Early_Settlement_Charge_Value_type,
+        Early_Settlement_Charge_Value,
+        Late_Charge,
+        Amount_For_22_Caratage,
+        Last_Updated_User,
+        Last_Updated_Time
+      FROM product_plan 
+      WHERE Pawning_Product_idPawning_Product = ?`,
+      [idPawning_Product]
+    );
+
+    // Structure the response data similar to the input format
+    const responseData = {
+      idPawning_Product: product.idPawning_Product,
+      branchId: product.Branch_idBranch,
+      productName: product.Name,
+      interestMethod: product.Interest_Method,
+
+      // Service charge data
+      serviceCharge: {
+        status: product.Service_Charge === 1 ? "Active" : "Inactive",
+        chargeType: product.Service_Charge_Create_As,
+        valueType: product.Service_Charge_Value_type,
+        value: product.Service_Charge_Value,
+      },
+
+      // Late charge data
+      lateCharge: {
+        status: product.Late_Charge_Status === 1 ? "Active" : "Inactive",
+        chargeType: product.Late_Charge_Create_As,
+        percentage: product.Late_Charge,
+      },
+
+      // Early settlement data
+      earlysettlementsData: {
+        newEarlySettlement: {
+          status: product.Early_Settlement_Charge === 1 ? "Active" : "Inactive",
+          chargeType: product.Early_Settlement_Charge_Create_As,
+          valueType: product.Early_Settlement_Charge_Value_type,
+          value: product.Early_Settlement_Charge_Value,
+        },
+        earlySettlements: earlySettlementRows.map((settlement) => ({
+          id: settlement.idEarly_Settlement_Charges,
+          lessThan: settlement.From_Amount,
+          endAmount: settlement.To_Amount,
+          valueType: settlement.Value_Type,
+          value: settlement.Amount,
+        })),
+      },
+
+      // Product items/plans
+      productItems: productPlanRows.map((plan) => ({
+        id: plan.idProduct_Plan,
+        periodType: plan.Period_Type,
+        minPeriod: plan.Minimum_Period,
+        maxPeriod: plan.Maximum_Period,
+        minAmount: plan.Minimum_Amount,
+        maxAmount: plan.Maximum_Amount,
+        interestType: plan.Interest_type,
+        interest: plan.Interest,
+        interestAfter: plan.Interest_Calculate_After,
+        serviceChargeValueType: plan.Service_Charge_Value_type,
+        serviceChargeValue: plan.Service_Charge_Value,
+        earlySettlementChargeValueType: plan.Early_Settlement_Charge_Value_type,
+        earlySettlementChargeValue: plan.Early_Settlement_Charge_Value,
+        lateChargePerDay: plan.Late_Charge,
+        amount22Carat: plan.Amount_For_22_Caratage,
+        lastUpdatedUser: plan.Last_Updated_User,
+        lastUpdatedTime: plan.Last_Updated_Time,
+      })),
+
+      lastUpdatedUser: await returnUserData(
+        product.Last_Updated_User,
+        req.companyId
+      ),
+      lastUpdatedTime: product.Last_Updated_Time,
     };
 
+    // Return success response
     res.status(200).json({
       success: true,
-      pawningProduct,
+      message: "Pawning product retrieved successfully",
+      pawningProduct: responseData,
     });
   } catch (error) {
-    console.error("Error fetching pawning product by ID:", error);
+    console.error("Error retrieving pawning product:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

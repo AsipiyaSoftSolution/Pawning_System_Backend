@@ -197,12 +197,6 @@ export const getPawningProducts = async (req, res, next) => {
     );
     console.log("fetched pawning products:", pawningProducts);
 
-    if (pawningProducts.length === 0) {
-      return next(
-        errorHandler(404, "No pawning products found for this branch")
-      );
-    }
-
     res.status(200).json({
       success: true,
       pawningProducts,

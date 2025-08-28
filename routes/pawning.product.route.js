@@ -6,6 +6,7 @@ import {
   getPawningProductById,
   getPawningProducts,
   deletePawningProductById,
+  updatePawningProductById,
 } from "../controllers/pawning.product.controller.js";
 
 const route = express.Router();
@@ -37,5 +38,12 @@ route.delete(
   checkUserBranchAccess,
   deletePawningProductById
 ); // Delete a specific product by ID for a specific branch
+
+route.patch(
+  "/:branchId/:productId",
+  protectedRoute,
+  checkUserBranchAccess,
+  updatePawningProductById
+); // Update/Edit a specific product by ID for a specific branch
 
 export default route;

@@ -105,7 +105,7 @@ export const getPawningProductById = async (req, res, next) => {
 
       // Service charge data
       serviceCharge: {
-        status: product.Service_Charge === 1 ? "Active" : "Inactive",
+        status: product.Service_Charge === "1" ? "Active" : "Inactive",
         chargeType: product.Service_Charge_Create_As,
         valueType: product.Service_Charge_Value_type,
         value: product.Service_Charge_Value,
@@ -113,7 +113,7 @@ export const getPawningProductById = async (req, res, next) => {
 
       // Late charge data
       lateCharge: {
-        status: product.Late_Charge_Status === 1 ? "Active" : "Inactive",
+        status: product.Late_Charge_Status === "1" ? "Active" : "Inactive",
         chargeType: product.Late_Charge_Create_As,
         percentage: product.Late_Charge,
       },
@@ -121,7 +121,8 @@ export const getPawningProductById = async (req, res, next) => {
       // Early settlement data
       earlysettlementsData: {
         newEarlySettlement: {
-          status: product.Early_Settlement_Charge === 1 ? "Active" : "Inactive",
+          status:
+            product.Early_Settlement_Charge === "1" ? "Active" : "Inactive",
           chargeType: product.Early_Settlement_Charge_Create_As,
           valueType: product.Early_Settlement_Charge_Value_type,
           value: product.Early_Settlement_Charge_Value,

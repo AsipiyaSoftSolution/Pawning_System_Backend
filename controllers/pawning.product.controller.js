@@ -606,7 +606,7 @@ export const updatePawningProductById = async (req, res, next) => {
     }
 
     const [updatedProductData] = await pool.query(
-      "SELECT idPawning_Product,Name,Service_Charge,Early_Settlement_Charge,Late_Charge_Status FROM pawning_product WHERE idPawning_Product = ?",
+      "SELECT idPawning_Product,Name,Service_Charge,Early_Settlement_Charge,Late_Charge_Status,Interest_Method FROM pawning_product WHERE idPawning_Product = ?",
       [idPawning_Product]
     );
 

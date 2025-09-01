@@ -252,7 +252,6 @@ export const deletePawningProductById = async (req, res, next) => {
 };
 
 // Create a new pawning product for a specific branch
-// Create a new pawning product for a specific branch
 export const createPawningProduct = async (req, res, next) => {
   try {
     const { data } = req.body;
@@ -364,6 +363,7 @@ export const createPawningProduct = async (req, res, next) => {
       }
     }
 
+    const interestMethod = data.interestMethod || null;
     // Insert into product plan table
     const productPlans = data.productItems;
 
@@ -372,6 +372,10 @@ export const createPawningProduct = async (req, res, next) => {
     }
 
     for (const plan of productPlans) {
+      const amount22CaratValue =
+        interestMethod === "Interest For Pawning Amount"
+          ? data.amount22
+          : plan.amount22Carat;
       const [productPlanResult] = await pool.query(
         "INSERT INTO product_plan (Period_Type,Minimum_Period,Maximum_Period,Minimum_Amount,Maximum_Amount,Interest_type,Interest,Interest_Calculate_After,Service_Charge_Value_type,Service_Charge_Value,Early_Settlement_Charge_Value_type,Early_Settlement_Charge_Value,Late_Charge,Amount_For_22_Caratage,Last_Updated_User,Last_Updated_Time,Pawning_Product_idPawning_Product)  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [
@@ -388,7 +392,7 @@ export const createPawningProduct = async (req, res, next) => {
           plan.earlySettlementChargeValueType,
           plan.earlySettlementChargeValue || 0,
           plan.lateChargePerDay || 0,
-          plan.amount22Carat,
+          amount22CaratValue,
           req.userId,
           new Date(),
           result.insertId,
@@ -606,7 +610,7 @@ export const updatePawningProductById = async (req, res, next) => {
     }
 
     const [updatedProductData] = await pool.query(
-      "SELECT idPawning_Product,Name,Service_Charge,Early_Settlement_Charge,Late_Charge_Status FROM pawning_product WHERE idPawning_Product = ?",
+      "SELECT idPawning_Product,Name,Service_Charge,Early_Settlement_Charge,Late_Charge_Status,Interest_Method FROM pawning_product WHERE idPawning_Product = ?",
       [idPawning_Product]
     );
 

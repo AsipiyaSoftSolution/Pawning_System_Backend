@@ -68,3 +68,9 @@ export const getPaginationData = async (
     throw new Error("Failed to get pagination data");
   }
 };
+
+export function formatSearchPattern(search) {
+  // Escape % and _ if needed, then wrap with %
+  if (typeof search !== "string") return "%%";
+  return `%${search.replace(/[%_]/g, "\\$&")}%`;
+}

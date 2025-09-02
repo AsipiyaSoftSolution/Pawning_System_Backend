@@ -5,16 +5,17 @@ import {
   createPawningTicket,
   getGrandSeqNo,
   getProductsAndInterestMethod,
-  getPeriodTypesAndData,
+  getProductPlanPeriods,
   searchCustomerByNIC,
   getCaratages,
+  getMaxMinPeriod,
 } from "../controllers/pawning.ticket.controller.js";
 const router = express.Router();
 
 router.post("/", protectedRoute, checkUserBranchAccess, createPawningTicket);
 // Get Grand SEQ.No for today
 router.get(
-  "/:branchId/grand-seq-no",
+  "/:branchId/grant-seq-no",
   protectedRoute,
   checkUserBranchAccess,
   getGrandSeqNo
@@ -26,12 +27,20 @@ router.get(
   checkUserBranchAccess,
   getProductsAndInterestMethod
 );
-// Get period types and period data of a specific pawning product
+// Get unique period types of a specific pawning product's product plans to frontend
 router.get(
   "/:branchId/period-types-and-data/:productId",
   protectedRoute,
   checkUserBranchAccess,
-  getPeriodTypesAndData
+  getProductPlanPeriods
+);
+
+// Get max and min period of a specific pawning product's product plans to frontend
+router.get(
+  "/:branchId/max-min-period/:productId/:periodType",
+  protectedRoute,
+  checkUserBranchAccess,
+  getMaxMinPeriod
 );
 // Search customer by NIC and get their details
 router.get(

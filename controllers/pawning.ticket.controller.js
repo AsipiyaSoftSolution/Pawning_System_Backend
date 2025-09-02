@@ -182,7 +182,7 @@ export const createPawningTicket = async (req, res, next) => {
 export const getGrandSeqNo = async (req, res, next) => {
   try {
     const [result] = await pool.query(
-      "SELECT COUNT(*) AS count FROM pawning_ticket WHERE Date = CURDATE()"
+      "SELECT COUNT(*) AS count FROM pawning_ticket WHERE created_at = CURDATE()"
     );
 
     res.status(200).json({
@@ -225,21 +225,30 @@ export const getProductsAndInterestMethod = async (req, res, next) => {
   }
 };
 
-// Send period types and period data of a specific pawning product to frontend
-export const getPeriodTypesAndData = async (req, res, next) => {
+// Send period types of a specific pawning product's product plans to frontend
+export const getProductPlanPeriods = async (req, res, next) => {
   try {
     const productId = req.params.productId || req.params.branchId;
     if (!productId) {
       return next(errorHandler(400, "Product ID is required"));
     }
-    const [periodTypesAndData] = await pool.query(
-      "SELECT idProduct_Plan,Period_Type,Maxium_Period,Minimum_Period FROM product_plan WHERE Pawning_Product_idPawning_Product = ?",
+    const [rows] = await pool.query(
+      "SELECT Period_Type FROM product_plan WHERE Pawning_Product_idPawning_Product = ?",
       [productId]
     );
 
+    // Extract unique period types
+    const periodTypeSet = new Set();
+    for (const row of rows) {
+      if (row.Period_Type) {
+        periodTypeSet.add(row.Period_Type);
+      }
+    }
+    const periodTypes = Array.from(periodTypeSet);
+
     res.status(200).json({
       success: true,
-      periodTypesAndData,
+      periodTypes,
     });
   } catch (error) {
     console.error("Error in getPeriodTypes:", error);
@@ -247,6 +256,54 @@ export const getPeriodTypesAndData = async (req, res, next) => {
   }
 };
 
+// Send maximum and minium period data of a specific pawning product
+export const getMaxMinPeriod = async (req, res, next) => {
+  try {
+    const { periodType, productId } = req.params;
+
+    // Validate required parameters
+    if (!periodType) {
+      return next(errorHandler(400, "Period Type is required"));
+    }
+
+    if (!productId) {
+      return next(errorHandler(400, "Product ID is required"));
+    }
+
+    // Get all records matching productId and periodType
+    const [rows] = await pool.query(
+      `SELECT Minimum_Period, Maximum_Period
+       FROM product_plan 
+       WHERE Pawning_Product_idPawning_Product = ? 
+         AND Period_Type = ?`,
+      [productId, periodType]
+    );
+
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "No period data found for the given product and period type",
+      });
+    }
+
+    // Extract all periods and convert to numbers
+    const allMinPeriods = rows.map((row) => Number(row.Minimum_Period));
+    const allMaxPeriods = rows.map((row) => Number(row.Maximum_Period));
+
+    // Get overall min and max
+    const minPeriod = Math.min(...allMinPeriods);
+    const maxPeriod = Math.max(...allMaxPeriods);
+
+    res.status(200).json({
+      success: true,
+      minPeriod,
+      maxPeriod,
+    });
+  } catch (error) {
+    console.error("Error in getMaxMinPeriod:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
 // search customer by NIC and return data
 export const searchCustomerByNIC = async (req, res, next) => {
   try {

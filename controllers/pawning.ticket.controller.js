@@ -332,40 +332,85 @@ export const searchCustomerByNIC = async (req, res, next) => {
 
 // Sending article types categories and article conditions are done from company controller
 
-// Send Caratages data
-export const getCaratages = async (req, res, next) => {
+// Send caratage amount and selected product item data to frontend
+export const sendCaratageAmountForSelectedProductItem = async (
+  req,
+  res,
+  next
+) => {
   try {
-    const productPlanId = req.params.productPlanId || req.params.id;
-    if (!productPlanId) {
-      return next(errorHandler(400, "Product Plan ID is required"));
+    const { productId, periodType, period, interestMethod, amount, caratage } =
+      req.query;
+    // Validate
+    console.log(req.query, "req.query");
+    if (!productId || !periodType || !interestMethod || !caratage) {
+      return next(
+        errorHandler(
+          400,
+          "productId, periodType, interestMethod  and caratage are all required"
+        )
+      );
     }
 
-    const [caratageAmount] = await pool.query(
-      "SELECT Amount_For_22_Caratage FROM product_plan WHERE idProduct_Plan = ?",
-      [productPlanId]
+    // Fetch all product items for the product and period type
+    const [productItems] = await pool.query(
+      "SELECT idProduct_Plan, Amount_For_22_Caratage, Minimum_Period, Maximum_Period, Minimum_Amount, Maximum_Amount FROM product_plan WHERE Pawning_Product_idPawning_Product = ? AND Period_Type = ?",
+      [productId, periodType]
     );
 
-    if (
-      !caratageAmount[0] ||
-      caratageAmount[0].Amount_For_22_Caratage == null
-    ) {
-      return next(errorHandler(404, "Caratage amount not found"));
+    let filteredItem = null;
+    if (Number(interestMethod) === 1) {
+      // Filter by period between min and max period
+      const periodNum = Number(period);
+      filteredItem = productItems.find((item) => {
+        const min = Number(item.Minimum_Period);
+        const max = Number(item.Maximum_Period);
+        return periodNum >= min && periodNum <= max;
+      });
+    } else if (Number(interestMethod) === 0) {
+      // Filter by amount between min and max amount
+      const amountNum = Number(amount);
+      filteredItem = productItems.find((item) => {
+        const min = Number(item.Minimum_Amount);
+        const max = Number(item.Maximum_Amount);
+        return amountNum >= min && amountNum <= max;
+      });
+    } else {
+      return next(errorHandler(400, "Invalid interest method"));
     }
 
+    if (!filteredItem) {
+      return res.status(404).json({
+        success: false,
+        message: "No matching product plan found for the given criteria",
+      });
+    }
+
+    // Calculate caratageData for carats 16 to 24
     const caratages = [16, 17, 18, 19, 20, 21, 22, 23, 24];
+    const baseAmount = Number(filteredItem.Amount_For_22_Caratage);
     const caratageData = caratages.map((carat) => ({
       carat,
-      amount: parseFloat(
-        (caratageAmount[0].Amount_For_22_Caratage * (carat / 22)).toFixed(2)
-      ),
+      amount: parseFloat((baseAmount * (carat / 22)).toFixed(2)),
     }));
 
-    res.status(200).json({
+    // Always return only the amount for the requested caratage
+    const caratNum = Number(caratage);
+    const found = caratageData.find((c) => c.carat === caratNum);
+    if (!found) {
+      return res.status(404).json({
+        success: false,
+        message: "Invalid caratage value. Must be between 16 and 24.",
+      });
+    }
+    return res.status(200).json({
       success: true,
-      caratageData,
+      productPlan: filteredItem,
+      caratage: caratNum,
+      amount: found.amount,
     });
   } catch (error) {
-    console.error("Error in getCaratages:", error);
+    console.error("Error in sendCaratageAmountForSelectedProductItem:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

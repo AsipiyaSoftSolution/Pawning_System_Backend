@@ -359,7 +359,26 @@ export const sendCaratageAmountForSelectedProductItem = async (
     );
 
     let filteredItem = null;
-    if (Number(interestMethod) === 1) {
+    if (Number(interestMethod) === 0) {
+      // All records have the same Amount_For_22_Caratage, use the first one
+      if (!productItems.length) {
+        return res.status(404).json({
+          success: false,
+          message: "No product plan found for the given criteria",
+        });
+      }
+      const baseAmount = Number(productItems[0].Amount_For_22_Caratage);
+      const caratNum = Number(caratage);
+      if (isNaN(baseAmount) || isNaN(caratNum)) {
+        return next(errorHandler(400, "Invalid caratage or base amount"));
+      }
+      const amount = parseFloat((baseAmount * (caratNum / 22)).toFixed(2));
+      return res.status(200).json({
+        success: true,
+        caratage: caratNum,
+        amount,
+      });
+    } else if (Number(interestMethod) === 1) {
       // Filter by period between min and max period
       const periodNum = Number(period);
       filteredItem = productItems.find((item) => {
@@ -367,48 +386,36 @@ export const sendCaratageAmountForSelectedProductItem = async (
         const max = Number(item.Maximum_Period);
         return periodNum >= min && periodNum <= max;
       });
-    } else if (Number(interestMethod) === 0) {
-      // Filter by amount between min and max amount
-      const amountNum = Number(amount);
-      filteredItem = productItems.find((item) => {
-        const min = Number(item.Minimum_Amount);
-        const max = Number(item.Maximum_Amount);
-        return amountNum >= min && amountNum <= max;
+      if (!filteredItem) {
+        return res.status(404).json({
+          success: false,
+          message: "No matching product plan found for the given criteria",
+        });
+      }
+      const caratages = [16, 17, 18, 19, 20, 21, 22, 23, 24];
+      const baseAmount = Number(filteredItem.Amount_For_22_Caratage);
+      const caratageData = caratages.map((carat) => ({
+        carat,
+        amount: parseFloat((baseAmount * (carat / 22)).toFixed(2)),
+      }));
+      const caratNum = Number(caratage);
+      const found = caratageData.find((c) => c.carat === caratNum);
+      if (!found) {
+        return res.status(404).json({
+          success: false,
+          message: "Invalid caratage value. Must be between 16 and 24.",
+        });
+      }
+      return res.status(200).json({
+        success: true,
+        productPlan: filteredItem,
+        caratage: caratNum,
+        amount: found.amount,
+        caratageData,
       });
     } else {
       return next(errorHandler(400, "Invalid interest method"));
     }
-
-    if (!filteredItem) {
-      return res.status(404).json({
-        success: false,
-        message: "No matching product plan found for the given criteria",
-      });
-    }
-
-    // Calculate caratageData for carats 16 to 24
-    const caratages = [16, 17, 18, 19, 20, 21, 22, 23, 24];
-    const baseAmount = Number(filteredItem.Amount_For_22_Caratage);
-    const caratageData = caratages.map((carat) => ({
-      carat,
-      amount: parseFloat((baseAmount * (carat / 22)).toFixed(2)),
-    }));
-
-    // Always return only the amount for the requested caratage
-    const caratNum = Number(caratage);
-    const found = caratageData.find((c) => c.carat === caratNum);
-    if (!found) {
-      return res.status(404).json({
-        success: false,
-        message: "Invalid caratage value. Must be between 16 and 24.",
-      });
-    }
-    return res.status(200).json({
-      success: true,
-      productPlan: filteredItem,
-      caratage: caratNum,
-      amount: found.amount,
-    });
   } catch (error) {
     console.error("Error in sendCaratageAmountForSelectedProductItem:", error);
     return next(errorHandler(500, "Internal Server Error"));

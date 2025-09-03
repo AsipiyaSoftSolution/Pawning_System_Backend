@@ -9,6 +9,7 @@ import {
   searchCustomerByNIC,
   sendCaratageAmountForSelectedProductItem,
   getMaxMinPeriod,
+  sendAssessedValues,
 } from "../controllers/pawning.ticket.controller.js";
 const router = express.Router();
 
@@ -56,5 +57,13 @@ router.get(
   protectedRoute,
   checkUserBranchAccess,
   sendCaratageAmountForSelectedProductItem
+);
+
+// Send assessed values to frontend based on caratage amount
+router.get(
+  "/:branchId/assessed-value",
+  protectedRoute,
+  checkUserBranchAccess,
+  sendAssessedValues
 );
 export default router;

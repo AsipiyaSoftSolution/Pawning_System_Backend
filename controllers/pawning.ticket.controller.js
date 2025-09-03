@@ -421,3 +421,31 @@ export const sendCaratageAmountForSelectedProductItem = async (
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
+
+// send assessed values for each company
+export const sendAssessedValues = async (req, res, next) => {
+  try {
+    const { caratage } = req.query;
+    if (!caratage) {
+      return next(errorHandler(400, "Caratage is required"));
+    }
+    const [assessedValue] = await pool.query(
+      "SELECT Amount FROM  assessed_value WHERE Carat = ? AND Company_idCompany = ?",
+      [caratage, req.companyId]
+    );
+
+    if (assessedValue.length === 0) {
+      return next(
+        errorHandler(404, "No assessed values found for the given caratage")
+      );
+    }
+
+    res.status(200).json({
+      success: true,
+      assessedValue: assessedValue[0],
+    });
+  } catch (error) {
+    console.error("Error in sendAssessedValues:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};

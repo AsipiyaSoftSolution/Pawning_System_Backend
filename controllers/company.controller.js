@@ -1,7 +1,7 @@
 import { errorHandler } from "../utils/errorHandler.js";
 import { pool } from "../utils/db.js";
 import bcrypt from "bcrypt";
-import { getPaginationData } from "../utils/helper.js";
+import { getPaginationData, formatSearchPattern } from "../utils/helper.js";
 
 // Get COmpany Details
 export const getCompanyDetails = async (req, res, next) => {
@@ -203,42 +203,41 @@ export const getArticleTypes = async (req, res, next) => {
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
     const search = req.query.search || "";
+    let paginationData;
+    let articleTypes;
 
-    // Get total count for pagination
-    const [countResult] = await pool.query(
-      "SELECT COUNT(*) as total FROM article_types WHERE Description LIKE ? AND Company_idCompany = ?",
-      [`%${search}%`, req.companyId]
-    );
-    const totalRecords = countResult[0].total;
+    if (search && typeof search !== "string") {
+      const searchPattern = formatSearchPattern(search); // helper function to format the search pattern
 
-    // Get paginated data
-    const [articleTypes] = await pool.query(
-      "SELECT * FROM article_types WHERE Description LIKE ? AND Company_idCompany = ? LIMIT ? OFFSET ?",
-      [`%${search}%`, req.companyId, limit, offset]
-    );
+      paginationData = await getPaginationData(
+        "SELECT COUNT(*) as total FROM article_types WHERE Description LIKE ? AND Company_idCompany = ?",
+        [searchPattern, req.companyId],
+        page,
+        limit
+      );
 
-    if (articleTypes.length === 0) {
-      return next(errorHandler(404, "No article types found"));
+      // Get paginated data
+      [articleTypes] = await pool.query(
+        "SELECT * FROM article_types WHERE Description LIKE ? AND Company_idCompany = ? LIMIT ? OFFSET ?",
+        [`%${searchPattern}%`, req.companyId, limit, offset]
+      );
     }
 
-    // Pagination metadata
-    const totalPages = Math.ceil(totalRecords / limit);
-    const hasNextPage = page < totalPages;
-    const hasPrevPage = page > 1;
+    paginationData = await getPaginationData(
+      "SELECT COUNT(*) as total FROM article_types WHERE Company_idCompany = ?",
+      [req.companyId],
+      page,
+      limit
+    );
+    [articleTypes] = await pool.query(
+      "SELECT * FROM article_types WHERE Company_idCompany = ? LIMIT ? OFFSET ?",
+      [req.companyId, limit, offset]
+    );
 
     res.status(200).json({
       message: "Article types fetched successfully",
       articleTypes,
-      pagination: {
-        currentPage: page,
-        limit,
-        totalRecords,
-        totalPages,
-        hasNextPage,
-        hasPrevPage,
-        nextPage: hasNextPage ? page + 1 : null,
-        prevPage: hasPrevPage ? page - 1 : null,
-      },
+      pagination: paginationData,
     });
   } catch (error) {
     console.error("Error fetching article types:", error);
@@ -470,42 +469,46 @@ export const getArticleCategories = async (req, res, next) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
+    let articleCategories;
+    let paginationData;
 
-    // Get total count for pagination
-    const [countResult] = await pool.query(
-      "SELECT COUNT(*) as total FROM article_categories WHERE Article_types_idArticle_types = ? AND Description LIKE ?",
-      [articleTypeId, `%${search}%`]
-    );
-
-    const totalRecords = countResult[0].total;
-
-    // Get paginated data
-    const [articleCategories] = await pool.query(
-      "SELECT * FROM article_categories WHERE Article_types_idArticle_types = ? AND Description LIKE ? LIMIT ? OFFSET ?",
-      [articleTypeId, `%${search}%`, limit, offset]
-    );
-
-    if (articleCategories.length === 0) {
-      return next(errorHandler(404, "No article categories found"));
+    if (!articleTypeId) {
+      return next(errorHandler(400, "Article type ID is required"));
     }
 
-    // Pagination metadata
-    const totalPages = Math.ceil(totalRecords / limit);
-    const hasNextPage = page < totalPages;
-    const hasPrevPage = page > 1;
+    if (search && typeof search !== "string") {
+      const searchPattern = formatSearchPattern(search);
+      // Get pagination data
+      paginationData = await getPaginationData(
+        "SELECT COUNT(*) as total FROM article_categories WHERE Article_types_idArticle_types = ? AND Description LIKE ?",
+        [articleTypeId, searchPattern],
+        page,
+        limit
+      );
+
+      // Get data
+      [articleCategories] = await pool.query(
+        "SELECT * FROM article_categories WHERE Article_types_idArticle_types = ? AND Description LIKE ? LIMIT ? OFFSET ?",
+        [articleTypeId, `%${searchPattern}%`, limit, offset]
+      );
+    }
+
+    paginationData = await getPaginationData(
+      "SELECT COUNT(*) as total FROM article_categories WHERE Article_types_idArticle_types = ?",
+      [articleTypeId],
+      page,
+      limit
+    );
+
+    [articleCategories] = await pool.query(
+      "SELECT * FROM article_categories WHERE Article_types_idArticle_types = ? LIMIT ? OFFSET ?",
+      [articleTypeId, limit, offset]
+    );
+
     res.status(200).json({
       message: "Article categories fetched successfully",
       articleCategories,
-      pagination: {
-        currentPage: page,
-        limit,
-        totalRecords,
-        totalPages,
-        hasNextPage,
-        hasPrevPage,
-        nextPage: hasNextPage ? page + 1 : null,
-        prevPage: hasPrevPage ? page - 1 : null,
-      },
+      pagination: paginationData,
     });
   } catch (error) {
     console.error("Error fetching article categories:", error);
@@ -899,15 +902,33 @@ export const getArticlesConditions = async (req, res, next) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
+    const search = req.query.search || "";
+    let paginationData;
+    let conditions;
 
-    const paginationData = await getPaginationData(
+    if (search && typeof search !== "string") {
+      const searchPattern = formatSearchPattern(search);
+      paginationData = await getPaginationData(
+        "SELECT COUNT(*) as total FROM article_conditions WHERE Company_idCompany = ? AND Description LIKE ?",
+        [req.companyId, searchPattern],
+        page,
+        limit
+      );
+
+      [conditions] = await pool.query(
+        "SELECT * FROM article_conditions WHERE Company_idCompany = ? AND Description LIKE ? LIMIT ? OFFSET ?",
+        [req.companyId, `%${searchPattern}%`, limit, offset]
+      );
+    }
+
+    paginationData = await getPaginationData(
       "SELECT COUNT(*) as total FROM article_conditions WHERE Company_idCompany = ?",
       [req.companyId],
       page,
       limit
     );
 
-    const [conditions] = await pool.query(
+    [conditions] = await pool.query(
       "SELECT * FROM article_conditions WHERE Company_idCompany = ? LIMIT ? OFFSET ?",
       [req.companyId, limit, offset]
     );

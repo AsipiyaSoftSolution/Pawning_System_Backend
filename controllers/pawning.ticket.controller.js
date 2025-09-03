@@ -316,6 +316,10 @@ export const searchCustomerByNIC = async (req, res, next) => {
       "SELECT idCustomer,NIC, Full_name,Address1,Address2,Address3,Mobile_No,Status,Risk_Level FROM customer WHERE NIC = ?",
       [NIC]
     );
+
+    if (customer.length === 0) {
+      return next(errorHandler(404, "Customer not found"));
+    }
     res.status(200).json({
       success: true,
       customer: customer[0] || null,

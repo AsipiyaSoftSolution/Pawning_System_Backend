@@ -14,7 +14,12 @@ import {
 } from "../controllers/pawning.ticket.controller.js";
 const router = express.Router();
 
-router.post("/", protectedRoute, checkUserBranchAccess, createPawningTicket);
+router.post(
+  "/:branchId/create",
+  protectedRoute,
+  checkUserBranchAccess,
+  createPawningTicket
+);
 // Get Grand SEQ.No for today
 router.get(
   "/:branchId/grant-seq-no",

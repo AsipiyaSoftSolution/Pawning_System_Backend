@@ -8,6 +8,7 @@ export const createPawningTicket = async (req, res, next) => {
     // net weight have to be equal or less than gross weight
     // pawning value have to equal or less than table value
     const { data } = req.body;
+    console.log(data, "data in createPawningTicket");
     const requiredFields = [
       "ticketNo",
       "grantSeqNo",
@@ -24,16 +25,14 @@ export const createPawningTicket = async (req, res, next) => {
       "pawningAdvance",
       "interestRate",
       "serviceCharge",
-      "lateCharge",
+      "lateChargePercent",
       "interestApplyOn",
-      "images",
-      "ticketArticles",
     ];
     const requiredFieldsForTicketArticles = [
       // data for pawning ticket article table
-      "articleType",
-      "articleCategory",
-      "articleCondition",
+      "type",
+      "category",
+      "condition",
       "caratage",
       "noOfItems",
       "acidTestStatus",
@@ -47,7 +46,10 @@ export const createPawningTicket = async (req, res, next) => {
 
     // Check for missing required fields in the main data object
     for (const field of requiredFields) {
-      if (data[field] === undefined || data[field] === null) {
+      if (
+        data.ticketData[field] === undefined ||
+        data.ticketData[field] === null
+      ) {
         return next(errorHandler(400, `Missing required field: ${field}`));
       }
     }
@@ -71,42 +73,73 @@ export const createPawningTicket = async (req, res, next) => {
       }
     }
 
+    // Validate that productId exists in pawning_product table
+    const [productExists] = await pool.query(
+      "SELECT idPawning_Product FROM pawning_product WHERE idPawning_Product = ?",
+      [data.ticketData.productId]
+    );
+
+    if (productExists.length === 0) {
+      return next(
+        errorHandler(
+          400,
+          `Invalid product ID: ${data.ticketData.productId}. Product does not exist.`
+        )
+      );
+    }
+
+    // Validate that customerId exists
+    const [customerExists] = await pool.query(
+      "SELECT idCustomer FROM customer WHERE idCustomer = ?",
+      [data.ticketData.customerId]
+    );
+
+    if (customerExists.length === 0) {
+      return next(
+        errorHandler(
+          400,
+          `Invalid customer ID: ${data.ticketData.customerId}. Customer does not exist.`
+        )
+      );
+    }
+
     // check if pawning advance is less than or equal to all ticketArticles's declaredValue
     const totalDeclaredValue = data.ticketArticles.reduce(
       (sum, article) => sum + parseFloat(article.declaredValue || 0),
       0
     );
-    if (parseFloat(data.pawningAdvance) > totalDeclaredValue) {
+    if (parseFloat(data.ticketData.pawningAdvance) > totalDeclaredValue) {
       return next(
-        400,
-        "Pawning advance cannot be greater than total declared value of articles"
+        errorHandler(
+          400,
+          "Pawning advance cannot be greater than total declared value of articles"
+        )
       );
     }
 
     // Insert into pawning_ticket table
     const [result] = await pool.query(
-      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_Date,Gross_Weight,Assessed_Value,Net_Weight,Payable_Value,Pawning_Advance,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_Date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [
-        data.ticketNo,
-        data.grantSeqNo,
-        data.grantDate,
-        data.customerId,
-        data.periodType,
-        data.period,
-        data.maturityDate,
-        data.grossWeight,
-        data.assessedValue,
-        data.netWeight,
-        data.payableValue,
-        data.pawningAdvance,
-        data.interestRate,
-        data.serviceCharge,
-        data.lateCharge,
-        data.interestApplyOn,
+        data.ticketData.ticketNo,
+        data.ticketData.grantSeqNo,
+        data.ticketData.grantDate,
+        data.ticketData.customerId,
+        data.ticketData.periodType,
+        data.ticketData.period,
+        data.ticketData.maturityDate,
+        data.ticketData.grossWeight,
+        data.ticketData.assessedValue,
+        data.ticketData.netWeight,
+        data.ticketData.payableValue,
+        data.ticketData.pawningAdvance,
+        data.ticketData.interestRate,
+        data.ticketData.serviceCharge,
+        data.ticketData.lateChargePercent,
+        data.ticketData.interestApplyOn,
         req.userId,
-        ,
-        req.branchId,
-        data.productId,
+        req.branchId, // Fixed: removed extra comma
+        data.ticketData.productId,
       ]
     );
 
@@ -121,7 +154,7 @@ export const createPawningTicket = async (req, res, next) => {
           const imageUrl = secure_url || null;
 
           await pool.query(
-            "INSERT INTO ticket_article_images (File_Path, Pawning_Ticket_idPawning_Ticket) VALUES (?,?)",
+            "INSERT INTO ticket_artical_images (File_Path, Pawning_Ticket_idPawning_Ticket) VALUES (?,?)",
             [imageUrl, ticketId]
           );
         }
@@ -131,9 +164,15 @@ export const createPawningTicket = async (req, res, next) => {
     }
 
     // Insert into pawning_ticket_article table
-
     const ticketArticles = data.ticketArticles;
     for (const article of ticketArticles) {
+      // Check net weight vs gross weight before processing
+      if (parseFloat(article.netWeight) > parseFloat(article.grossWeight)) {
+        return next(
+          errorHandler(400, "Net weight cannot be greater than Gross weight")
+        );
+      }
+
       // upload article image if exists
       if (article.image) {
         try {
@@ -144,16 +183,12 @@ export const createPawningTicket = async (req, res, next) => {
         }
       }
 
-      if (article.netWeight > article.grossWeight) {
-        return next(
-          errorHandler(400, "Net weight cannot be greater than Gross weight")
-        );
-      }
       const [result] = await pool.query(
-        "INSERT INTO ticket_articles (Article_category,Article_Condition,Caratage,No_Of_Items,Gross_Weight,Acid_Test_Status,DM_Reading,Net_Weight,Assessed_Value,Declared_Value,Pawning_Ticket_idPawning_Ticket,Image) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO ticket_articles (Article_type,Article_category,Article_Condition,Caratage,No_Of_Items,Gross_Weight,Acid_Test_Status,DM_Reading,Net_Weight,Assessed_Value,Declared_Value,Pawning_Ticket_idPawning_Ticket,Image_Path) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [
-          article.articleCategory,
-          article.articleCondition,
+          article.type,
+          article.category,
+          article.condition,
           article.caratage,
           article.noOfItems,
           article.grossWeight,
@@ -171,6 +206,7 @@ export const createPawningTicket = async (req, res, next) => {
     res.status(201).json({
       success: true,
       message: "Pawning ticket created successfully",
+      ticketId: ticketId,
     });
   } catch (error) {
     console.error("Error in createPawningTicket:", error);
@@ -548,12 +584,17 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
       return next(errorHandler(400, "Invalid interestMethod. Must be 0 or 1"));
     }
 
+    // Only return the date part as a string (YYYY-MM-DD) for interestApplyOn
+    let interestApplyOnDate = null;
+    if (interestApplyOn instanceof Date && !isNaN(interestApplyOn)) {
+      interestApplyOnDate = interestApplyOn.toISOString().split("T")[0];
+    }
     res.status(200).json({
       success: true,
       interestRate,
       serviceCharge,
       lateChargePrecentage,
-      interestApplyOn,
+      interestApplyOn: interestApplyOnDate,
     });
   } catch (error) {
     console.error("Error in getTicketFinancialDetails:", error);

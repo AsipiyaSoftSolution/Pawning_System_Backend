@@ -14,6 +14,7 @@ import customerRoutes from "./routes/customer.route.js";
 import uiSettingRoutes from "./routes/ui.setting.route.js";
 import pawningProductRoutes from "./routes/pawning.product.route.js";
 import pawningTicketRoutes from "./routes/pawning.ticket.route.js";
+import chartAccountRoutes from "./routes/chart.account.route.js";
 
 dotenv.config();
 
@@ -34,6 +35,7 @@ app.use("/api/customer", customerRoutes);
 app.use("/api/ui-settings", uiSettingRoutes);
 app.use("/api/pawning-product", pawningProductRoutes);
 app.use("/api/pawning-ticket", pawningTicketRoutes);
+app.use("/api/chart-account", chartAccountRoutes);
 
 const PORT = process.env.PORT || 3000;
 

@@ -10,10 +10,16 @@ import {
   sendCaratageAmountForSelectedProductItem,
   getMaxMinPeriod,
   sendAssessedValues,
+  getTicketGrantSummaryData,
 } from "../controllers/pawning.ticket.controller.js";
 const router = express.Router();
 
-router.post("/", protectedRoute, checkUserBranchAccess, createPawningTicket);
+router.post(
+  "/:branchId/create",
+  protectedRoute,
+  checkUserBranchAccess,
+  createPawningTicket
+);
 // Get Grand SEQ.No for today
 router.get(
   "/:branchId/grant-seq-no",
@@ -65,5 +71,13 @@ router.get(
   protectedRoute,
   checkUserBranchAccess,
   sendAssessedValues
+);
+
+// Get ticket grant summary data
+router.get(
+  "/:branchId/grant-summary-data",
+  protectedRoute,
+  checkUserBranchAccess,
+  getTicketGrantSummaryData
 );
 export default router;

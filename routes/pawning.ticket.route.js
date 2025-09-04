@@ -7,8 +7,9 @@ import {
   getProductsAndInterestMethod,
   getProductPlanPeriods,
   searchCustomerByNIC,
-  getCaratages,
+  sendCaratageAmountForSelectedProductItem,
   getMaxMinPeriod,
+  sendAssessedValues,
 } from "../controllers/pawning.ticket.controller.js";
 const router = express.Router();
 
@@ -49,11 +50,20 @@ router.get(
   checkUserBranchAccess,
   searchCustomerByNIC
 );
-// Get caratages
+
+// Get caratage amount and selected product item data
 router.get(
-  "/:branchId/get-caratages/:productPlanId",
+  "/:branchId/get-caratage-and-data",
   protectedRoute,
   checkUserBranchAccess,
-  getCaratages
+  sendCaratageAmountForSelectedProductItem
+);
+
+// Send assessed values to frontend based on caratage amount
+router.get(
+  "/:branchId/assessed-value",
+  protectedRoute,
+  checkUserBranchAccess,
+  sendAssessedValues
 );
 export default router;

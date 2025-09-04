@@ -332,40 +332,120 @@ export const searchCustomerByNIC = async (req, res, next) => {
 
 // Sending article types categories and article conditions are done from company controller
 
-// Send Caratages data
-export const getCaratages = async (req, res, next) => {
+// Send caratage amount and selected product item data to frontend
+export const sendCaratageAmountForSelectedProductItem = async (
+  req,
+  res,
+  next
+) => {
   try {
-    const productPlanId = req.params.productPlanId || req.params.id;
-    if (!productPlanId) {
-      return next(errorHandler(400, "Product Plan ID is required"));
+    const { productId, periodType, period, interestMethod, amount, caratage } =
+      req.query;
+    // Validate
+    console.log(req.query, "req.query");
+    if (!productId || !periodType || !interestMethod || !caratage) {
+      return next(
+        errorHandler(
+          400,
+          "productId, periodType, interestMethod  and caratage are all required"
+        )
+      );
     }
 
-    const [caratageAmount] = await pool.query(
-      "SELECT Amount_For_22_Caratage FROM product_plan WHERE idProduct_Plan = ?",
-      [productPlanId]
+    // Fetch all product items for the product and period type
+    const [productItems] = await pool.query(
+      "SELECT idProduct_Plan, Amount_For_22_Caratage, Minimum_Period, Maximum_Period, Minimum_Amount, Maximum_Amount FROM product_plan WHERE Pawning_Product_idPawning_Product = ? AND Period_Type = ?",
+      [productId, periodType]
     );
 
-    if (
-      !caratageAmount[0] ||
-      caratageAmount[0].Amount_For_22_Caratage == null
-    ) {
-      return next(errorHandler(404, "Caratage amount not found"));
+    let filteredItem = null;
+    if (Number(interestMethod) === 0) {
+      // All records have the same Amount_For_22_Caratage, use the first one
+      if (!productItems.length) {
+        return res.status(404).json({
+          success: false,
+          message: "No product plan found for the given criteria",
+        });
+      }
+      const baseAmount = Number(productItems[0].Amount_For_22_Caratage);
+      const caratNum = Number(caratage);
+      if (isNaN(baseAmount) || isNaN(caratNum)) {
+        return next(errorHandler(400, "Invalid caratage or base amount"));
+      }
+      const amount = parseFloat((baseAmount * (caratNum / 22)).toFixed(2));
+      return res.status(200).json({
+        success: true,
+        caratage: caratNum,
+        amount,
+      });
+    } else if (Number(interestMethod) === 1) {
+      // Filter by period between min and max period
+      const periodNum = Number(period);
+      filteredItem = productItems.find((item) => {
+        const min = Number(item.Minimum_Period);
+        const max = Number(item.Maximum_Period);
+        return periodNum >= min && periodNum <= max;
+      });
+      if (!filteredItem) {
+        return res.status(404).json({
+          success: false,
+          message: "No matching product plan found for the given criteria",
+        });
+      }
+      const caratages = [16, 17, 18, 19, 20, 21, 22, 23, 24];
+      const baseAmount = Number(filteredItem.Amount_For_22_Caratage);
+      const caratageData = caratages.map((carat) => ({
+        carat,
+        amount: parseFloat((baseAmount * (carat / 22)).toFixed(2)),
+      }));
+      const caratNum = Number(caratage);
+      const found = caratageData.find((c) => c.carat === caratNum);
+      if (!found) {
+        return res.status(404).json({
+          success: false,
+          message: "Invalid caratage value. Must be between 16 and 24.",
+        });
+      }
+      return res.status(200).json({
+        success: true,
+        productPlan: filteredItem,
+        caratage: caratNum,
+        amount: found.amount,
+        caratageData,
+      });
+    } else {
+      return next(errorHandler(400, "Invalid interest method"));
     }
+  } catch (error) {
+    console.error("Error in sendCaratageAmountForSelectedProductItem:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
 
-    const caratages = [16, 17, 18, 19, 20, 21, 22, 23, 24];
-    const caratageData = caratages.map((carat) => ({
-      carat,
-      amount: parseFloat(
-        (caratageAmount[0].Amount_For_22_Caratage * (carat / 22)).toFixed(2)
-      ),
-    }));
+// send assessed values for each company
+export const sendAssessedValues = async (req, res, next) => {
+  try {
+    const { caratage } = req.query;
+    if (!caratage) {
+      return next(errorHandler(400, "Caratage is required"));
+    }
+    const [assessedValue] = await pool.query(
+      "SELECT Amount FROM  assessed_value WHERE Carat = ? AND Company_idCompany = ?",
+      [caratage, req.companyId]
+    );
+
+    if (assessedValue.length === 0) {
+      return next(
+        errorHandler(404, "No assessed values found for the given caratage")
+      );
+    }
 
     res.status(200).json({
       success: true,
-      caratageData,
+      assessedValue: assessedValue[0],
     });
   } catch (error) {
-    console.error("Error in getCaratages:", error);
+    console.error("Error in sendAssessedValues:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

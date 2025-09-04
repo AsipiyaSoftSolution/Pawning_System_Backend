@@ -449,3 +449,114 @@ export const sendAssessedValues = async (req, res, next) => {
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
+
+// send interest rate , service charge and late charge percentage for a specific ticket
+export const getTicketGrantSummaryData = async (req, res, next) => {
+  try {
+    const { productId, periodType, period, pawningAdvance, interestMethod } =
+      req.query;
+
+    if (!productId || !periodType || !interestMethod || !pawningAdvance) {
+      return next(
+        errorHandler(
+          400,
+          "productId, periodType, interestMethod and pawningAdvance are all required"
+        )
+      );
+    }
+
+    let productPlans;
+    let interestRate = 0;
+    let serviceCharge = 0;
+    let lateChargePrecentage = 0;
+    let interestApplyOn = null;
+
+    // Convert interestMethod to number for comparison
+    const interestMethodNum = Number(interestMethod);
+
+    if (interestMethodNum === 1) {
+      // interest method is Interest for Period
+      // get the matching product plans
+      [productPlans] = await pool.query(
+        "SELECT * FROM product_plan WHERE Pawning_Product_idPawning_Product = ? AND Period_Type = ?",
+        [productId, periodType]
+      );
+
+      if (productPlans.length === 0) {
+        return next(
+          errorHandler(404, "No product plans found for the given criteria")
+        );
+      }
+
+      // filter by period
+      const periodNum = Number(period);
+      const filteredPlan = productPlans.find((plan) => {
+        const min = Number(plan.Minimum_Period);
+        const max = Number(plan.Maximum_Period);
+        return periodNum >= min && periodNum <= max;
+      });
+
+      if (!filteredPlan) {
+        return next(errorHandler(404, "No matching product plan found"));
+      }
+
+      interestRate = Number(filteredPlan.Interest);
+      serviceCharge = Number(filteredPlan.Service_Charge_Value);
+      lateChargePrecentage = Number(filteredPlan.Late_Charge);
+
+      // Fixed date calculation - add days to current date
+      const currentDate = new Date();
+      const daysToAdd = Number(filteredPlan.Interest_Calculate_After);
+      interestApplyOn = new Date(
+        currentDate.getTime() + daysToAdd * 24 * 60 * 60 * 1000
+      );
+    } else if (interestMethodNum === 0) {
+      [productPlans] = await pool.query(
+        "SELECT * FROM product_plan WHERE Pawning_Product_idPawning_Product = ? AND Period_Type = ?",
+        [productId, periodType]
+      );
+
+      if (productPlans.length === 0) {
+        return next(
+          errorHandler(404, "No product plans found for the given criteria")
+        );
+      }
+
+      // have to filter by Minimum_Amount and Maximum_Amount
+      const advanceNum = Number(pawningAdvance);
+      const filteredPlan = productPlans.find((plan) => {
+        const min = Number(plan.Minimum_Amount);
+        const max = Number(plan.Maximum_Amount);
+        return advanceNum >= min && advanceNum <= max;
+      });
+
+      if (!filteredPlan) {
+        return next(errorHandler(404, "No matching product plan found"));
+      }
+
+      interestRate = Number(filteredPlan.Interest);
+      serviceCharge = Number(filteredPlan.Service_Charge_Value);
+      lateChargePrecentage = Number(filteredPlan.Late_Charge);
+
+      // Fixed date calculation - add days to current date
+      const currentDate = new Date();
+      const daysToAdd = Number(filteredPlan.Interest_Calculate_After);
+      interestApplyOn = new Date(
+        currentDate.getTime() + daysToAdd * 24 * 60 * 60 * 1000
+      );
+    } else {
+      return next(errorHandler(400, "Invalid interestMethod. Must be 0 or 1"));
+    }
+
+    res.status(200).json({
+      success: true,
+      interestRate,
+      serviceCharge,
+      lateChargePrecentage,
+      interestApplyOn,
+    });
+  } catch (error) {
+    console.error("Error in getTicketFinancialDetails:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};

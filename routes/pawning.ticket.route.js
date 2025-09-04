@@ -10,6 +10,7 @@ import {
   sendCaratageAmountForSelectedProductItem,
   getMaxMinPeriod,
   sendAssessedValues,
+  getTicketGrantSummaryData,
 } from "../controllers/pawning.ticket.controller.js";
 const router = express.Router();
 
@@ -65,5 +66,13 @@ router.get(
   protectedRoute,
   checkUserBranchAccess,
   sendAssessedValues
+);
+
+// Get ticket grant summary data
+router.get(
+  "/:branchId/grant-summary-data",
+  protectedRoute,
+  checkUserBranchAccess,
+  getTicketGrantSummaryData
 );
 export default router;

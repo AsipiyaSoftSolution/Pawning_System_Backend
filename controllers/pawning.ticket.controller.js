@@ -2,6 +2,7 @@ import { errorHandler } from "../utils/errorHandler.js";
 import { pool } from "../utils/db.js";
 import { getPaginationData } from "../utils/helper.js";
 import { uploadImage } from "../utils/cloudinary.js";
+import { createPawningTicketLogOnCreate } from "../utils/pawning.ticket.logs.js";
 // Create Pawning Ticket
 export const createPawningTicket = async (req, res, next) => {
   try {
@@ -203,10 +204,22 @@ export const createPawningTicket = async (req, res, next) => {
       );
     }
 
+    let logMessage;
+    const success = await createPawningTicketLogOnCreate(
+      ticketId,
+      "CREATE",
+      req.userId
+    );
+
+    if (!success) {
+      logMessage = "failed to create log entry";
+    }
+
     res.status(201).json({
       success: true,
-      message: "Pawning ticket created successfully",
-      ticketId: ticketId,
+      message: logMessage
+        ? `Pawning ticket created successfully. but ${logMessage}`
+        : "Pawning ticket created successfully.",
     });
   } catch (error) {
     console.error("Error in createPawningTicket:", error);

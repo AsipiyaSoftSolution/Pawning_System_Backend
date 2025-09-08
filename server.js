@@ -20,12 +20,30 @@ import pawningTicketPaymentRoutes from "./routes/pawning.ticket.payment.route.js
 dotenv.config();
 
 const app = express();
+// CORS: exact match, no trailing slash; also allows localhost dev
+const CLIENT = (
+  process.env.CLIENT_URL || "https://pawning.asipbook.com"
+).replace(/\/$/, "");
+
 app.use(
   cors({
-    origin: process.env.CLIENT_URL || "http://localhost:5173",
+    origin(origin, cb) {
+      if (!origin) return cb(null, true); // same-origin / server-to-server
+      if (origin === CLIENT) return cb(null, true); // production frontend
+      if (
+        origin === "http://localhost:5173" ||
+        origin === "http://127.0.0.1:5173"
+      )
+        return cb(null, true); // dev
+      return cb(new Error(`CORS blocked: ${origin}`));
+    },
     credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+    optionsSuccessStatus: 204,
   })
 );
+
 app.use(express.json({ limit: "10mb" }));
 app.use(cookieParser());
 

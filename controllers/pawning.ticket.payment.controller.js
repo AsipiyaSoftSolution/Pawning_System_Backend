@@ -14,7 +14,7 @@ export const searchByTickerNumberCustomerNICOrName = async (req, res, next) => {
     const searchPattern = formatSearchPattern(searchTerm); // Format the search term for SQL LIKE query
 
     const [result] = await pool.query(
-      "SELECT pt.idPawning_Ticket, pt.Ticket_No FROM pawning_ticket pt JOIN customer c on pt.Customer_idCustomer = c.idCustomer WHERE (pt.ticket_number LIKE ? OR c.NIC LIKE ? OR c.First_Name LIKE ?)  GROUP BY pt.idPawning_Ticket",
+      "SELECT pt.idPawning_Ticket, pt.Ticket_No, c.Full_name, c.NIC FROM pawning_ticket pt JOIN customer c on pt.Customer_idCustomer = c.idCustomer WHERE (pt.Ticket_No LIKE ? OR c.NIC LIKE ? OR c.First_Name LIKE ?)  GROUP BY pt.idPawning_Ticket",
       [searchPattern, searchPattern, searchPattern]
     );
 
@@ -48,7 +48,7 @@ export const getTicketDataById = async (req, res, next) => {
 
     //fetch ticket initial data
     [ticketData] = await pool.query(
-      "SELECT idPawning_Ticket, Ticket_No,Pawning_Product_idPawning_Product,Period,Date_Time,Status,Maturity_date,Pawning_Advance_Amount,Customer_idCustomer,Gross_Weight,Net_Weight,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,User_idUser,Note FROM pawning_ticket WHERE idPawning_Ticket = ? AND  Branch_idBranch = ?",
+      "SELECT idPawning_Ticket, Ticket_No,Pawning_Product_idPawning_Product,Period,Date_Time,Status,Maturity_date,Pawning_Advance_Amount,Customer_idCustomer,Gross_Weight,Net_Weight,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,User_idUser,Note,Interest_apply_on,Period_Type FROM pawning_ticket WHERE idPawning_Ticket = ? AND  Branch_idBranch = ?",
       [ticketId, req.branchId]
     );
 
@@ -83,7 +83,7 @@ export const getTicketDataById = async (req, res, next) => {
 
     // fetch customer data for the ticket
     [customerData] = await pool.query(
-      "SELECT idCustomer,Full_name,Risk_Level FROM customer WHERE idCustomer = ? ",
+      "SELECT idCustomer,Full_name,Risk_Level,Mobile_No FROM customer WHERE idCustomer = ? ",
       [ticketData[0].Customer_idCustomer]
     );
 
@@ -136,11 +136,13 @@ export const getTicketDataById = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      ticketData: ticketData[0],
-      customerData: customerData[0],
-      articleItems,
-      ticketCharges: ticketCharges[0] || {},
-      paymentHistory,
+      ticketDetails: {
+        ticketData: ticketData[0],
+        customerData: customerData[0],
+        articleItems,
+        ticketCharges: ticketCharges[0] || {},
+        paymentHistory,
+      },
     });
   } catch (error) {
     console.error("Error fetching ticket data by ID:", error);
@@ -151,18 +153,18 @@ export const getTicketDataById = async (req, res, next) => {
 // Return ticket log data by ID
 export const getTicketLogDataById = async (req, res, next) => {
   try {
-    const { ticketId } = req.params.id || req.params.ticketId;
+    const ticketId = req.params.id || req.params.ticketId;
     if (!ticketId) {
       return next(errorHandler(400, "Ticket ID is required"));
     }
 
     const [result] = await pool.query(
-      "SELECT * FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? GROUP BY Type",
+      `SELECT tl.*, u.full_name AS officerName
+   FROM ticket_log tl
+   LEFT JOIN user u ON tl.User_idUser = u.idUser
+   WHERE tl.Pawning_Ticket_idPawning_Ticket = ?`,
       [ticketId]
     );
-    if (result.length === 0) {
-      return next(errorHandler(404, "No ticket logs found for the given ID"));
-    }
 
     res.status(200).json({
       success: true,

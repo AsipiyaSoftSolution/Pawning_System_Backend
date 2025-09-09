@@ -42,7 +42,7 @@ export const createPawningTicket = async (req, res, next) => {
       "netWeight",
       "assessedValue",
       "declaredValue",
-      "image",
+      //"image",
     ];
 
     // Check for missing required fields in the main data object
@@ -366,9 +366,6 @@ export const searchCustomerByNIC = async (req, res, next) => {
       [NIC]
     );
 
-    if (customer.length === 0) {
-      return next(errorHandler(404, "Customer not found"));
-    }
     res.status(200).json({
       success: true,
       customer: customer[0] || null,

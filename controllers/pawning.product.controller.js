@@ -387,11 +387,13 @@ export const createPawningProduct = async (req, res, next) => {
           plan.interestType,
           plan.interest || 0,
           plan.interestAfter,
-          plan.serviceChargeValueType,
-          plan.serviceChargeValue || 0,
-          plan.earlySettlementChargeValueType,
-          plan.earlySettlementChargeValue || 0,
-          plan.lateChargePerDay || 0,
+          plan.serviceChargeValueType || serviceChargeValueType || "inactive",
+          plan.serviceChargeValue || serviceChargeValue || 0,
+          plan.earlySettlementChargeValueType ||
+            earlySettlementChargeValueType ||
+            "inactive",
+          plan.earlySettlementChargeValue || earlySettlementChargeValue || 0,
+          plan.lateChargePerDay || lateChargePresentage || 0,
           amount22CaratValue,
           req.userId,
           new Date(),

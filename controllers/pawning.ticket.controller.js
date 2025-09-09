@@ -42,7 +42,7 @@ export const createPawningTicket = async (req, res, next) => {
       "netWeight",
       "assessedValue",
       "declaredValue",
-      "image",
+      //"image",
     ];
 
     // Check for missing required fields in the main data object

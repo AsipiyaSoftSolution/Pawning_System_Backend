@@ -231,12 +231,15 @@ export const createPawningTicket = async (req, res, next) => {
 export const getGrandSeqNo = async (req, res, next) => {
   try {
     const [result] = await pool.query(
-      "SELECT COUNT(*) AS count FROM pawning_ticket WHERE created_at = CURDATE()"
+      "SELECT COUNT(*) AS count FROM pawning_ticket WHERE DATE(Date_Time) = CURDATE()"
     );
-
+    const count =
+      result && result[0] && typeof result[0].count === "number"
+        ? result[0].count
+        : 0;
     res.status(200).json({
       success: true,
-      grandSeqNo: result[0].count + 1,
+      grandSeqNo: count + 1,
     });
   } catch (error) {
     console.error("Error in getGrandSeqNo:", error);
@@ -608,6 +611,107 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Error in getTicketFinancialDetails:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// get ticket data by id
+export const getTicketDataById = async (req, res, next) => {
+  try {
+    const ticketId = req.params.id || req.params.ticketId;
+    if (!ticketId) {
+      return next(errorHandler(400, "Ticket ID is required"));
+    }
+
+    let ticketData;
+    let customerData;
+    let articleItems;
+
+    [ticketData] = await pool.query(
+      "SELECT * FROM pawning_ticket WHERE idPawning_Ticket = ? AND  Branch_idBranch = ?",
+      [ticketId, req.branchId]
+    );
+
+    if (ticketData.length === 0) {
+      return next(errorHandler(404, "No ticket found for the given ID"));
+    }
+
+    // fetch ticket images
+    const [ticketImages] = await pool.query(
+      "SELECT File_Path FROM ticket_artical_images WHERE Pawning_Ticket_idPawning_Ticket = ?",
+      [ticketData[0].idPawning_Ticket]
+    );
+
+    // attach images to ticket data
+    ticketData[0].images = ticketImages || [];
+
+    delete ticketData[0].Branch_idBranch; // remove branch id from response
+
+    // fetch the user name who created the ticket
+    const [userData] = await pool.query(
+      "SELECT full_name FROM user WHERE idUser = ?",
+      [ticketData[0].User_idUser]
+    );
+    ticketData[0].createdUser = userData[0]?.full_name || "Unknown User";
+    delete ticketData[0].User_idUser; // remove User_idUser from ticket data
+
+    // get the product name for the ticket
+    const [productData] = await pool.query(
+      "SELECT Name FROM pawning_product WHERE idPawning_Product = ?",
+      [ticketData[0].Pawning_Product_idPawning_Product]
+    );
+
+    ticketData[0].productName = productData[0].Name || "Unknown Product"; // attach product name to ticket data
+    delete ticketData[0].Pawning_Product_idPawning_Product; // remove product id from response
+
+    // fetch customer data for the ticket
+    [customerData] = await pool.query(
+      "SELECT idCustomer,NIC, Full_name,Address1,Address2,Address3,Mobile_No,Status,Risk_Level FROM customer WHERE idCustomer = ?",
+      [ticketData[0].Customer_idCustomer]
+    );
+
+    if (customerData.length === 0) {
+      return next(
+        errorHandler(
+          404,
+          "No customer found for the ticket's customer ID: " +
+            ticketData[0].Customer_idCustomer
+        )
+      );
+    }
+
+    // fetch ticket article items with JOINs for type and category names, casting VARCHAR keys
+    [articleItems] = await pool.query(
+      `SELECT ta.*, 
+              at.Description AS ArticleTypeName, 
+              ac.Description AS categoryName
+         FROM ticket_articles ta
+    LEFT JOIN article_types at ON CAST(ta.Article_type AS UNSIGNED) = at.idArticle_Types
+    LEFT JOIN article_categories ac ON CAST(ta.Article_category AS UNSIGNED) = ac.idArticle_Categories
+        WHERE ta.Pawning_Ticket_idPawning_Ticket = ?`,
+      [ticketData[0].idPawning_Ticket]
+    );
+
+    if (articleItems.length === 0) {
+      return next(errorHandler(404, "No article items found for the ticket"));
+    }
+
+    // Remove Article_type and Article_category from each item in the response
+    for (let item of articleItems) {
+      delete item.Article_type;
+      delete item.Article_category;
+    }
+
+    res.status(200).json({
+      success: true,
+      ticketData: {
+        ticketData: ticketData[0],
+        customerData: customerData[0],
+        articleItems,
+      },
+    });
+  } catch (error) {
+    console.error("Error in getTicketDataById:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

@@ -11,6 +11,7 @@ import {
   getMaxMinPeriod,
   sendAssessedValues,
   getTicketGrantSummaryData,
+  getTicketDataById,
 } from "../controllers/pawning.ticket.controller.js";
 const router = express.Router();
 
@@ -80,4 +81,11 @@ router.get(
   checkUserBranchAccess,
   getTicketGrantSummaryData
 );
+
+router.get(
+  "/:branchId/ticket/:ticketId",
+  protectedRoute,
+  checkUserBranchAccess,
+  getTicketDataById
+); // Get ticket all data by ID
 export default router;

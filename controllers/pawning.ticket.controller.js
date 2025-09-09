@@ -231,12 +231,15 @@ export const createPawningTicket = async (req, res, next) => {
 export const getGrandSeqNo = async (req, res, next) => {
   try {
     const [result] = await pool.query(
-      "SELECT COUNT(*) AS count FROM pawning_ticket WHERE created_at = CURDATE()"
+      "SELECT COUNT(*) AS count FROM pawning_ticket WHERE DATE(Date_Time) = CURDATE()"
     );
-
+    const count =
+      result && result[0] && typeof result[0].count === "number"
+        ? result[0].count
+        : 0;
     res.status(200).json({
       success: true,
-      grandSeqNo: result[0].count + 1,
+      grandSeqNo: count + 1,
     });
   } catch (error) {
     console.error("Error in getGrandSeqNo:", error);

@@ -261,8 +261,8 @@ export const createPawningProduct = async (req, res, next) => {
 
     // Ready the data of service charge for pawning product table
     const serviceCharge = data.serviceCharge?.status === "Active" ? 1 : 0;
-    const serviceChargeCreateAs = data.serviceCharge?.chargeType || null;
-    const serviceChargeValueType = data.serviceCharge?.valueType || null;
+    const serviceChargeCreateAs = data.serviceCharge?.chargeType || "inactive";
+    const serviceChargeValueType = data.serviceCharge?.valueType || "inactive";
     const serviceChargeValue = data.serviceCharge?.value || 0;
 
     // Ready the data of early settlement for pawning product table and early settlement charges table
@@ -271,21 +271,21 @@ export const createPawningProduct = async (req, res, next) => {
         ? 1
         : 0;
     const earlySettlementChargeCreateAs =
-      data.earlysettlementsData?.newEarlySettlement?.chargeType || null;
+      data.earlysettlementsData?.newEarlySettlement?.chargeType || "inactive";
     let earlySettlementChargeValueType = null;
     let earlySettlementChargeValue = null;
 
     // Handle different early settlement charge types
     if (earlySettlementChargeCreateAs === "Charge For Product") {
       earlySettlementChargeValueType =
-        data.earlysettlementsData?.newEarlySettlement?.valueType || null;
+        data.earlysettlementsData?.newEarlySettlement?.valueType || "inactive";
       earlySettlementChargeValue =
-        data.earlysettlementsData?.newEarlySettlement?.value || null;
+        data.earlysettlementsData?.newEarlySettlement?.value || "inactive";
     }
 
     // Ready the late charge data for pawning product table
     const lateCharge = data.lateCharge.status === "Active" ? 1 : 0;
-    const lateChargeCreateAs = data.lateCharge.chargeType || null;
+    const lateChargeCreateAs = data.lateCharge.chargeType || "inactive";
     const lateChargePresentage = data.lateCharge.percentage || 0;
 
     // Insert into Pawning product table first

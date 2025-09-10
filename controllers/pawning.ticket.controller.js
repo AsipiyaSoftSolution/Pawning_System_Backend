@@ -716,3 +716,30 @@ export const getTicketDataById = async (req, res, next) => {
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
+
+// get ticket comments
+export const getTicketComments = async (req, res, next) => {
+  try {
+    const ticketId = req.params.id || req.params.ticketId;
+    if (!ticketId) {
+      return next(errorHandler(400, "Ticket ID is required"));
+    }
+
+    const [comments] = await pool.query(
+      `SELECT tc.*, u.Full_name
+         FROM ticket_comment tc
+    LEFT JOIN user u ON tc.User_idUser = u.idUser
+        WHERE tc.Pawning_Ticket_idPawning_Ticket = ? 
+       `,
+      [ticketId]
+    );
+
+    res.status(200).json({
+      success: true,
+      comments: comments || [],
+    });
+  } catch (error) {
+    console.error("Error in getTicketComments:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};

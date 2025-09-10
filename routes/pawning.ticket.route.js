@@ -12,6 +12,7 @@ import {
   sendAssessedValues,
   getTicketGrantSummaryData,
   getTicketDataById,
+  getTicketComments,
 } from "../controllers/pawning.ticket.controller.js";
 const router = express.Router();
 
@@ -88,4 +89,11 @@ router.get(
   checkUserBranchAccess,
   getTicketDataById
 ); // Get ticket all data by ID
+
+router.get(
+  "/:branchId/ticket-comments/:ticketId",
+  protectedRoute,
+  checkUserBranchAccess,
+  getTicketComments
+); // Get ticket comments by ticket ID
 export default router;

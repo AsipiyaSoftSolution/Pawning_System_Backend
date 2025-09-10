@@ -208,7 +208,8 @@ export const createPawningTicket = async (req, res, next) => {
     const success = await createPawningTicketLogOnCreate(
       ticketId,
       "CREATE",
-      req.userId
+      req.userId,
+      data.ticketData.pawningAdvance
     );
 
     if (!success) {

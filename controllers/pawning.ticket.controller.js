@@ -2,7 +2,10 @@ import { errorHandler } from "../utils/errorHandler.js";
 import { pool } from "../utils/db.js";
 import { getPaginationData } from "../utils/helper.js";
 import { uploadImage } from "../utils/cloudinary.js";
-import { createPawningTicketLogOnCreate } from "../utils/pawning.ticket.logs.js";
+import {
+  createPawningTicketLogOnCreate,
+  markServiceChargeInTicketLog,
+} from "../utils/pawning.ticket.logs.js";
 // Create Pawning Ticket
 export const createPawningTicket = async (req, res, next) => {
   try {
@@ -227,23 +230,25 @@ export const createPawningTicket = async (req, res, next) => {
       );
     }
 
-    let logMessage;
-    const success = await createPawningTicketLogOnCreate(
+    // create initial log entry for ticket creation
+    await createPawningTicketLogOnCreate(
       ticketId,
       "CREATE",
       req.userId,
       data.ticketData.pawningAdvance
     );
 
-    if (!success) {
-      logMessage = "failed to create log entry";
-    }
+    // create service charge log entry
+    await markServiceChargeInTicketLog(
+      ticketId,
+      "SERVICE CHARGE",
+      req.userId,
+      data.ticketData.serviceCharge
+    );
 
     res.status(201).json({
       success: true,
-      message: logMessage
-        ? `Pawning ticket created successfully. but ${logMessage}`
-        : "Pawning ticket created successfully.",
+      message: "Pawning ticket created successfully.",
     });
   } catch (error) {
     console.error("Error in createPawningTicket:", error);
@@ -650,6 +655,7 @@ export const getTicketDataById = async (req, res, next) => {
     let ticketData;
     let customerData;
     let articleItems;
+    let balanceLogs;
 
     [ticketData] = await pool.query(
       "SELECT * FROM pawning_ticket WHERE idPawning_Ticket = ? AND  Branch_idBranch = ?",
@@ -726,12 +732,27 @@ export const getTicketDataById = async (req, res, next) => {
       delete item.Article_category;
     }
 
+    // fetch the latest record of balance data from ticket logs
+    [balanceLogs] = await pool.query(
+      `SELECT  Advance_Balance,Interest_Balance,Aditional_Charge_Balance,Late_Charges_Balance,Total_Balance,Service_Charge_Balance
+         FROM ticket_log
+        WHERE Pawning_Ticket_idPawning_Ticket = ?
+     ORDER BY idTicket_Log DESC
+        LIMIT 1`,
+      [ticketData[0].idPawning_Ticket]
+    );
+
+    if (!balanceLogs || balanceLogs.length === 0) {
+      return next(errorHandler(404, "No balance log found for the ticket"));
+    }
+
     res.status(200).json({
       success: true,
       ticketData: {
         ticketData: ticketData[0],
         customerData: customerData[0],
         articleItems,
+        balanceData: balanceLogs[0],
       },
     });
   } catch (error) {

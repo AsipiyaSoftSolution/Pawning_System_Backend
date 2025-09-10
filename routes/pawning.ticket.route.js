@@ -13,6 +13,7 @@ import {
   getTicketGrantSummaryData,
   getTicketDataById,
   getTicketComments,
+  createTicketComment,
 } from "../controllers/pawning.ticket.controller.js";
 const router = express.Router();
 
@@ -96,4 +97,11 @@ router.get(
   checkUserBranchAccess,
   getTicketComments
 ); // Get ticket comments by ticket ID
+
+router.post(
+  "/:branchId/ticket-comment",
+  protectedRoute,
+  checkUserBranchAccess,
+  createTicketComment
+); // Create a new ticket comment
 export default router;

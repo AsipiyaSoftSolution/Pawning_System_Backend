@@ -65,6 +65,19 @@ export const getTicketDataById = async (req, res, next) => {
     // attach images to ticket data
     ticketData[0].images = ticketImages;
 
+    // Fetch and attach the last comment for this ticket if exists
+    const [lastCommentData] = await pool.query(
+      `SELECT tc.*, u.Full_name
+         FROM ticket_comment tc
+    LEFT JOIN user u ON tc.User_idUser = u.idUser
+        WHERE tc.Pawning_Ticket_idPawning_Ticket = ?
+     ORDER BY tc.idTicket_Comment DESC
+        LIMIT 1`,
+      [ticketData[0].idPawning_Ticket]
+    );
+
+    ticketData[0].lastComment = lastCommentData[0] || null;
+
     // get the product name for the ticket
     const [productData] = await pool.query(
       "SELECT Name FROM pawning_product WHERE idPawning_Product = ?",

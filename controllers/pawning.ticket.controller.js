@@ -208,7 +208,8 @@ export const createPawningTicket = async (req, res, next) => {
     const success = await createPawningTicketLogOnCreate(
       ticketId,
       "CREATE",
-      req.userId
+      req.userId,
+      data.ticketData.pawningAdvance
     );
 
     if (!success) {
@@ -712,6 +713,75 @@ export const getTicketDataById = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Error in getTicketDataById:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// get ticket comments
+export const getTicketComments = async (req, res, next) => {
+  try {
+    const ticketId = req.params.id || req.params.ticketId;
+    if (!ticketId) {
+      return next(errorHandler(400, "Ticket ID is required"));
+    }
+
+    const [comments] = await pool.query(
+      `SELECT tc.*, u.Full_name
+         FROM ticket_comment tc
+    LEFT JOIN user u ON tc.User_idUser = u.idUser
+        WHERE tc.Pawning_Ticket_idPawning_Ticket = ? 
+       `,
+      [ticketId]
+    );
+
+    res.status(200).json({
+      success: true,
+      comments: comments || [],
+    });
+  } catch (error) {
+    console.error("Error in getTicketComments:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// create ticket comment
+export const createTicketComment = async (req, res, next) => {
+  try {
+    const { comment, ticketId } = req.body;
+    if (!comment) {
+      return next(errorHandler(400, "Comment text is required"));
+    }
+
+    if (!ticketId) {
+      return next(errorHandler(400, "Ticket ID is required"));
+    }
+
+    const [result] = await pool.query(
+      "INSERT INTO ticket_comment (Comment, Pawning_Ticket_idPawning_Ticket, User_idUser,Date_Time) VALUES (?,?,?, NOW())",
+      [comment, ticketId, req.userId]
+    );
+
+    if (result.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to add comment"));
+    }
+
+    // return the created comment with user name and timestamp
+    const [createdComment] = await pool.query(
+      `SELECT tc.*, u.Full_name
+         FROM ticket_comment tc
+    LEFT JOIN user u ON tc.User_idUser = u.idUser
+        WHERE tc.idTicket_Comment = ? 
+       `,
+      [result.insertId]
+    );
+
+    res.status(201).json({
+      message: "Comment added successfully",
+      success: true,
+      comment: createdComment[0],
+    });
+  } catch (error) {
+    console.error("Error in createTicketComment:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

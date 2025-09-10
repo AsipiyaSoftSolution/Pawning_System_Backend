@@ -65,6 +65,19 @@ export const getTicketDataById = async (req, res, next) => {
     // attach images to ticket data
     ticketData[0].images = ticketImages;
 
+    // Fetch and attach the last comment for this ticket if exists
+    const [lastCommentData] = await pool.query(
+      `SELECT tc.*, u.Full_name
+         FROM ticket_comment tc
+    LEFT JOIN user u ON tc.User_idUser = u.idUser
+        WHERE tc.Pawning_Ticket_idPawning_Ticket = ?
+     ORDER BY tc.idTicket_Comment DESC
+        LIMIT 1`,
+      [ticketData[0].idPawning_Ticket]
+    );
+
+    ticketData[0].lastComment = lastCommentData[0] || null;
+
     // get the product name for the ticket
     const [productData] = await pool.query(
       "SELECT Name FROM pawning_product WHERE idPawning_Product = ?",
@@ -86,6 +99,19 @@ export const getTicketDataById = async (req, res, next) => {
       "SELECT idCustomer,Full_name,Risk_Level,Mobile_No FROM customer WHERE idCustomer = ? ",
       [ticketData[0].Customer_idCustomer]
     );
+
+    // fetch customer ative,inactive and overdue ticket counts and attach them to customer data
+    const [ticketCounts] = await pool.query(
+      "SELECT Status, COUNT(*) AS count FROM pawning_ticket WHERE Customer_idCustomer = ? AND Branch_idBranch = ? GROUP BY Status",
+      [ticketData[0].Customer_idCustomer, req.branchId]
+    );
+
+    customerData[0].activeTickets =
+      ticketCounts.find((t) => parseInt(t.Status) === 1)?.count || 0;
+    customerData[0].settledTickets =
+      ticketCounts.find((t) => parseInt(t.Status) === 2)?.count || 0;
+    customerData[0].overdueTickets =
+      ticketCounts.find((t) => parseInt(t.Status) === 3)?.count || 0;
 
     // article items for the ticket
     [articleItems] = await pool.query(

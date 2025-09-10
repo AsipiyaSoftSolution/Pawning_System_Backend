@@ -42,6 +42,7 @@ export const createPawningTicket = async (req, res, next) => {
       "netWeight",
       "assessedValue",
       "declaredValue",
+      "advanceValue",
       //"image",
     ];
 
@@ -124,21 +125,19 @@ export const createPawningTicket = async (req, res, next) => {
       [data.ticketData.productId]
     );
 
-    // find the service charge rate
+    // calculate service charge rate based on type
     let serviceChargeRate = 0;
     if (productData[0]?.Service_Charge_Value_Type === "Percentage") {
       serviceChargeRate =
         parseFloat(data.ticketData.pawningAdvance) *
         (parseFloat(data.ticketData.serviceCharge) / 100);
-    }
-
-    if (productData[0]?.Service_Charge_Value_Type === "Fixed Amount") {
+    } else if (productData[0]?.Service_Charge_Value_Type === "Fixed Amount") {
       serviceChargeRate = parseFloat(data.ticketData.serviceCharge);
     }
 
     // Insert into pawning_ticket table
     const [result] = await pool.query(
-      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_Date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount,Service_Charge_Type,Service_Charge_Rate) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_Date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount,Service_Charge_Type,Service_Charge_Rate,Early_Settlement_Charge_Balance,Additiona_Charges_Balance) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [
         data.ticketData.ticketNo,
         data.ticketData.grantSeqNo,
@@ -162,6 +161,8 @@ export const createPawningTicket = async (req, res, next) => {
         data.ticketData.pawningAdvance, // as total amount
         productData[0]?.Service_Charge_Value_Type || "unknown",
         serviceChargeRate, // service charge rate
+        0, // initial early settlement charge balance set to 0
+        0, // initial additional charges balance set to 0
       ]
     );
 
@@ -206,7 +207,7 @@ export const createPawningTicket = async (req, res, next) => {
       }
 
       const [result] = await pool.query(
-        "INSERT INTO ticket_articles (Article_type,Article_category,Article_Condition,Caratage,No_Of_Items,Gross_Weight,Acid_Test_Status,DM_Reading,Net_Weight,Assessed_Value,Declared_Value,Pawning_Ticket_idPawning_Ticket,Image_Path) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO ticket_articles (Article_type,Article_category,Article_Condition,Caratage,No_Of_Items,Gross_Weight,Acid_Test_Status,DM_Reading,Net_Weight,Assessed_Value,Declared_Value,Pawning_Ticket_idPawning_Ticket,Image_Path,Advanced_Value) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [
           article.type,
           article.category,
@@ -221,6 +222,7 @@ export const createPawningTicket = async (req, res, next) => {
           article.declaredValue,
           ticketId,
           article.image,
+          article.advanceValue || 0, // default to 0 if not provided
         ]
       );
     }

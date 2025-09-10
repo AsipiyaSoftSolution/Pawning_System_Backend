@@ -118,9 +118,27 @@ export const createPawningTicket = async (req, res, next) => {
       );
     }
 
+    // get the ticket's product service charge type
+    const [productData] = await pool.query(
+      "SELECT Service_Charge_Value_Type FROM pawning_product WHERE idPawning_Product = ?",
+      [data.ticketData.productId]
+    );
+
+    // find the service charge rate
+    let serviceChargeRate = 0;
+    if (productData[0]?.Service_Charge_Value_Type === "Percentage") {
+      serviceChargeRate =
+        parseFloat(data.ticketData.pawningAdvance) *
+        (parseFloat(data.ticketData.serviceCharge) / 100);
+    }
+
+    if (productData[0]?.Service_Charge_Value_Type === "Fixed Amount") {
+      serviceChargeRate = parseFloat(data.ticketData.serviceCharge);
+    }
+
     // Insert into pawning_ticket table
     const [result] = await pool.query(
-      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_Date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_Date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount,Service_Charge_Type,Service_Charge_Rate) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [
         data.ticketData.ticketNo,
         data.ticketData.grantSeqNo,
@@ -142,6 +160,8 @@ export const createPawningTicket = async (req, res, next) => {
         req.branchId, // Fixed: removed extra comma
         data.ticketData.productId,
         data.ticketData.pawningAdvance, // as total amount
+        productData[0]?.Service_Charge_Value_Type || "unknown",
+        serviceChargeRate, // service charge rate
       ]
     );
 

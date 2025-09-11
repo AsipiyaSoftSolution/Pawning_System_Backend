@@ -7,6 +7,7 @@ import {
   markServiceChargeInTicketLog,
 } from "../utils/pawning.ticket.logs.js";
 import { createCustomerLogOnCreateTicket } from "../utils/customer.logs.js";
+import { formatSearchPattern } from "../utils/helper.js";
 // Create Pawning Ticket
 export const createPawningTicket = async (req, res, next) => {
   try {
@@ -424,15 +425,15 @@ export const searchCustomerByNIC = async (req, res, next) => {
     if (!NIC) {
       return next(errorHandler(400, "NIC is required"));
     }
-
-    const [customer] = await pool.query(
-      "SELECT idCustomer,NIC, Full_name,Address1,Address2,Address3,Mobile_No,Status,Risk_Level FROM customer WHERE NIC = ?",
-      [NIC]
+    const formatedNIC = formatSearchPattern(NIC); // Format NIC for SQL LIKE query
+    const [customers] = await pool.query(
+      "SELECT idCustomer,NIC, Full_name,Address1,Address2,Address3,Mobile_No,Status,Risk_Level FROM customer WHERE NIC LIKE ? AND Branch_idBranch = ?",
+      [formatedNIC, req.branchId]
     );
 
     res.status(200).json({
       success: true,
-      customer: customer[0] || null,
+      customer: customers || null,
     });
   } catch (error) {
     console.error("Error in searchCustomerByNIC:", error);

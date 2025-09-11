@@ -75,6 +75,29 @@ app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
 
+/*
+// Manual test endpoint - add this before your cron.schedule
+app.post("/api/test/daily-ticket-log", async (req, res) => {
+  try {
+    console.log("Manual test started at:", new Date().toISOString());
+    await addDailyTicketLog();
+    console.log("Manual test completed successfully");
+
+    res.json({
+      success: true,
+      message: "Daily ticket log job completed successfully",
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("Manual test failed:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+*/
+
 // schedule cron job to run every day at 12AM
 cron.schedule("0 0 * * *", async () => {
   console.log("Running daily ticket log job at:", new Date().toISOString());

@@ -87,7 +87,7 @@ export const addDailyTicketLog = async () => {
 
       // Get the last log date for this ticket to determine where to start backfilling
       const [lastLogResult] = await pool.query(
-        "SELECT Description FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? AND (Type = 'Interest' OR Type = 'Penalty') ORDER BY idTicket_Log DESC LIMIT 1",
+        "SELECT Description FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? AND (Type = 'INTEREST' OR Type = 'PENALTY') ORDER BY idTicket_Log DESC LIMIT 1",
         [ticketId]
       );
 
@@ -115,7 +115,7 @@ export const addDailyTicketLog = async () => {
 
         // Check if we're past maturity date (penalty period)
         const isPenaltyPeriod = currentDate >= maturityDate;
-        const logType = isPenaltyPeriod ? "Penalty" : "Interest";
+        const logType = isPenaltyPeriod ? "PENALTY" : "INTEREST";
 
         // Check if log already exists for this date and type
         const [existingLogResult] = await pool.query(

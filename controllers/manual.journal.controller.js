@@ -71,7 +71,7 @@ export const createManualJournal = async (req, res, next) => {
         const accountId = entries[i].idAccounting_Accounts;
         const debitAmount = entries[i].debitAmount || null;
         const creditAmount = entries[i].creditAmount || null;
-        await createManualJournalLog(journalId, "CREATE", userId, accountId, debitAmount, creditAmount);
+        await createManualJournalLog(journalId, accountId, debitAmount, creditAmount);
       }
       
       await connection.commit();
@@ -109,8 +109,15 @@ export const getAllManualJournals = async (req, res, next) => {
     
     // Build the query with filters
     let query = `
-      SELECT j.idManual_Journal, j.Narration, j.Date, j.Description, j.Amount,
-      u.full_name AS Created_By
+      SELECT 
+        j.Narration,
+        j.Date AS Journal_Date,
+        SUM(j.Amount) AS Total_Amount,
+        MIN(j.idManual_Journal) AS idManual_Journal,
+        MIN(j.Description) AS Description,
+        MIN(j.User_idUser) AS User_idUser,
+        MIN(u.full_name) AS Created_By,
+        MIN(j.Date) AS Created_At
       FROM manual_journal j
       LEFT JOIN user u ON j.User_idUser = u.idUser
       WHERE j.Branch_idBranch = ?`;
@@ -143,41 +150,37 @@ export const getAllManualJournals = async (req, res, next) => {
       queryParams.push(toAmount);
     }
     
+    // Group by Narration and Date (and optionally user)
+    query += ` GROUP BY j.Narration, j.Date`;
+    
     // Get total count for pagination
-    const countQuery = `
-      SELECT COUNT(*) AS total 
-      FROM manual_journal j
-      LEFT JOIN user u ON j.User_idUser = u.idUser
-      WHERE j.Branch_idBranch = ?
-    `;
-    
-    // Add the same filters to count query
+    let countQuery = `
+      SELECT COUNT(*) AS total FROM (
+        SELECT 1
+        FROM manual_journal j
+        WHERE j.Branch_idBranch = ?`;
     let countQueryParams = [branchId];
-    
     if (narration) {
       countQuery += " AND j.Narration LIKE ?";
       countQueryParams.push(`%${narration}%`);
     }
-    
     if (fromDate) {
       countQuery += " AND j.Date >= ?";
       countQueryParams.push(fromDate);
     }
-    
     if (toDate) {
       countQuery += " AND j.Date <= ?";
       countQueryParams.push(toDate);
     }
-    
     if (fromAmount) {
       countQuery += " AND j.Amount >= ?";
       countQueryParams.push(fromAmount);
     }
-    
     if (toAmount) {
       countQuery += " AND j.Amount <= ?";
       countQueryParams.push(toAmount);
     }
+    countQuery += ` GROUP BY j.Narration, j.Date ) AS grouped`;
     
     const paginationData = await getPaginationData(
       countQuery,

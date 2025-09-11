@@ -196,6 +196,7 @@ export const createPawningTicket = async (req, res, next) => {
 
     // Insert into pawning_ticket_article table
     const ticketArticles = data.ticketArticles;
+    let noOfTicketArticles = ticketArticles.length;
     for (const article of ticketArticles) {
       // Check net weight vs gross weight before processing
       if (parseFloat(article.netWeight) > parseFloat(article.grossWeight)) {
@@ -214,6 +215,23 @@ export const createPawningTicket = async (req, res, next) => {
         }
       }
 
+      // Calculate proportional advance value for this article
+      let ticketPawningAdvance = parseFloat(data.ticketData.pawningAdvance); // total pawning advance for the ticket
+      let declaredValueForArticle = parseFloat(article.declaredValue); // declared value for this article
+      let advancedValueForArticle = 0;
+      if (
+        totalDeclaredValue > 0 &&
+        !isNaN(ticketPawningAdvance) &&
+        !isNaN(declaredValueForArticle)
+      ) {
+        advancedValueForArticle = parseFloat(
+          (
+            (declaredValueForArticle / totalDeclaredValue) *
+            ticketPawningAdvance
+          ).toFixed(2)
+        );
+      }
+
       const [result] = await pool.query(
         "INSERT INTO ticket_articles (Article_type,Article_category,Article_Condition,Caratage,No_Of_Items,Gross_Weight,Acid_Test_Status,DM_Reading,Net_Weight,Assessed_Value,Declared_Value,Pawning_Ticket_idPawning_Ticket,Image_Path,Advanced_Value) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [
@@ -230,7 +248,7 @@ export const createPawningTicket = async (req, res, next) => {
           article.declaredValue,
           ticketId,
           article.image,
-          article.advanceValue || 0, // default to 0 if not provided
+          advancedValueForArticle,
         ]
       );
     }

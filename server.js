@@ -1,6 +1,6 @@
 import dotenv from "dotenv";
 import express from "express";
-
+import cron from "node-cron";
 dotenv.config();
 
 import cors from "cors";
@@ -17,6 +17,9 @@ import pawningTicketRoutes from "./routes/pawning.ticket.route.js";
 import chartAccountRoutes from "./routes/chart.account.route.js";
 import pawningTicketPaymentRoutes from "./routes/pawning.ticket.payment.route.js";
 import manualJournalRoutes from "./routes/manual.journal.route.js";
+
+// Shedule cron jobs
+import { addDailyTicketLog } from "./utils/pawning.ticket.logs.js";
 
 dotenv.config();
 
@@ -70,6 +73,17 @@ app.listen(PORT, () => {
     process.exit(1); // Exit the process if database connection fails
   }
   console.log(`Server is running on port ${PORT}`);
+});
+
+// schedule cron job to run every day at 12AM
+cron.schedule("0 0 * * *", async () => {
+  console.log("Running daily ticket log job at:", new Date().toISOString());
+  try {
+    await addDailyTicketLog();
+    console.log("Daily ticket log job completed successfully");
+  } catch (error) {
+    console.error("Daily ticket log job failed:", error);
+  }
 });
 
 // error handle

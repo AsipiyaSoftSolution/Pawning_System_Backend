@@ -2,7 +2,12 @@ import { errorHandler } from "../utils/errorHandler.js";
 import { pool } from "../utils/db.js";
 import { getPaginationData } from "../utils/helper.js";
 import { uploadImage } from "../utils/cloudinary.js";
-import { createPawningTicketLogOnCreate } from "../utils/pawning.ticket.logs.js";
+import {
+  createPawningTicketLogOnCreate,
+  markServiceChargeInTicketLog,
+} from "../utils/pawning.ticket.logs.js";
+import { createCustomerLogOnCreateTicket } from "../utils/customer.logs.js";
+import { formatSearchPattern } from "../utils/helper.js";
 // Create Pawning Ticket
 export const createPawningTicket = async (req, res, next) => {
   try {
@@ -42,6 +47,7 @@ export const createPawningTicket = async (req, res, next) => {
       "netWeight",
       "assessedValue",
       "declaredValue",
+      "advanceValue",
       //"image",
     ];
 
@@ -118,9 +124,25 @@ export const createPawningTicket = async (req, res, next) => {
       );
     }
 
+    // get the ticket's product service charge type
+    const [productData] = await pool.query(
+      "SELECT Service_Charge_Value_Type FROM pawning_product WHERE idPawning_Product = ?",
+      [data.ticketData.productId]
+    );
+
+    // calculate service charge rate based on type
+    let serviceChargeRate = 0;
+    if (productData[0]?.Service_Charge_Value_Type === "Percentage") {
+      serviceChargeRate =
+        parseFloat(data.ticketData.pawningAdvance) *
+        (parseFloat(data.ticketData.serviceCharge) / 100);
+    } else if (productData[0]?.Service_Charge_Value_Type === "Fixed Amount") {
+      serviceChargeRate = parseFloat(data.ticketData.serviceCharge);
+    }
+
     // Insert into pawning_ticket table
     const [result] = await pool.query(
-      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_Date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_Date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount,Service_Charge_Type,Service_Charge_Rate,Early_Settlement_Charge_Balance,Additiona_Charges_Balance,Service_Charge_Balance,Late_Charge_Balance,Interest_Amount_Balance,Balance_Amount) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [
         data.ticketData.ticketNo,
         data.ticketData.grantSeqNo,
@@ -141,6 +163,15 @@ export const createPawningTicket = async (req, res, next) => {
         req.userId,
         req.branchId, // Fixed: removed extra comma
         data.ticketData.productId,
+        data.ticketData.pawningAdvance, // as total amount
+        productData[0]?.Service_Charge_Value_Type || "unknown",
+        serviceChargeRate, // service charge rate
+        0, // initial early settlement charge balance set to 0
+        0, // initial additional charges balance set to 0
+        0, // initial service charge balance set to 0
+        0, // initial late charge balance set to 0
+        0, // initial interest amount balance set to 0
+        data.ticketData.pawningAdvance, // initial balance amount set to pawning advance
       ]
     );
 
@@ -166,6 +197,7 @@ export const createPawningTicket = async (req, res, next) => {
 
     // Insert into pawning_ticket_article table
     const ticketArticles = data.ticketArticles;
+    let noOfTicketArticles = ticketArticles.length;
     for (const article of ticketArticles) {
       // Check net weight vs gross weight before processing
       if (parseFloat(article.netWeight) > parseFloat(article.grossWeight)) {
@@ -184,8 +216,25 @@ export const createPawningTicket = async (req, res, next) => {
         }
       }
 
+      // Calculate proportional advance value for this article
+      let ticketPawningAdvance = parseFloat(data.ticketData.pawningAdvance); // total pawning advance for the ticket
+      let declaredValueForArticle = parseFloat(article.declaredValue); // declared value for this article
+      let advancedValueForArticle = 0;
+      if (
+        totalDeclaredValue > 0 &&
+        !isNaN(ticketPawningAdvance) &&
+        !isNaN(declaredValueForArticle)
+      ) {
+        advancedValueForArticle = parseFloat(
+          (
+            (declaredValueForArticle / totalDeclaredValue) *
+            ticketPawningAdvance
+          ).toFixed(2)
+        );
+      }
+
       const [result] = await pool.query(
-        "INSERT INTO ticket_articles (Article_type,Article_category,Article_Condition,Caratage,No_Of_Items,Gross_Weight,Acid_Test_Status,DM_Reading,Net_Weight,Assessed_Value,Declared_Value,Pawning_Ticket_idPawning_Ticket,Image_Path) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO ticket_articles (Article_type,Article_category,Article_Condition,Caratage,No_Of_Items,Gross_Weight,Acid_Test_Status,DM_Reading,Net_Weight,Assessed_Value,Declared_Value,Pawning_Ticket_idPawning_Ticket,Image_Path,Advanced_Value,Remark) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [
           article.type,
           article.category,
@@ -200,27 +249,39 @@ export const createPawningTicket = async (req, res, next) => {
           article.declaredValue,
           ticketId,
           article.image,
+          advancedValueForArticle,
+          article.remark || null,
         ]
       );
     }
 
-    let logMessage;
-    const success = await createPawningTicketLogOnCreate(
+    // create initial log entry for ticket creation
+    await createPawningTicketLogOnCreate(
       ticketId,
       "CREATE",
       req.userId,
       data.ticketData.pawningAdvance
     );
 
-    if (!success) {
-      logMessage = "failed to create log entry";
-    }
+    // create service charge log entry
+    await markServiceChargeInTicketLog(
+      ticketId,
+      "SERVICE CHARGE",
+      req.userId,
+      data.ticketData.serviceCharge
+    );
+
+    // create customer log for ticket creation
+    await createCustomerLogOnCreateTicket(
+      "CREATE TICKET",
+      `Created ticket No: ${data.ticketData.ticketNo}`,
+      data.ticketData.customerId,
+      req.userId
+    );
 
     res.status(201).json({
       success: true,
-      message: logMessage
-        ? `Pawning ticket created successfully. but ${logMessage}`
-        : "Pawning ticket created successfully.",
+      message: "Pawning ticket created successfully.",
     });
   } catch (error) {
     console.error("Error in createPawningTicket:", error);
@@ -364,15 +425,15 @@ export const searchCustomerByNIC = async (req, res, next) => {
     if (!NIC) {
       return next(errorHandler(400, "NIC is required"));
     }
-
-    const [customer] = await pool.query(
-      "SELECT idCustomer,NIC, Full_name,Address1,Address2,Address3,Mobile_No,Status,Risk_Level FROM customer WHERE NIC = ?",
-      [NIC]
+    const formatedNIC = formatSearchPattern(NIC); // Format NIC for SQL LIKE query
+    const [customers] = await pool.query(
+      "SELECT idCustomer,NIC, Full_name,Address1,Address2,Address3,Mobile_No,Status,Risk_Level FROM customer WHERE NIC LIKE ? AND Branch_idBranch = ?",
+      [formatedNIC, req.branchId]
     );
 
     res.status(200).json({
       success: true,
-      customer: customer[0] || null,
+      customer: customers || null,
     });
   } catch (error) {
     console.error("Error in searchCustomerByNIC:", error);
@@ -627,6 +688,7 @@ export const getTicketDataById = async (req, res, next) => {
     let ticketData;
     let customerData;
     let articleItems;
+    let balanceLogs;
 
     [ticketData] = await pool.query(
       "SELECT * FROM pawning_ticket WHERE idPawning_Ticket = ? AND  Branch_idBranch = ?",
@@ -703,12 +765,27 @@ export const getTicketDataById = async (req, res, next) => {
       delete item.Article_category;
     }
 
+    // fetch the latest record of balance data from ticket logs
+    [balanceLogs] = await pool.query(
+      `SELECT  Advance_Balance,Interest_Balance,Aditional_Charge_Balance,Late_Charges_Balance,Total_Balance,Service_Charge_Balance
+         FROM ticket_log
+        WHERE Pawning_Ticket_idPawning_Ticket = ?
+     ORDER BY idTicket_Log DESC
+        LIMIT 1`,
+      [ticketData[0].idPawning_Ticket]
+    );
+
+    if (!balanceLogs || balanceLogs.length === 0) {
+      return next(errorHandler(404, "No balance log found for the ticket"));
+    }
+
     res.status(200).json({
       success: true,
       ticketData: {
         ticketData: ticketData[0],
         customerData: customerData[0],
         articleItems,
+        balanceData: balanceLogs[0],
       },
     });
   } catch (error) {

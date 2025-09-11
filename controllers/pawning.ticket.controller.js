@@ -141,7 +141,7 @@ export const createPawningTicket = async (req, res, next) => {
 
     // Insert into pawning_ticket table
     const [result] = await pool.query(
-      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_Date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount,Service_Charge_Type,Service_Charge_Rate,Early_Settlement_Charge_Balance,Additiona_Charges_Balance) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_Date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount,Service_Charge_Type,Service_Charge_Rate,Early_Settlement_Charge_Balance,Additiona_Charges_Balance,Service_Charge_Balance,Late_Charge_Balance,Interest_Amount_Balance,Balance_Amount) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [
         data.ticketData.ticketNo,
         data.ticketData.grantSeqNo,
@@ -167,6 +167,10 @@ export const createPawningTicket = async (req, res, next) => {
         serviceChargeRate, // service charge rate
         0, // initial early settlement charge balance set to 0
         0, // initial additional charges balance set to 0
+        0, // initial service charge balance set to 0
+        0, // initial late charge balance set to 0
+        0, // initial interest amount balance set to 0
+        data.ticketData.pawningAdvance, // initial balance amount set to pawning advance
       ]
     );
 

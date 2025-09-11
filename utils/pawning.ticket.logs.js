@@ -1,5 +1,5 @@
 import { pool } from "../utils/db.js";
-
+import { createCustomerLogOnTicketPenality } from "./customer.logs.js";
 // this runs when a new pawning ticket is created
 export const createPawningTicketLogOnCreate = async (
   ticketId,
@@ -174,6 +174,16 @@ export const addDailyTicketLog = async () => {
               latestAdditionalChargeBalance,
               totalBalance,
             ]
+          );
+
+          // create customer log for ticket penality
+          await createCustomerLogOnTicketPenality(
+            "TICKET PENALTY",
+            `Applied penalty of ${amount.toFixed(2)} on ticket No: ${
+              ticket.Ticket_no
+            } for date ${dateString}`,
+            ticket.Customer_idCustomer,
+            ticket.User_idUser
           );
 
           if (result.affectedRows === 0) {

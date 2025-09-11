@@ -6,6 +6,7 @@ import {
   createPawningTicketLogOnCreate,
   markServiceChargeInTicketLog,
 } from "../utils/pawning.ticket.logs.js";
+import { createCustomerLogOnCreateTicket } from "../utils/customer.logs.js";
 // Create Pawning Ticket
 export const createPawningTicket = async (req, res, next) => {
   try {
@@ -244,6 +245,14 @@ export const createPawningTicket = async (req, res, next) => {
       "SERVICE CHARGE",
       req.userId,
       data.ticketData.serviceCharge
+    );
+
+    // create customer log for ticket creation
+    await createCustomerLogOnCreateTicket(
+      "CREATE TICKET",
+      `Created ticket No: ${data.ticketData.ticketNo}`,
+      data.ticketData.customerId,
+      req.userId
     );
 
     res.status(201).json({

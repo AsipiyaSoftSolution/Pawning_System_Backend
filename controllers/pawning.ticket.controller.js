@@ -233,7 +233,7 @@ export const createPawningTicket = async (req, res, next) => {
       }
 
       const [result] = await pool.query(
-        "INSERT INTO ticket_articles (Article_type,Article_category,Article_Condition,Caratage,No_Of_Items,Gross_Weight,Acid_Test_Status,DM_Reading,Net_Weight,Assessed_Value,Declared_Value,Pawning_Ticket_idPawning_Ticket,Image_Path,Advanced_Value) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO ticket_articles (Article_type,Article_category,Article_Condition,Caratage,No_Of_Items,Gross_Weight,Acid_Test_Status,DM_Reading,Net_Weight,Assessed_Value,Declared_Value,Pawning_Ticket_idPawning_Ticket,Image_Path,Advanced_Value,Remark) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [
           article.type,
           article.category,
@@ -249,6 +249,7 @@ export const createPawningTicket = async (req, res, next) => {
           ticketId,
           article.image,
           advancedValueForArticle,
+          article.remark || null,
         ]
       );
     }

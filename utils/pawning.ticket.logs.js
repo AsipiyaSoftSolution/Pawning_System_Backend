@@ -68,7 +68,7 @@ export const markServiceChargeInTicketLog = async (
 // run every day 12AM to add ticket logs (includes missed days)
 export const addDailyTicketLog = async () => {
   try {
-    // go through every ticket in the db and get only tickets that are Status = 1 (active)
+    // go through every ticket in the db and get only tickets that are Status = '1' (active)
     const [activeTicketResult] = await pool.query(
       "SELECT * FROM pawning_ticket WHERE Status = '1'"
     );
@@ -118,7 +118,6 @@ export const addDailyTicketLog = async () => {
         const shouldAddPenalty = currentDate > maturityDate;
 
         // ADD INTEREST LOG IF NEEDED
-
         if (shouldAddInterest) {
           // Check if interest log already exists for this date
           const [existingInterestLog] = await pool.query(
@@ -134,19 +133,19 @@ export const addDailyTicketLog = async () => {
             );
 
             // Calculate interest
-            const interestRate = Number(ticket.Interest_Rate) || 0;
+            const interestRate = parseFloat(ticket.Interest_Rate) || 0;
             const latestAdvanceBalance =
-              Number(latestLogResult[0]?.Advance_Balance) || 0;
+              parseFloat(latestLogResult[0]?.Advance_Balance) || 0;
             const interestAmount = (latestAdvanceBalance * interestRate) / 100;
 
             const latestInterestBalance =
-              Number(latestLogResult[0]?.Interest_Balance) || 0;
+              parseFloat(latestLogResult[0]?.Interest_Balance) || 0;
             const latestServiceChargeBalance =
-              Number(latestLogResult[0]?.Service_Charge_Balance) || 0;
+              parseFloat(latestLogResult[0]?.Service_Charge_Balance) || 0;
             const latestLateChargesBalance =
-              Number(latestLogResult[0]?.Late_Charges_Balance) || 0;
+              parseFloat(latestLogResult[0]?.Late_Charges_Balance) || 0;
             const latestAdditionalChargeBalance =
-              Number(latestLogResult[0]?.Aditional_Charge_Balance) || 0;
+              parseFloat(latestLogResult[0]?.Aditional_Charge_Balance) || 0;
 
             const totalBalance =
               latestAdvanceBalance +
@@ -154,6 +153,20 @@ export const addDailyTicketLog = async () => {
               latestServiceChargeBalance +
               latestLateChargesBalance +
               latestAdditionalChargeBalance;
+
+            // Console checks
+            console.log(
+              `Adding INTEREST log for Ticket ID ${ticketId} on ${dateString}:`
+            );
+            console.log(`  Interest Rate: ${interestRate}%`);
+            console.log(`  Latest Advance Balance: ${latestAdvanceBalance}`);
+            console.log(`  Interest Amount: ${interestAmount}`);
+            console.log(
+              `  New Interest Balance: ${
+                latestInterestBalance + interestAmount
+              }`
+            );
+            console.log(`  Total Balance after Interest: ${totalBalance}`);
 
             // Insert interest log
             const [result] = await pool.query(
@@ -182,7 +195,6 @@ export const addDailyTicketLog = async () => {
         }
 
         // ADD PENALTY LOG IF NEEDED
-
         if (shouldAddPenalty) {
           // Check if penalty log already exists for this date
           const [existingPenaltyLog] = await pool.query(
@@ -199,20 +211,20 @@ export const addDailyTicketLog = async () => {
 
             // Calculate penalty
             const lateChargePercentage =
-              Number(ticket.Late_charge_Precentage) || 0;
+              parseFloat(ticket.Late_charge_Precentage) || 0;
             const latestAdvanceBalance =
-              Number(latestLogResult[0]?.Advance_Balance) || 0;
+              parseFloat(latestLogResult[0]?.Advance_Balance) || 0;
             const penaltyAmount =
               (latestAdvanceBalance * lateChargePercentage) / 100;
 
             const latestInterestBalance =
-              Number(latestLogResult[0]?.Interest_Balance) || 0;
+              parseFloat(latestLogResult[0]?.Interest_Balance) || 0;
             const latestServiceChargeBalance =
-              Number(latestLogResult[0]?.Service_Charge_Balance) || 0;
+              parseFloat(latestLogResult[0]?.Service_Charge_Balance) || 0;
             const latestLateChargesBalance =
-              Number(latestLogResult[0]?.Late_Charges_Balance) || 0;
+              parseFloat(latestLogResult[0]?.Late_Charges_Balance) || 0;
             const latestAdditionalChargeBalance =
-              Number(latestLogResult[0]?.Aditional_Charge_Balance) || 0;
+              parseFloat(latestLogResult[0]?.Aditional_Charge_Balance) || 0;
 
             const totalBalance =
               latestAdvanceBalance +
@@ -220,6 +232,28 @@ export const addDailyTicketLog = async () => {
               latestServiceChargeBalance +
               (latestLateChargesBalance + penaltyAmount) +
               latestAdditionalChargeBalance;
+
+            // Console checks
+            console.log(
+              `Adding PENALTY log for Ticket ID ${ticketId} on ${dateString}:`
+            );
+            console.log(`  Late Charge Percentage: ${lateChargePercentage}%`);
+            console.log(`  Latest Advance Balance: ${latestAdvanceBalance}`);
+            console.log(`  Penalty Amount: ${penaltyAmount}`);
+            console.log(
+              `  New Late Charges Balance: ${
+                latestLateChargesBalance + penaltyAmount
+              }`
+            );
+            console.log(`  Total Balance after Penalty: ${totalBalance}`);
+
+            // Create customer log for penalty
+            await createCustomerLogOnTicketPenality(
+              "TICKET PENALTY",
+              dateString,
+              ticket.Customer_idCustomer,
+              null
+            );
 
             // Insert penalty log
             const [result] = await pool.query(

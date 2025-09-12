@@ -1,6 +1,7 @@
 import { errorHandler } from "../utils/errorHandler.js";
 import { pool } from "../utils/db.js";
 import { getPaginationData } from "../utils/helper.js";
+import { createAccountingAccountLog } from "../utils/accounting.account.logs.js";
 
 // Create a new chart of account
 export const createChartAccount = async (req, res, next) => {
@@ -56,6 +57,20 @@ export const createChartAccount = async (req, res, next) => {
 
     if (!accountData[0]) {
       return next(errorHandler(404, "Created account not found"));
+    }
+    
+    // Create a log entry for the new account
+    try {
+      await createAccountingAccountLog(
+        result.insertId,
+        "Account created",
+        0,
+        0,
+        0
+      );
+    } catch (logError) {
+      console.error("Error creating account log:", logError);
+      // Continue with the response even if log creation fails
     }
 
     res.status(201).json({

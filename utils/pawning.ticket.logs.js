@@ -211,7 +211,7 @@ export const addDailyTicketLog = async () => {
 
             // Calculate penalty
             const lateChargePercentage =
-              parseFloat(ticket.Late_charge_Precentage) || 0;
+              parseFloat(ticket.Late_charge_Presentage) || 0;
             const latestAdvanceBalance =
               parseFloat(latestLogResult[0]?.Advance_Balance) || 0;
             const penaltyAmount =

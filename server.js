@@ -75,7 +75,6 @@ app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
 
-/*
 // Manual test endpoint - add this before your cron.schedule
 app.post("/api/test/daily-ticket-log", async (req, res) => {
   try {
@@ -96,7 +95,6 @@ app.post("/api/test/daily-ticket-log", async (req, res) => {
     });
   }
 });
-*/
 
 // schedule cron job to run every day at 12AM
 cron.schedule("0 0 * * *", async () => {

@@ -241,8 +241,8 @@ export const getManualJournalById = async (req, res, next) => {
     // Get journal entries for this journal ID
     const [journalEntries] = await pool.query(
       `SELECT je.*, aa.Account_Code, aa.Account_Name 
-       FROM manual_journal_entries je
-       JOIN accounting_accounts aa ON je.idAccounting_Accounts = aa.idAccounting_Accounts
+       FROM manual_journal_logs je
+       JOIN accounting_accounts aa ON je.Accounting_Accounts_idAccounting_Accounts = aa.idAccounting_Accounts
        WHERE je.Manual_Journal_idManual_Journal = ?`,
       [id]
     );

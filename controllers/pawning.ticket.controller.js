@@ -5,6 +5,7 @@ import { uploadImage } from "../utils/cloudinary.js";
 import {
   createPawningTicketLogOnCreate,
   markServiceChargeInTicketLog,
+  addTicketLogsByTicketId,
 } from "../utils/pawning.ticket.logs.js";
 import { createCustomerLogOnCreateTicket } from "../utils/customer.logs.js";
 import { formatSearchPattern } from "../utils/helper.js";
@@ -278,6 +279,12 @@ export const createPawningTicket = async (req, res, next) => {
       data.ticketData.customerId,
       req.userId
     );
+
+    if (data.grantDate !== new Date().toISOString().split("T")[0]) {
+      // If the grant date is not today, create logs for interest and penalty up to today
+      // This happens when old tickets are created on current system
+      await addTicketLogsByTicketId(ticketId);
+    }
 
     res.status(201).json({
       success: true,

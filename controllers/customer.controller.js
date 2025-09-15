@@ -127,7 +127,7 @@ export const createCustomer = async (req, res, next) => {
     await customerLog(
       result.insertId,
       new Date(),
-      "Create",
+      "CREATE",
       "Customer created",
       req.userId
     );
@@ -448,7 +448,7 @@ export const editCustomer = async (req, res, next) => {
     customerLog(
       customerId,
       new Date(),
-      "Update",
+      "UPDATE",
       "Customer updated",
       req.userId
     );
@@ -514,7 +514,7 @@ export const deleteDocuments = async (req, res, next) => {
     await customerLog(
       customerId,
       new Date(),
-      "Delete",
+      "DELETE",
       `Customer document deleted. Deleted document: ${documentTypeDeleted}`,
       req.userId
     );

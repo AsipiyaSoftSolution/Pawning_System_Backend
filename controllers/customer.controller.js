@@ -127,7 +127,7 @@ export const createCustomer = async (req, res, next) => {
     await customerLog(
       result.insertId,
       new Date(),
-      "Create",
+      "CREATE",
       "Customer created",
       req.userId
     );
@@ -448,7 +448,7 @@ export const editCustomer = async (req, res, next) => {
     customerLog(
       customerId,
       new Date(),
-      "Update",
+      "UPDATE",
       "Customer updated",
       req.userId
     );
@@ -514,7 +514,7 @@ export const deleteDocuments = async (req, res, next) => {
     await customerLog(
       customerId,
       new Date(),
-      "Delete",
+      "DELETE",
       `Customer document deleted. Deleted document: ${documentTypeDeleted}`,
       req.userId
     );
@@ -527,5 +527,33 @@ export const deleteDocuments = async (req, res, next) => {
   } catch (error) {
     console.error("Error deleting documents:", error);
     next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// Get customer logs by customer ID
+export const getCustomerLogsDataById = async (req, res, next) => {
+  try {
+    const customerId = req.params.id || req.params.customerId;
+
+    if (!customerId) {
+      return next(errorHandler(400, "Customer ID is required"));
+    }
+
+    const [logs] = await pool.query(
+      `SELECT cl.*, u.full_name 
+       FROM customer_log cl
+       LEFT JOIN user u ON cl.User_idUser = u.idUser
+       WHERE cl.Customer_idCustomer = ?
+       ORDER BY STR_TO_DATE(cl.Date_Time, '%Y-%m-%d %H:%i:%s') DESC `,
+      [customerId]
+    );
+    res.status(200).json({
+      success: true,
+      message: "Customer logs fetched successfully",
+      logs,
+    });
+  } catch (error) {
+    console.error("Error fetching customer logs by ID:", error);
+    return next(errorHandler(500, "Internal Server Error"));
   }
 };

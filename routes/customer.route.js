@@ -8,6 +8,7 @@ import {
   checkCustomerByNICWhenCreating,
   getCustomerDataByNIC,
   deleteDocuments,
+  getCustomerLogsDataById,
 } from "../controllers/customer.controller.js";
 import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
 
@@ -60,6 +61,14 @@ router.delete(
   protectedRoute,
   checkUserBranchAccess,
   deleteDocuments
+);
+
+// get customer logs data by id
+router.get(
+  "/:branchId/customer-logs/:customerId",
+  protectedRoute,
+  checkUserBranchAccess,
+  getCustomerLogsDataById
 );
 
 export default router;

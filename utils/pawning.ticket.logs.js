@@ -250,7 +250,7 @@ export const addDailyTicketLog = async () => {
             // Create customer log for penalty
             await createCustomerLogOnTicketPenality(
               "TICKET PENALTY",
-              dateString,
+              `Penalty of ${penaltyAmount} added to ticket ID ${ticketId} on ${dateString}`,
               ticket.Customer_idCustomer,
               null
             );

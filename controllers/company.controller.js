@@ -630,61 +630,95 @@ export const getAllUsersForTheBranch = async (req, res, next) => {
     let paginationData;
     let users;
     let statusCondition = status ? "AND u.Status = ?" : "";
-    let params = [req.branchId, `%${searchTerm}%`, `%${searchTerm}%`];
-    if (status) params.push(status);
 
-    // if search term is provided, filter users by name or email
     if (searchTerm) {
-      // get pagination data
+      // Parameters for search query - users who belong to the specific branch
+      let params = [
+        req.branchId,
+        `%${searchTerm}%`,
+        `%${searchTerm}%`,
+        req.companyId,
+      ];
+      if (status) params.push(status);
+
+      // Get pagination data - count users who belong to this branch and match search
       paginationData = await getPaginationData(
-        `SELECT COUNT(*) as total
+        `SELECT COUNT(DISTINCT u.idUser) as total
          FROM user u
          JOIN user_has_branch ub ON u.idUser = ub.User_idUser
-         WHERE ub.Branch_idBranch = ? AND (u.full_name LIKE ? OR u.email LIKE ?) ${statusCondition}`,
+         WHERE ub.Branch_idBranch = ? AND (u.full_name LIKE ? OR u.email LIKE ?) ${statusCondition} AND u.Company_idCompany = ?`,
         params,
         page,
         limit
       );
 
-      // get users for the branch
+      // Get users who belong to this branch, but show ALL their branches
       [users] = await pool.query(
-        `SELECT u.*, d.Description as designationDescription
+        `SELECT u.*, d.Description as designationDescription,
+                GROUP_CONCAT(DISTINCT CONCAT(b.idBranch, ':', b.Name)) as branchData
          FROM user u
+         JOIN user_has_branch ub_filter ON u.idUser = ub_filter.User_idUser
          JOIN user_has_branch ub ON u.idUser = ub.User_idUser
          LEFT JOIN designation d ON u.Designation_idDesignation = d.idDesignation
-         WHERE ub.Branch_idBranch = ? AND (u.full_name LIKE ? OR u.email LIKE ?) ${statusCondition} LIMIT ? OFFSET ?`,
+         LEFT JOIN branch b ON ub.Branch_idBranch = b.idBranch
+         WHERE ub_filter.Branch_idBranch = ? AND (u.full_name LIKE ? OR u.email LIKE ?) ${statusCondition} AND u.Company_idCompany = ?
+         GROUP BY u.idUser
+         LIMIT ? OFFSET ?`,
         [...params, limit, offset]
       );
+    } else {
+      // Parameters for non-search query - users who belong to the specific branch
+      let params = [req.branchId, req.companyId];
+      if (status) params.push(status);
 
-      return res.status(200).json({
-        success: true,
-        users,
-        pagination: paginationData,
-      });
+      // Get pagination data - count users who belong to this branch
+      paginationData = await getPaginationData(
+        `SELECT COUNT(DISTINCT u.idUser) as total
+         FROM user u
+         JOIN user_has_branch ub ON u.idUser = ub.User_idUser
+         WHERE ub.Branch_idBranch = ? ${statusCondition} AND u.Company_idCompany = ?`,
+        params,
+        page,
+        limit
+      );
+
+      // Get users who belong to this branch, but show ALL their branches
+      [users] = await pool.query(
+        `SELECT u.*, d.Description as designationDescription,
+                GROUP_CONCAT(DISTINCT CONCAT(b.idBranch, ':', b.Name)) as branchData
+         FROM user u
+         JOIN user_has_branch ub_filter ON u.idUser = ub_filter.User_idUser
+         JOIN user_has_branch ub ON u.idUser = ub.User_idUser
+         LEFT JOIN designation d ON u.Designation_idDesignation = d.idDesignation
+         LEFT JOIN branch b ON ub.Branch_idBranch = b.idBranch
+         WHERE ub_filter.Branch_idBranch = ? ${statusCondition} AND u.Company_idCompany = ?
+         GROUP BY u.idUser
+         LIMIT ? OFFSET ?`,
+        [...params, limit, offset]
+      );
     }
 
-    // get pagination data (no search term)
-    let baseStatusCondition = status ? "AND u.Status = ?" : "";
-    let baseParams = [req.branchId];
-    if (status) baseParams.push(status);
-    paginationData = await getPaginationData(
-      `SELECT COUNT(*) as total
-       FROM user u
-       JOIN user_has_branch ub ON u.idUser = ub.User_idUser
-       WHERE ub.Branch_idBranch = ? ${baseStatusCondition}`,
-      baseParams,
-      page,
-      limit
-    );
-    // get users for the branch (no search term)
-    [users] = await pool.query(
-      `SELECT u.*, d.Description as designationDescription
-       FROM user u
-       JOIN user_has_branch ub ON u.idUser = ub.User_idUser
-       LEFT JOIN designation d ON u.Designation_idDesignation = d.idDesignation
-       WHERE ub.Branch_idBranch = ? ${baseStatusCondition} LIMIT ? OFFSET ?`,
-      [...baseParams, limit, offset]
-    );
+    // Parse branchData into array of objects {idBranch, Name}
+    if (users && Array.isArray(users)) {
+      users = users.map((user) => {
+        if (user.branchData) {
+          user.branchData = user.branchData.split(",").map((pair) => {
+            const [id, ...nameParts] = pair.split(":");
+            return {
+              idBranch: parseInt(id, 10),
+              Name: nameParts.join(":"),
+            };
+          });
+        } else {
+          user.branchData = [];
+        }
+        // Remove unnecessary fields
+        delete user.branchIds;
+        delete user.branchNames;
+        delete user.Password;
+        return user;
+      });
+    }
 
     res.status(200).json({
       success: true,

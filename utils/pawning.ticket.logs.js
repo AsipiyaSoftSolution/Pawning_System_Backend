@@ -287,3 +287,217 @@ export const addDailyTicketLog = async () => {
     throw new Error("Error adding daily ticket log");
   }
 };
+
+// Function to process logs for a single ticket (used when creating old pawning tickets)
+export const addTicketLogsByTicketId = async (ticketId) => {
+  try {
+    // Get the specific ticket
+    const [ticketResult] = await pool.query(
+      "SELECT * FROM pawning_ticket WHERE idPawning_Ticket = ?",
+      [ticketId]
+    );
+
+    if (ticketResult.length === 0) {
+      throw new Error(`Ticket with ID ${ticketId} not found or not active`);
+    }
+
+    const ticket = ticketResult[0];
+    const interestApplyOn = new Date(ticket.Interest_apply_on);
+    const maturityDate = new Date(ticket.Maturity_date);
+    const today = new Date();
+
+    // Set time to start of day for consistent comparison
+    today.setHours(0, 0, 0, 0);
+    interestApplyOn.setHours(0, 0, 0, 0);
+    maturityDate.setHours(0, 0, 0, 0);
+
+    // Get the last log date for this ticket to determine where to start backfilling
+    const [lastLogResult] = await pool.query(
+      "SELECT Description FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? AND (Type = 'INTEREST' OR Type = 'PENALTY') ORDER BY idTicket_Log DESC LIMIT 1",
+      [ticketId]
+    );
+
+    // Determine the start date for processing logs
+    let startDate = new Date(interestApplyOn);
+    if (lastLogResult.length > 0) {
+      const lastLogDate = new Date(lastLogResult[0].Description);
+      lastLogDate.setHours(0, 0, 0, 0);
+      startDate = new Date(lastLogDate);
+      startDate.setDate(startDate.getDate() + 1); // Start from the day after the last log
+    }
+
+    let logsAdded = 0;
+
+    // Process each day from startDate to today
+    for (
+      let currentDate = new Date(startDate);
+      currentDate <= today;
+      currentDate.setDate(currentDate.getDate() + 1)
+    ) {
+      const dateString = currentDate.toISOString().split("T")[0];
+
+      // Skip if this date is before interest apply on date
+      if (currentDate < interestApplyOn) {
+        continue;
+      }
+
+      // Determine what logs to add for this date
+      const shouldAddInterest = currentDate >= interestApplyOn;
+      const shouldAddPenalty = currentDate > maturityDate;
+
+      // ADD INTEREST LOG
+
+      if (shouldAddInterest) {
+        // Check if interest log already exists for this date
+        const [existingInterestLog] = await pool.query(
+          "SELECT 1 FROM ticket_log WHERE Description = ? AND Type = 'INTEREST' AND Pawning_Ticket_idPawning_Ticket = ?",
+          [dateString, ticketId]
+        );
+
+        if (existingInterestLog.length === 0) {
+          // Get the latest log for this ticket to get the latest balances
+          const [latestLogResult] = await pool.query(
+            "SELECT * FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? ORDER BY idTicket_Log DESC LIMIT 1",
+            [ticketId]
+          );
+
+          // Calculate interest
+          const interestRate = parseFloat(ticket.Interest_Rate) || 0;
+          const latestAdvanceBalance =
+            parseFloat(latestLogResult[0]?.Advance_Balance) || 0;
+          const interestAmount = (latestAdvanceBalance * interestRate) / 100;
+
+          const latestInterestBalance =
+            parseFloat(latestLogResult[0]?.Interest_Balance) || 0;
+          const latestServiceChargeBalance =
+            parseFloat(latestLogResult[0]?.Service_Charge_Balance) || 0;
+          const latestLateChargesBalance =
+            parseFloat(latestLogResult[0]?.Late_Charges_Balance) || 0;
+          const latestAdditionalChargeBalance =
+            parseFloat(latestLogResult[0]?.Aditional_Charge_Balance) || 0;
+
+          const totalBalance =
+            latestAdvanceBalance +
+            (latestInterestBalance + interestAmount) +
+            latestServiceChargeBalance +
+            latestLateChargesBalance +
+            latestAdditionalChargeBalance;
+
+          // Insert interest log
+          const [result] = await pool.query(
+            "INSERT INTO ticket_log (Pawning_Ticket_idPawning_Ticket, Type, Description, Amount, Advance_Balance, Interest_Balance, Service_Charge_Balance, Late_Charges_Balance, Aditional_Charge_Balance, Total_Balance, User_idUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+              ticketId,
+              "INTEREST",
+              dateString,
+              interestAmount,
+              latestAdvanceBalance,
+              latestInterestBalance + interestAmount,
+              latestServiceChargeBalance,
+              latestLateChargesBalance,
+              latestAdditionalChargeBalance,
+              totalBalance,
+              null,
+            ]
+          );
+
+          if (result.affectedRows === 0) {
+            throw new Error(
+              `Failed to add interest ticket log for ${dateString}`
+            );
+          }
+
+          logsAdded++;
+        }
+      }
+
+      // ADD PENALTY LOG
+
+      if (shouldAddPenalty) {
+        // Check if penalty log already exists for this date
+        const [existingPenaltyLog] = await pool.query(
+          "SELECT 1 FROM ticket_log WHERE Description = ? AND Type = 'PENALTY' AND Pawning_Ticket_idPawning_Ticket = ?",
+          [dateString, ticketId]
+        );
+
+        if (existingPenaltyLog.length === 0) {
+          // Get the latest log for this ticket to get the latest balances
+          const [latestLogResult] = await pool.query(
+            "SELECT * FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? ORDER BY idTicket_Log DESC LIMIT 1",
+            [ticketId]
+          );
+
+          // Calculate penalty
+          const lateChargePercentage =
+            parseFloat(ticket.Late_charge_Precentage) || 0;
+          const latestAdvanceBalance =
+            parseFloat(latestLogResult[0]?.Advance_Balance) || 0;
+          const penaltyAmount =
+            (latestAdvanceBalance * lateChargePercentage) / 100;
+
+          const latestInterestBalance =
+            parseFloat(latestLogResult[0]?.Interest_Balance) || 0;
+          const latestServiceChargeBalance =
+            parseFloat(latestLogResult[0]?.Service_Charge_Balance) || 0;
+          const latestLateChargesBalance =
+            parseFloat(latestLogResult[0]?.Late_Charges_Balance) || 0;
+          const latestAdditionalChargeBalance =
+            parseFloat(latestLogResult[0]?.Aditional_Charge_Balance) || 0;
+
+          const totalBalance =
+            latestAdvanceBalance +
+            latestInterestBalance +
+            latestServiceChargeBalance +
+            (latestLateChargesBalance + penaltyAmount) +
+            latestAdditionalChargeBalance;
+
+          // Insert penalty log
+          const [result] = await pool.query(
+            "INSERT INTO ticket_log (Pawning_Ticket_idPawning_Ticket, Type, Description, Amount, Advance_Balance, Interest_Balance, Service_Charge_Balance, Late_Charges_Balance, Aditional_Charge_Balance, Total_Balance, User_idUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+              ticketId,
+              "PENALTY",
+              dateString,
+              penaltyAmount,
+              latestAdvanceBalance,
+              latestInterestBalance,
+              latestServiceChargeBalance,
+              latestLateChargesBalance + penaltyAmount,
+              latestAdditionalChargeBalance,
+              totalBalance,
+              null,
+            ]
+          );
+
+          if (result.affectedRows === 0) {
+            throw new Error(
+              `Failed to add penalty ticket log for ${dateString}`
+            );
+          }
+
+          logsAdded++;
+
+          // Create customer log for penalty
+
+          await createCustomerLogOnTicketPenality(
+            "TICKET PENALTY",
+            `Penalty of ${penaltyAmount} added to ticket ID ${ticketId} on ${dateString}`,
+            ticketResult.Customer_idCustomer,
+            null
+          );
+        }
+      }
+    }
+
+    return {
+      success: true,
+      message: `Successfully processed ticket ${ticketId}`,
+      logsAdded: logsAdded,
+    };
+  } catch (error) {
+    console.error(`Error adding ticket logs for ticket ${ticketId}:`, error);
+    throw new Error(
+      `Error adding ticket logs for ticket ${ticketId}: ${error.message}`
+    );
+  }
+};

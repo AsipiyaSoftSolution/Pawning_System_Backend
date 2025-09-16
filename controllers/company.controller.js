@@ -613,6 +613,90 @@ export const createUser = async (req, res, next) => {
   }
 };
 
+// get all users of the branch
+export const getAllUsersForTheBranch = async (req, res, next) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    let searchTerm = req.query.search || "";
+    let status = req.query.status || "1";
+    const offset = (page - 1) * limit;
+
+    // format search term
+    if (searchTerm && typeof searchTerm === "string") {
+      searchTerm = formatSearchPattern(searchTerm);
+    }
+
+    let paginationData;
+    let users;
+    let statusCondition = status ? "AND u.Status = ?" : "";
+    let params = [req.branchId, `%${searchTerm}%`, `%${searchTerm}%`];
+    if (status) params.push(status);
+
+    // if search term is provided, filter users by name or email
+    if (searchTerm) {
+      // get pagination data
+      paginationData = await getPaginationData(
+        `SELECT COUNT(*) as total
+         FROM user u
+         JOIN user_has_branch ub ON u.idUser = ub.User_idUser
+         WHERE ub.Branch_idBranch = ? AND (u.full_name LIKE ? OR u.email LIKE ?) ${statusCondition}`,
+        params,
+        page,
+        limit
+      );
+
+      // get users for the branch
+      [users] = await pool.query(
+        `SELECT u.*, d.Description as designationDescription
+         FROM user u
+         JOIN user_has_branch ub ON u.idUser = ub.User_idUser
+         LEFT JOIN designation d ON u.Designation_idDesignation = d.idDesignation
+         WHERE ub.Branch_idBranch = ? AND (u.full_name LIKE ? OR u.email LIKE ?) ${statusCondition} LIMIT ? OFFSET ?`,
+        [...params, limit, offset]
+      );
+
+      return res.status(200).json({
+        success: true,
+        users,
+        pagination: paginationData,
+      });
+    }
+
+    // get pagination data (no search term)
+    let baseStatusCondition = status ? "AND u.Status = ?" : "";
+    let baseParams = [req.branchId];
+    if (status) baseParams.push(status);
+    paginationData = await getPaginationData(
+      `SELECT COUNT(*) as total
+       FROM user u
+       JOIN user_has_branch ub ON u.idUser = ub.User_idUser
+       WHERE ub.Branch_idBranch = ? ${baseStatusCondition}`,
+      baseParams,
+      page,
+      limit
+    );
+    // get users for the branch (no search term)
+    [users] = await pool.query(
+      `SELECT u.*, d.Description as designationDescription
+       FROM user u
+       JOIN user_has_branch ub ON u.idUser = ub.User_idUser
+       LEFT JOIN designation d ON u.Designation_idDesignation = d.idDesignation
+       WHERE ub.Branch_idBranch = ? ${baseStatusCondition} LIMIT ? OFFSET ?`,
+      [...baseParams, limit, offset]
+    );
+
+    res.status(200).json({
+      success: true,
+      users,
+      pagination: paginationData,
+    });
+  } catch (error) {
+    console.error("Error fetching users for the branch:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
 // Create a new branch for the company
 export const createBranch = async (req, res, next) => {
   try {

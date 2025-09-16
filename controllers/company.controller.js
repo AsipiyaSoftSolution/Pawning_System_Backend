@@ -520,20 +520,27 @@ export const getArticleCategories = async (req, res, next) => {
 // This function creates a new user with a temporary password and hashes it before storing it in the database.
 export const createUser = async (req, res, next) => {
   try {
-    const { email, full_name, designationId, contact_no, branch_id } = req.body;
-    if (!email || !full_name || !designationId || !contact_no) {
+    const {
+      Contact_no,
+      Designation_idDesignation,
+      Email,
+      Status,
+      full_name,
+      branchData,
+    } = req.body;
+    if (!Email || !full_name || !Designation_idDesignation || !Contact_no) {
       return next(errorHandler(400, "All fields are required"));
     }
 
     // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
+    if (!emailRegex.test(Email)) {
       return next(errorHandler(400, "Please provide a valid email address"));
     }
 
     const [existingUser] = await pool.query(
       "SELECT idUser FROM user WHERE email = ?",
-      [email]
+      [Email]
     );
     if (existingUser.length > 0) {
       return next(errorHandler(400, "User with this email already exists"));
@@ -542,37 +549,29 @@ export const createUser = async (req, res, next) => {
     // Verify designation exists for this company
     const [designationExists] = await pool.query(
       "SELECT idDesignation FROM designation WHERE idDesignation = ? AND Company_idCompany = ?",
-      [designationId, req.companyId]
+      [Designation_idDesignation, req.companyId]
     );
     if (designationExists.length === 0) {
       return next(errorHandler(404, "Designation not found for this company"));
     }
 
-    // If branch_id is provided, verify it exists before creating user
-    if (branch_id) {
-      const [existingBranch] = await pool.query(
-        "SELECT idBranch FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
-        [branch_id, req.companyId]
-      );
-      if (existingBranch.length === 0) {
-        return next(errorHandler(404, "Branch not found for this company"));
-      }
-    }
-
     const tempPassword = Math.random().toString(36).slice(-8); // Generate a temporary password
     console.log("Temporary password generated:", tempPassword);
+    // have to send this temp password to the user via email
+    // For now, we will just log it to the console (In production, use a proper email service)
+    // console.log(`Temporary password for ${email}: ${tempPassword}`);
 
     const hashedPassword = await bcrypt.hash(tempPassword, 10); // Hash the temporary password
 
     const [result] = await pool.query(
-      "INSERT INTO user (email,password, full_name, Designation_idDesignation, Company_idCompany,Contact_no) VALUES (?, ?, ?, ?, ?,?)",
+      "INSERT INTO user (Email,Password, full_name, Designation_idDesignation, Company_idCompany,Contact_no) VALUES (?, ?, ?, ?, ?,?)",
       [
-        email,
+        Email,
         hashedPassword,
         full_name,
-        designationId,
+        Designation_idDesignation,
         req.companyId,
-        contact_no,
+        Contact_no,
       ]
     );
 
@@ -580,32 +579,44 @@ export const createUser = async (req, res, next) => {
       return next(errorHandler(500, "Failed to create user"));
     }
 
-    let branchAssignmentMessage = "";
+    // If branchData is provided, verify those branches exist for this company
+    if (branchData && Array.isArray(branchData) && branchData.length > 0) {
+      for (const branch of branchData) {
+        const [branchExists] = await pool.query(
+          "SELECT 1 FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
+          [branch.idBranch, req.companyId]
+        );
+        // If any branch does not exist, return an error
+        if (branchExists.length === 0) {
+          return next(
+            errorHandler(
+              404,
+              `Branch with ID ${branch.Name} not found for this company`
+            )
+          );
+        }
 
-    // assign a branch to the user if branch_id is provided
-    if (branch_id) {
-      try {
-        const [branchResult] = await pool.query(
+        // if it exits we have to intert into user_has_branch table
+        const [branchAssignment] = await pool.query(
           "INSERT INTO user_has_branch (User_idUser, Branch_idBranch) VALUES (?, ?)",
-          [result.insertId, branch_id]
+          [result.insertId, branch.idBranch]
         );
 
-        if (branchResult.affectedRows === 0) {
-          branchAssignmentMessage =
-            " However, failed to assign user to the specified branch.";
-        } else {
-          branchAssignmentMessage =
-            " User has been successfully assigned to the branch.";
+        if (branchAssignment.affectedRows === 0) {
+          return next(
+            errorHandler(
+              500,
+              "Failed to assign user to branch, Please try again"
+            )
+          );
         }
-      } catch (branchError) {
-        console.error("Error assigning user to branch:", branchError);
-        branchAssignmentMessage =
-          " However, failed to assign user to the specified branch due to a database error.";
       }
     }
 
     res.status(201).json({
-      message: `User created successfully.${branchAssignmentMessage}`,
+      success: true,
+      userId: result.insertId,
+      message: `User created successfully`,
     });
   } catch (error) {
     console.error("Error creating user:", error);
@@ -748,12 +759,8 @@ export const updateUser = async (req, res, next) => {
     }
 
     console.log(
-      Contact_no,
-      Designation_idDesignation,
-      Email,
-      Status,
-      full_name,
-      "Update User"
+      branchData,
+      "this is the branch data in the update user function"
     );
 
     const [existingUser] = await pool.query(

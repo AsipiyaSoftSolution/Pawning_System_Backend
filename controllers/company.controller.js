@@ -516,6 +516,71 @@ export const getArticleCategories = async (req, res, next) => {
   }
 };
 
+// Get all users for the company
+export const getAllUsers = async (req, res, next) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    // Get total count for pagination
+    const paginationData = await getPaginationData(
+      "SELECT COUNT(*) as total FROM user WHERE Company_idCompany = ?",
+      [req.companyId],
+      page,
+      limit
+    );
+
+    // Get users with their designation and branch information
+    const [users] = await pool.query(
+      `SELECT 
+        u.idUser,
+        u.email,
+        u.full_name,
+        u.Contact_no,
+        u.created_at,
+        u.is_active,
+        d.Description as designation_name,
+        d.idDesignation,
+        GROUP_CONCAT(b.Branch_Name) as branch_names,
+        GROUP_CONCAT(b.idBranch) as branch_ids
+      FROM user u
+      LEFT JOIN designation d ON u.Designation_idDesignation = d.idDesignation
+      LEFT JOIN user_has_branch uhb ON u.idUser = uhb.User_idUser
+      LEFT JOIN branch b ON uhb.Branch_idBranch = b.idBranch
+      WHERE u.Company_idCompany = ?
+      GROUP BY u.idUser, u.email, u.full_name, u.Contact_no, u.created_at, u.is_active, d.Description, d.idDesignation
+      LIMIT ? OFFSET ?`,
+      [req.companyId, limit, offset]
+    );
+
+    // Format the response data
+    const formattedUsers = users.map(user => ({
+      id: user.idUser,
+      email: user.email,
+      firstName: user.full_name?.split(' ')[0] || '',
+      lastName: user.full_name?.split(' ').slice(1).join(' ') || '',
+      fullName: user.full_name,
+      contactNumber: user.Contact_no,
+      designation: user.designation_name,
+      designationId: user.idDesignation,
+      branch: user.branch_names || 'No Branch Assigned',
+      branchIds: user.branch_ids ? user.branch_ids.split(',').map(id => parseInt(id)) : [],
+      status: user.is_active ? 'Active' : 'Inactive',
+      createdAt: user.created_at
+    }));
+
+    res.status(200).json({
+      message: "Users fetched successfully",
+      users: formattedUsers,
+      pagination: paginationData,
+    });
+  } catch (error) {
+    console.error("Error fetching users:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
 // Create a new user for the company and assign to a branch
 // This function creates a new user with a temporary password and hashes it before storing it in the database.
 export const createUser = async (req, res, next) => {

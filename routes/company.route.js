@@ -15,6 +15,7 @@ import {
   deleteArticleCategory,
   getArticleCategories,
   createUser,
+  getAllUsers,
   createBranch,
   getAllBranches,
   assignUserToBranch,
@@ -42,6 +43,7 @@ route.post("/article-category", protectedRoute, createArticleCategory); // Creat
 route.patch("/article-category/:id", protectedRoute, updateArticleCategory); // Update article category by ID
 route.delete("/article-category/:id", protectedRoute, deleteArticleCategory); // Delete article category by ID
 route.get("/article-categories/:id", protectedRoute, getArticleCategories); // Get all article categories
+route.get("/users", protectedRoute, getAllUsers); // Get all users of the company
 route.post("/user", protectedRoute, createUser); // Create a new user
 route.post("/branch", protectedRoute, createBranch); // Create a new branch
 route.get("/branches", protectedRoute, getAllBranches); // Get all branches of the company

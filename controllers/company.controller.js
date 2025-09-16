@@ -731,6 +731,146 @@ export const getAllUsersForTheBranch = async (req, res, next) => {
   }
 };
 
+// Update user by ID (assign/revoke branch, designation, status)
+export const updateUser = async (req, res, next) => {
+  try {
+    const userId = req.params.id;
+    const {
+      Contact_no,
+      Designation_idDesignation,
+      Email,
+      Status,
+      full_name,
+      branchData,
+    } = req.body;
+    if (!userId) {
+      return next(errorHandler(400, "User ID is required"));
+    }
+
+    console.log(
+      Contact_no,
+      Designation_idDesignation,
+      Email,
+      Status,
+      full_name,
+      "Update User"
+    );
+
+    const [existingUser] = await pool.query(
+      "SELECT * FROM user WHERE idUser = ? AND Company_idCompany = ?",
+      [userId, req.companyId]
+    );
+
+    if (existingUser.length === 0) {
+      return next(errorHandler(404, "User not found for this company"));
+    }
+
+    // Verify designation exists for this company
+    const [designationExists] = await pool.query(
+      "SELECT 1 FROM designation WHERE idDesignation = ? AND Company_idCompany = ?",
+      [Designation_idDesignation, req.companyId]
+    );
+    if (designationExists.length === 0) {
+      return next(errorHandler(404, "Designation not found for this company"));
+    }
+
+    const [result] = await pool.query(
+      "UPDATE user SET Contact_no = ?, Designation_idDesignation = ?, Email = ?, Status = ?, full_name = ? WHERE idUser = ? AND Company_idCompany = ?",
+      [
+        Contact_no,
+        Designation_idDesignation,
+        Email,
+        Status,
+        full_name,
+        userId,
+        req.companyId,
+      ]
+    );
+
+    if (result.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to update user"));
+    }
+
+    // update user has branch table based on branchData array
+    if (branchData && Array.isArray(branchData)) {
+      // Handle branch removals
+
+      // Get all current branch assignments for the user
+      const [currentAssignments] = await pool.query(
+        "SELECT Branch_idBranch FROM user_has_branch WHERE User_idUser = ?",
+        [userId]
+      );
+      const currentBranchIds = currentAssignments.map(
+        (row) => row.Branch_idBranch
+      );
+
+      // Get the new branch IDs from the request
+      const newBranchIds = branchData.map((branch) => branch.idBranch);
+
+      // Find branches to delete (in DB but not in new data)
+      const branchesToDelete = currentBranchIds.filter(
+        (id) => !newBranchIds.includes(id)
+      );
+
+      // Delete removed branches
+      if (branchesToDelete.length > 0) {
+        const [deleteResult] = await pool.query(
+          "DELETE FROM user_has_branch WHERE User_idUser = ? AND Branch_idBranch IN (?)",
+          [userId, branchesToDelete]
+        );
+
+        if (deleteResult.affectedRows === 0) {
+          return next(
+            errorHandler(500, "Failed to remove user from some branches")
+          );
+        }
+      }
+
+      // Handle branch assignments
+      for (const branch of branchData) {
+        // Check if the branch exists
+        const [branchExists] = await pool.query(
+          "SELECT idBranch FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
+          [branch.idBranch, req.companyId]
+        );
+
+        // If branch does not exist
+        if (branchExists.length === 0) {
+          return next(
+            errorHandler(
+              404,
+              `Branch ID ${branch.Name} not found for this company`
+            )
+          );
+        }
+
+        // now check if the user is already assigned to the branch
+        const [assignmentExists] = await pool.query(
+          "SELECT * FROM user_has_branch WHERE User_idUser = ? AND Branch_idBranch = ?",
+          [userId, branch.idBranch]
+        );
+
+        // If not assigned, then assign
+        if (assignmentExists.length === 0) {
+          // Assign the user to the branch
+          const [branchResult] = await pool.query(
+            "INSERT INTO user_has_branch (User_idUser, Branch_idBranch) VALUES (?, ?)",
+            [userId, branch.idBranch]
+          );
+        }
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "User updated successfully",
+    });
+  } catch (error) {
+    console.error("Error updating user for the branch:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
 // Create a new branch for the company
 export const createBranch = async (req, res, next) => {
   try {

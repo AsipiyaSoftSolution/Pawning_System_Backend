@@ -27,6 +27,7 @@ import {
   updateArticleCondition,
   deleteArticleCondition,
   getAllUsersForTheBranch,
+  updateUser,
 } from "../controllers/company.controller.js";
 const route = express.Router();
 
@@ -51,6 +52,7 @@ route.get(
   checkUserBranchAccess,
   getAllUsersForTheBranch
 ); // Get all users assigned to the branch of the logged-in user
+route.patch("/user/:id", protectedRoute, updateUser); // Update user by ID (assign/revoke branch, designation, status)
 route.post("/branch", protectedRoute, createBranch); // Create a new branch
 route.get("/branches", protectedRoute, getAllBranches); // Get all branches of the company
 route.post("/user/assign-to-branch", protectedRoute, assignUserToBranch); // Assign users to branches

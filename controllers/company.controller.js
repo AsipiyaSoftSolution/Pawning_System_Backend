@@ -520,20 +520,27 @@ export const getArticleCategories = async (req, res, next) => {
 // This function creates a new user with a temporary password and hashes it before storing it in the database.
 export const createUser = async (req, res, next) => {
   try {
-    const { email, full_name, designationId, contact_no, branch_id } = req.body;
-    if (!email || !full_name || !designationId || !contact_no) {
+    const {
+      Contact_no,
+      Designation_idDesignation,
+      Email,
+      Status,
+      full_name,
+      branchData,
+    } = req.body;
+    if (!Email || !full_name || !Designation_idDesignation || !Contact_no) {
       return next(errorHandler(400, "All fields are required"));
     }
 
     // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
+    if (!emailRegex.test(Email)) {
       return next(errorHandler(400, "Please provide a valid email address"));
     }
 
     const [existingUser] = await pool.query(
       "SELECT idUser FROM user WHERE email = ?",
-      [email]
+      [Email]
     );
     if (existingUser.length > 0) {
       return next(errorHandler(400, "User with this email already exists"));
@@ -542,37 +549,29 @@ export const createUser = async (req, res, next) => {
     // Verify designation exists for this company
     const [designationExists] = await pool.query(
       "SELECT idDesignation FROM designation WHERE idDesignation = ? AND Company_idCompany = ?",
-      [designationId, req.companyId]
+      [Designation_idDesignation, req.companyId]
     );
     if (designationExists.length === 0) {
       return next(errorHandler(404, "Designation not found for this company"));
     }
 
-    // If branch_id is provided, verify it exists before creating user
-    if (branch_id) {
-      const [existingBranch] = await pool.query(
-        "SELECT idBranch FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
-        [branch_id, req.companyId]
-      );
-      if (existingBranch.length === 0) {
-        return next(errorHandler(404, "Branch not found for this company"));
-      }
-    }
-
     const tempPassword = Math.random().toString(36).slice(-8); // Generate a temporary password
     console.log("Temporary password generated:", tempPassword);
+    // have to send this temp password to the user via email
+    // For now, we will just log it to the console (In production, use a proper email service)
+    // console.log(`Temporary password for ${email}: ${tempPassword}`);
 
     const hashedPassword = await bcrypt.hash(tempPassword, 10); // Hash the temporary password
 
     const [result] = await pool.query(
-      "INSERT INTO user (email,password, full_name, Designation_idDesignation, Company_idCompany,Contact_no) VALUES (?, ?, ?, ?, ?,?)",
+      "INSERT INTO user (Email,Password, full_name, Designation_idDesignation, Company_idCompany,Contact_no) VALUES (?, ?, ?, ?, ?,?)",
       [
-        email,
+        Email,
         hashedPassword,
         full_name,
-        designationId,
+        Designation_idDesignation,
         req.companyId,
-        contact_no,
+        Contact_no,
       ]
     );
 
@@ -580,35 +579,301 @@ export const createUser = async (req, res, next) => {
       return next(errorHandler(500, "Failed to create user"));
     }
 
-    let branchAssignmentMessage = "";
+    // If branchData is provided, verify those branches exist for this company
+    if (branchData && Array.isArray(branchData) && branchData.length > 0) {
+      for (const branch of branchData) {
+        const [branchExists] = await pool.query(
+          "SELECT 1 FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
+          [branch.idBranch, req.companyId]
+        );
+        // If any branch does not exist, return an error
+        if (branchExists.length === 0) {
+          return next(
+            errorHandler(
+              404,
+              `Branch with ID ${branch.Name} not found for this company`
+            )
+          );
+        }
 
-    // assign a branch to the user if branch_id is provided
-    if (branch_id) {
-      try {
-        const [branchResult] = await pool.query(
+        // if it exits we have to intert into user_has_branch table
+        const [branchAssignment] = await pool.query(
           "INSERT INTO user_has_branch (User_idUser, Branch_idBranch) VALUES (?, ?)",
-          [result.insertId, branch_id]
+          [result.insertId, branch.idBranch]
         );
 
-        if (branchResult.affectedRows === 0) {
-          branchAssignmentMessage =
-            " However, failed to assign user to the specified branch.";
-        } else {
-          branchAssignmentMessage =
-            " User has been successfully assigned to the branch.";
+        if (branchAssignment.affectedRows === 0) {
+          return next(
+            errorHandler(
+              500,
+              "Failed to assign user to branch, Please try again"
+            )
+          );
         }
-      } catch (branchError) {
-        console.error("Error assigning user to branch:", branchError);
-        branchAssignmentMessage =
-          " However, failed to assign user to the specified branch due to a database error.";
       }
     }
 
     res.status(201).json({
-      message: `User created successfully.${branchAssignmentMessage}`,
+      success: true,
+      userId: result.insertId,
+      message: `User created successfully`,
     });
   } catch (error) {
     console.error("Error creating user:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// get all users of the branch
+export const getAllUsersForTheBranch = async (req, res, next) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    let searchTerm = req.query.search || "";
+    let status = req.query.status || "1";
+    const offset = (page - 1) * limit;
+
+    // format search term
+    if (searchTerm && typeof searchTerm === "string") {
+      searchTerm = formatSearchPattern(searchTerm);
+    }
+
+    let paginationData;
+    let users;
+    let statusCondition = status ? "AND u.Status = ?" : "";
+
+    if (searchTerm) {
+      // Parameters for search query - users who belong to the specific branch
+      let params = [
+        req.branchId,
+        `%${searchTerm}%`,
+        `%${searchTerm}%`,
+        req.companyId,
+      ];
+      if (status) params.push(status);
+
+      // Get pagination data - count users who belong to this branch and match search
+      paginationData = await getPaginationData(
+        `SELECT COUNT(DISTINCT u.idUser) as total
+         FROM user u
+         JOIN user_has_branch ub ON u.idUser = ub.User_idUser
+         WHERE ub.Branch_idBranch = ? AND (u.full_name LIKE ? OR u.email LIKE ?) ${statusCondition} AND u.Company_idCompany = ?`,
+        params,
+        page,
+        limit
+      );
+
+      // Get users who belong to this branch, but show ALL their branches
+      [users] = await pool.query(
+        `SELECT u.*, d.Description as designationDescription,
+                GROUP_CONCAT(DISTINCT CONCAT(b.idBranch, ':', b.Name)) as branchData
+         FROM user u
+         JOIN user_has_branch ub_filter ON u.idUser = ub_filter.User_idUser
+         JOIN user_has_branch ub ON u.idUser = ub.User_idUser
+         LEFT JOIN designation d ON u.Designation_idDesignation = d.idDesignation
+         LEFT JOIN branch b ON ub.Branch_idBranch = b.idBranch
+         WHERE ub_filter.Branch_idBranch = ? AND (u.full_name LIKE ? OR u.email LIKE ?) ${statusCondition} AND u.Company_idCompany = ?
+         GROUP BY u.idUser
+         LIMIT ? OFFSET ?`,
+        [...params, limit, offset]
+      );
+    } else {
+      // Parameters for non-search query - users who belong to the specific branch
+      let params = [req.branchId, req.companyId];
+      if (status) params.push(status);
+
+      // Get pagination data - count users who belong to this branch
+      paginationData = await getPaginationData(
+        `SELECT COUNT(DISTINCT u.idUser) as total
+         FROM user u
+         JOIN user_has_branch ub ON u.idUser = ub.User_idUser
+         WHERE ub.Branch_idBranch = ? ${statusCondition} AND u.Company_idCompany = ?`,
+        params,
+        page,
+        limit
+      );
+
+      // Get users who belong to this branch, but show ALL their branches
+      [users] = await pool.query(
+        `SELECT u.*, d.Description as designationDescription,
+                GROUP_CONCAT(DISTINCT CONCAT(b.idBranch, ':', b.Name)) as branchData
+         FROM user u
+         JOIN user_has_branch ub_filter ON u.idUser = ub_filter.User_idUser
+         JOIN user_has_branch ub ON u.idUser = ub.User_idUser
+         LEFT JOIN designation d ON u.Designation_idDesignation = d.idDesignation
+         LEFT JOIN branch b ON ub.Branch_idBranch = b.idBranch
+         WHERE ub_filter.Branch_idBranch = ? ${statusCondition} AND u.Company_idCompany = ?
+         GROUP BY u.idUser
+         LIMIT ? OFFSET ?`,
+        [...params, limit, offset]
+      );
+    }
+
+    // Parse branchData into array of objects {idBranch, Name}
+    if (users && Array.isArray(users)) {
+      users = users.map((user) => {
+        if (user.branchData) {
+          user.branchData = user.branchData.split(",").map((pair) => {
+            const [id, ...nameParts] = pair.split(":");
+            return {
+              idBranch: parseInt(id, 10),
+              Name: nameParts.join(":"),
+            };
+          });
+        } else {
+          user.branchData = [];
+        }
+        // Remove unnecessary fields
+        delete user.branchIds;
+        delete user.branchNames;
+        delete user.Password;
+        return user;
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      users,
+      pagination: paginationData,
+    });
+  } catch (error) {
+    console.error("Error fetching users for the branch:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// Update user by ID (assign/revoke branch, designation, status)
+export const updateUser = async (req, res, next) => {
+  try {
+    const userId = req.params.id;
+    const {
+      Contact_no,
+      Designation_idDesignation,
+      Email,
+      Status,
+      full_name,
+      branchData,
+    } = req.body;
+    if (!userId) {
+      return next(errorHandler(400, "User ID is required"));
+    }
+
+    console.log(
+      branchData,
+      "this is the branch data in the update user function"
+    );
+
+    const [existingUser] = await pool.query(
+      "SELECT * FROM user WHERE idUser = ? AND Company_idCompany = ?",
+      [userId, req.companyId]
+    );
+
+    if (existingUser.length === 0) {
+      return next(errorHandler(404, "User not found for this company"));
+    }
+
+    // Verify designation exists for this company
+    const [designationExists] = await pool.query(
+      "SELECT 1 FROM designation WHERE idDesignation = ? AND Company_idCompany = ?",
+      [Designation_idDesignation, req.companyId]
+    );
+    if (designationExists.length === 0) {
+      return next(errorHandler(404, "Designation not found for this company"));
+    }
+
+    const [result] = await pool.query(
+      "UPDATE user SET Contact_no = ?, Designation_idDesignation = ?, Email = ?, Status = ?, full_name = ? WHERE idUser = ? AND Company_idCompany = ?",
+      [
+        Contact_no,
+        Designation_idDesignation,
+        Email,
+        Status,
+        full_name,
+        userId,
+        req.companyId,
+      ]
+    );
+
+    if (result.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to update user"));
+    }
+
+    // update user has branch table based on branchData array
+    if (branchData && Array.isArray(branchData)) {
+      // Handle branch removals
+
+      // Get all current branch assignments for the user
+      const [currentAssignments] = await pool.query(
+        "SELECT Branch_idBranch FROM user_has_branch WHERE User_idUser = ?",
+        [userId]
+      );
+      const currentBranchIds = currentAssignments.map(
+        (row) => row.Branch_idBranch
+      );
+
+      // Get the new branch IDs from the request
+      const newBranchIds = branchData.map((branch) => branch.idBranch);
+
+      // Find branches to delete (in DB but not in new data)
+      const branchesToDelete = currentBranchIds.filter(
+        (id) => !newBranchIds.includes(id)
+      );
+
+      // Delete removed branches
+      if (branchesToDelete.length > 0) {
+        const [deleteResult] = await pool.query(
+          "DELETE FROM user_has_branch WHERE User_idUser = ? AND Branch_idBranch IN (?)",
+          [userId, branchesToDelete]
+        );
+
+        if (deleteResult.affectedRows === 0) {
+          return next(
+            errorHandler(500, "Failed to remove user from some branches")
+          );
+        }
+      }
+
+      // Handle branch assignments
+      for (const branch of branchData) {
+        // Check if the branch exists
+        const [branchExists] = await pool.query(
+          "SELECT idBranch FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
+          [branch.idBranch, req.companyId]
+        );
+
+        // If branch does not exist
+        if (branchExists.length === 0) {
+          return next(
+            errorHandler(
+              404,
+              `Branch ID ${branch.Name} not found for this company`
+            )
+          );
+        }
+
+        // now check if the user is already assigned to the branch
+        const [assignmentExists] = await pool.query(
+          "SELECT * FROM user_has_branch WHERE User_idUser = ? AND Branch_idBranch = ?",
+          [userId, branch.idBranch]
+        );
+
+        // If not assigned, then assign
+        if (assignmentExists.length === 0) {
+          // Assign the user to the branch
+          const [branchResult] = await pool.query(
+            "INSERT INTO user_has_branch (User_idUser, Branch_idBranch) VALUES (?, ?)",
+            [userId, branch.idBranch]
+          );
+        }
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "User updated successfully",
+    });
+  } catch (error) {
+    console.error("Error updating user for the branch:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

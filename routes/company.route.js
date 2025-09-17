@@ -1,5 +1,6 @@
 import express from "express";
 import { protectedRoute } from "../middlewares/auth.middleware.js";
+import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
 import {
   getCompanyDetails,
   creteDesignation,
@@ -25,6 +26,8 @@ import {
   getArticlesConditions,
   updateArticleCondition,
   deleteArticleCondition,
+  getAllUsersForTheBranch,
+  updateUser,
 } from "../controllers/company.controller.js";
 const route = express.Router();
 
@@ -43,6 +46,13 @@ route.patch("/article-category/:id", protectedRoute, updateArticleCategory); // 
 route.delete("/article-category/:id", protectedRoute, deleteArticleCategory); // Delete article category by ID
 route.get("/article-categories/:id", protectedRoute, getArticleCategories); // Get all article categories
 route.post("/user", protectedRoute, createUser); // Create a new user
+route.get(
+  "/:branchId/users",
+  protectedRoute,
+  checkUserBranchAccess,
+  getAllUsersForTheBranch
+); // Get all users assigned to the branch of the logged-in user
+route.patch("/user/:id", protectedRoute, updateUser); // Update user by ID (assign/revoke branch, designation, status)
 route.post("/branch", protectedRoute, createBranch); // Create a new branch
 route.get("/branches", protectedRoute, getAllBranches); // Get all branches of the company
 route.post("/user/assign-to-branch", protectedRoute, assignUserToBranch); // Assign users to branches

@@ -154,6 +154,7 @@ export const addDailyTicketLog = async () => {
               latestLateChargesBalance +
               latestAdditionalChargeBalance;
 
+            /*
             // Console checks
             console.log(
               `Adding INTEREST log for Ticket ID ${ticketId} on ${dateString}:`
@@ -167,6 +168,7 @@ export const addDailyTicketLog = async () => {
               }`
             );
             console.log(`  Total Balance after Interest: ${totalBalance}`);
+            */
 
             // Insert interest log
             const [result] = await pool.query(
@@ -233,6 +235,7 @@ export const addDailyTicketLog = async () => {
               (latestLateChargesBalance + penaltyAmount) +
               latestAdditionalChargeBalance;
 
+            /*
             // Console checks
             console.log(
               `Adding PENALTY log for Ticket ID ${ticketId} on ${dateString}:`
@@ -246,6 +249,7 @@ export const addDailyTicketLog = async () => {
               }`
             );
             console.log(`  Total Balance after Penalty: ${totalBalance}`);
+            */
 
             // Create customer log for penalty
             await createCustomerLogOnTicketPenality(
@@ -276,6 +280,20 @@ export const addDailyTicketLog = async () => {
             if (result.affectedRows === 0) {
               throw new Error(
                 `Failed to add penalty ticket log for ${dateString}`
+              );
+            }
+
+            // Update ticket status to '3' which stand for overdue
+            if (ticket.Status !== "3") {
+              const [updateResult] = await pool.query(
+                "UPDATE pawning_ticket SET Status = '3' WHERE idPawning_Ticket = ?",
+                [ticketId]
+              );
+            }
+
+            if (updateResult.affectedRows === 0) {
+              throw new Error(
+                `Failed to update ticket status to overdue for ticket ID ${ticketId}`
               );
             }
           }
@@ -325,8 +343,6 @@ export const addTicketLogsByTicketId = async (ticketId) => {
       startDate = new Date(lastLogDate);
       startDate.setDate(startDate.getDate() + 1); // Start from the day after the last log
     }
-
-    let logsAdded = 0;
 
     // Process each day from startDate to today
     for (
@@ -406,8 +422,6 @@ export const addTicketLogsByTicketId = async (ticketId) => {
               `Failed to add interest ticket log for ${dateString}`
             );
           }
-
-          logsAdded++;
         }
       }
 
@@ -475,7 +489,18 @@ export const addTicketLogsByTicketId = async (ticketId) => {
             );
           }
 
-          logsAdded++;
+          if (ticket.Status !== "3") {
+            // Update ticket status to '3' which stand for overdue
+            const [updateResult] = await pool.query(
+              "UPDATE pawning_ticket SET Status = '3' WHERE idPawning_Ticket = ?",
+              [ticketId]
+            );
+          }
+          if (updateResult.affectedRows === 0) {
+            throw new Error(
+              `Failed to update ticket status to overdue for ticket ID ${ticketId}`
+            );
+          }
 
           // Create customer log for penalty
 
@@ -492,7 +517,6 @@ export const addTicketLogsByTicketId = async (ticketId) => {
     return {
       success: true,
       message: `Successfully processed ticket ${ticketId}`,
-      logsAdded: logsAdded,
     };
   } catch (error) {
     console.error(`Error adding ticket logs for ticket ${ticketId}:`, error);

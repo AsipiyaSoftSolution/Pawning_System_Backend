@@ -1088,6 +1088,36 @@ export const updateCustomerNumberFormat = async (req, res, next) => {
   }
 };
 
+export const getPawningTicketFormat = async (req, res, next) => {
+  try {
+    const [formatData] = await pool.query(
+      "SELECT format_type, format, auto_generate_start_from FROM pawning_ticket_format WHERE company_id = ?",
+      [req.companyId]
+    );
+
+    if (formatData.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: "No pawning ticket format found",
+        format: null
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Pawning ticket format fetched successfully",
+      format: {
+        pawningTicketNumberFormatType: formatData[0].format_type,
+        pawningTicketNumberFormat: formatData[0].format,
+        pawningTicketNumberAutoGenerateStartFrom: formatData[0].auto_generate_start_from
+      }
+    });
+  } catch (error) {
+    console.error("Error fetching pawning ticket format:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
 export const updatePawningTicketNumberFormat = async (req, res, next) => {
   try {
     const {
@@ -1111,16 +1141,40 @@ export const updatePawningTicketNumberFormat = async (req, res, next) => {
       );
     }
 
-    /* const [result] = await pool.query(
-      "UPDATE pawning_ticket SET Pawning_Ticket_No_Format_Type = ?, Pawning_Ticket_No_Format = ?, Pawning_Ticket_No_Auto_Generate_Number_Start_From = ? WHERE idCompany = ?",
-      [
-        pawningTicketNumberFormatType,
-        pawningTicketNumberFormat,
-        pawningTicketNumberAutoGenerateStartFrom,
-        req.companyId,
-      ]
+    // Check if a record already exists for this company
+    const [existingFormat] = await pool.query(
+      "SELECT id FROM pawning_ticket_format WHERE company_id = ?",
+      [req.companyId]
     );
-    */
+
+    let result;
+    if (existingFormat.length > 0) {
+      // Update existing record
+      [result] = await pool.query(
+        "UPDATE pawning_ticket_format SET format_type = ?, format = ?, auto_generate_start_from = ? WHERE company_id = ?",
+        [
+          pawningTicketNumberFormatType,
+          pawningTicketNumberFormat,
+          pawningTicketNumberAutoGenerateStartFrom || 1,
+          req.companyId,
+        ]
+      );
+    } else {
+      // Insert new record
+      [result] = await pool.query(
+        "INSERT INTO pawning_ticket_format (company_id, format_type, format, auto_generate_start_from) VALUES (?, ?, ?, ?)",
+        [
+          req.companyId,
+          pawningTicketNumberFormatType,
+          pawningTicketNumberFormat,
+          pawningTicketNumberAutoGenerateStartFrom || 1,
+        ]
+      );
+    }
+
+    if (result.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to update pawning ticket format"));
+    }
 
     res.status(200).json({
       message: "Pawning ticket number format updated successfully.",

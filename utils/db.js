@@ -39,11 +39,11 @@ export const pool = mysql.createPool({
 
 // Add automatic connection validation
 pool.on("acquire", (connection) => {
-  console.log("Connection %d acquired", connection.threadId);
+  //console.log("Connection %d acquired", connection.threadId);
 });
 
 pool.on("release", (connection) => {
-  console.log("Connection %d released", connection.threadId);
+  //console.log("Connection %d released", connection.threadId);
 });
 
 pool.on("connection", (connection) => {

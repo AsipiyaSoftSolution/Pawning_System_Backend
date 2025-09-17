@@ -6,9 +6,9 @@ export const checkUserBranchAccess = async (req, res, next) => {
     const branches = req.branches || [];
     const branchId =
       req.params.branchId || req.params.id || req.params.branch_id;
-    console.log("Branches:", branches);
-    console.log("Request Params:", req.params);
-    console.log("Extracted Branch ID:", branchId);
+    //  console.log("Branches:", branches);
+    //  console.log("Request Params:", req.params);
+    // console.log("Extracted Branch ID:", branchId);
 
     // check if the branchId is in the request
     if (!branchId) {

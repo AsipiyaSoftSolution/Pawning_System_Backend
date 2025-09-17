@@ -525,3 +525,60 @@ export const addTicketLogsByTicketId = async (ticketId) => {
     );
   }
 };
+
+// Function to run on when a ticket got a new additonal charge
+export const createPawningTicketLogOnAdditionalCharge = async (
+  ticketId,
+  type,
+  userId,
+  amount
+) => {
+  try {
+    const [latestLogResult] = await pool.query(
+      "SELECT * FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? ORDER BY idTicket_Log DESC LIMIT 1",
+      [ticketId]
+    );
+
+    const latestAdvanceBalance =
+      parseFloat(latestLogResult[0]?.Advance_Balance) || 0;
+    const latestInterestBalance =
+      parseFloat(latestLogResult[0]?.Interest_Balance) || 0;
+    const latestServiceChargeBalance =
+      parseFloat(latestLogResult[0]?.Service_Charge_Balance) || 0;
+    const latestLateChargesBalance =
+      parseFloat(latestLogResult[0]?.Late_Charges_Balance) || 0;
+    const latestAdditionalChargeBalance =
+      parseFloat(latestLogResult[0]?.Aditional_Charge_Balance) || 0;
+    const newAdditionalCharge = parseFloat(amount) || 0;
+
+    const totalBalance =
+      latestAdvanceBalance +
+      latestInterestBalance +
+      latestServiceChargeBalance +
+      latestLateChargesBalance +
+      (latestAdditionalChargeBalance + newAdditionalCharge);
+
+    const [result] = await pool.query(
+      "INSERT INTO ticket_log (Pawning_Ticket_idPawning_Ticket, Type, Amount, Advance_Balance, Interest_Balance, Service_Charge_Balance, Late_Charges_Balance, Aditional_Charge_Balance, Total_Balance, User_idUser, Date_Time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())",
+      [
+        ticketId,
+        type,
+        newAdditionalCharge,
+        latestAdvanceBalance,
+        latestInterestBalance,
+        latestServiceChargeBalance,
+        latestLateChargesBalance,
+        latestAdditionalChargeBalance + newAdditionalCharge,
+        totalBalance,
+        userId,
+      ]
+    );
+
+    if (result.affectedRows === 0) {
+      throw new Error("Failed to create additional charge ticket log");
+    }
+  } catch (error) {
+    console.error("Error creating additional charge ticket log:", error);
+    throw new Error("Error creating additional charge ticket log");
+  }
+};

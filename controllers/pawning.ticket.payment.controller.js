@@ -2,6 +2,7 @@ import { errorHandler } from "../utils/errorHandler.js";
 import { pool } from "../utils/db.js";
 import { getPaginationData } from "../utils/helper.js";
 import { formatSearchPattern } from "../utils/helper.js";
+import { createPawningTicketLogOnAdditionalCharge } from "../utils/pawning.ticket.logs.js";
 
 // Search tickets by ticket number, customer NIC, or customer name with pagination
 export const searchByTickerNumberCustomerNICOrName = async (req, res, next) => {
@@ -198,6 +199,97 @@ export const getTicketLogDataById = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Error fetching ticket log data by ID:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// get ticket additional charges by ticket id
+export const getTicketAdditionalChargesById = async (req, res, next) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    const ticketId = req.params.id || req.params.ticketId;
+    if (!ticketId) {
+      return next(errorHandler(400, "Ticket ID is required"));
+    }
+
+    const paginationData = await getPaginationData(
+      "SELECT COUNT(*) AS TOTAL FROM additional_charges WHERE Pawning_Ticket_idPawning_Ticket = ?",
+      [ticketId],
+      page,
+      limit
+    );
+
+    const [ticketAdditionalCharges] = await pool.query(
+      `SELECT ac.*, u.full_name AS officerName
+       FROM additional_charges ac
+  LEFT JOIN user u ON ac.User_idUser = u.idUser
+      WHERE ac.Pawning_Ticket_idPawning_Ticket = ?
+   ORDER BY STR_TO_DATE(ac.Date_Time, '%Y-%m-%d %H:%i:%s') DESC
+      LIMIT ? OFFSET ?`,
+      [ticketId, limit, offset]
+    );
+
+    res.status(200).json({
+      success: true,
+      ticketAdditionalCharges,
+      pagination: paginationData,
+    });
+  } catch (error) {
+    console.error("Error fetching ticket additional charges by ID:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// create a new ticket additional charge
+export const createTicketAdditionalCharge = async (req, res, next) => {
+  try {
+    const ticketId = req.params.id || req.params.ticketId;
+    if (!ticketId) {
+      return next(errorHandler(400, "Ticket ID is required"));
+    }
+
+    const { description, amount, note } = req.body;
+
+    if (!amount || !description) {
+      return next(errorHandler(400, "Amount and Description is required"));
+    }
+
+    const [result] = await pool.query(
+      "INSERT INTO additional_charges (Description,Amount,Pawning_Ticket_idPawning_Ticket,Note,User_idUser,Date_Time) VALUES (?,?,?,?,?,NOW())",
+      [description, amount, ticketId, note, req.userId]
+    );
+
+    if (result.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to create additional charge"));
+    }
+
+    // send the created additional charge data as response
+    const [newCharge] = await pool.query(
+      `SELECT ac.*, u.full_name AS officerName
+       FROM additional_charges ac
+  LEFT JOIN user u ON ac.User_idUser = u.idUser
+      WHERE ac.idAdditional_Charges = ?`,
+      [result.insertId]
+    );
+
+    // create a pawning ticket log entry for the additional charge
+    await createPawningTicketLogOnAdditionalCharge(
+      ticketId,
+      "ADDITIONAL CHARGE",
+      req.userId,
+      amount
+    );
+
+    res.status(201).json({
+      success: true,
+      message: "Additional charge created successfully.",
+      additionalCharge: newCharge[0],
+    });
+  } catch (error) {
+    console.error("Error creating ticket additional charge:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

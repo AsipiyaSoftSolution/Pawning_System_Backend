@@ -22,6 +22,7 @@ import {
   getBranchData,
   updateCustomerNumberFormat,
   updatePawningTicketNumberFormat,
+  getPawningTicketFormat,
   createArticleCondition,
   getArticlesConditions,
   updateArticleCondition,
@@ -67,6 +68,11 @@ route.patch(
   protectedRoute,
   updatePawningTicketNumberFormat
 ); // Update pawning ticket number format for the company
+route.get(
+  "/pawning-ticket-format",
+  protectedRoute,
+  getPawningTicketFormat
+); 
 route.post("/article-condition", protectedRoute, createArticleCondition); // Create article condition
 route.get("/article-conditions", protectedRoute, getArticlesConditions); // Get all article conditions
 route.patch("/article-condition/:id", protectedRoute, updateArticleCondition); // Update article condition by ID

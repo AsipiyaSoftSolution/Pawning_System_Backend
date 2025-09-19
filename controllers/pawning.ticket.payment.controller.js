@@ -280,6 +280,7 @@ export const getTicketDataById = async (req, res, next) => {
       }
     }
 
+    // calculate the minimum renewal amount
     function safeParse(val) {
       const n = parseFloat(val);
       return isNaN(n) ? 0 : n;
@@ -294,6 +295,12 @@ export const getTicketDataById = async (req, res, next) => {
     console.log("Minimum Renewal Amount:", minimumRenewalAmount);
 
     ticketCharges[0].minimumRenewalAmount = minimumRenewalAmount;
+
+    // calculaate the loan settlement amount
+    let loanSettlementAmount =
+      safeParse(ticketCharges[0].Total_Balance) +
+      safeParse(earlySettlementCharge);
+    ticketCharges[0].loanSettlementAmount = loanSettlementAmount;
 
     res.status(200).json({
       success: true,

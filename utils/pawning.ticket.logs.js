@@ -154,6 +154,7 @@ export const addDailyTicketLog = async () => {
               latestLateChargesBalance +
               latestAdditionalChargeBalance;
 
+            /*
             // Console checks
             console.log(
               `Adding INTEREST log for Ticket ID ${ticketId} on ${dateString}:`
@@ -167,6 +168,7 @@ export const addDailyTicketLog = async () => {
               }`
             );
             console.log(`  Total Balance after Interest: ${totalBalance}`);
+            */
 
             // Insert interest log
             const [result] = await pool.query(
@@ -233,6 +235,7 @@ export const addDailyTicketLog = async () => {
               (latestLateChargesBalance + penaltyAmount) +
               latestAdditionalChargeBalance;
 
+            /*
             // Console checks
             console.log(
               `Adding PENALTY log for Ticket ID ${ticketId} on ${dateString}:`
@@ -246,6 +249,7 @@ export const addDailyTicketLog = async () => {
               }`
             );
             console.log(`  Total Balance after Penalty: ${totalBalance}`);
+            */
 
             // Create customer log for penalty
             await createCustomerLogOnTicketPenality(
@@ -276,6 +280,20 @@ export const addDailyTicketLog = async () => {
             if (result.affectedRows === 0) {
               throw new Error(
                 `Failed to add penalty ticket log for ${dateString}`
+              );
+            }
+
+            // Update ticket status to '3' which stand for overdue
+            if (ticket.Status !== "3") {
+              const [updateResult] = await pool.query(
+                "UPDATE pawning_ticket SET Status = '3' WHERE idPawning_Ticket = ?",
+                [ticketId]
+              );
+            }
+
+            if (updateResult.affectedRows === 0) {
+              throw new Error(
+                `Failed to update ticket status to overdue for ticket ID ${ticketId}`
               );
             }
           }
@@ -325,8 +343,6 @@ export const addTicketLogsByTicketId = async (ticketId) => {
       startDate = new Date(lastLogDate);
       startDate.setDate(startDate.getDate() + 1); // Start from the day after the last log
     }
-
-    let logsAdded = 0;
 
     // Process each day from startDate to today
     for (
@@ -406,8 +422,6 @@ export const addTicketLogsByTicketId = async (ticketId) => {
               `Failed to add interest ticket log for ${dateString}`
             );
           }
-
-          logsAdded++;
         }
       }
 
@@ -475,7 +489,18 @@ export const addTicketLogsByTicketId = async (ticketId) => {
             );
           }
 
-          logsAdded++;
+          if (ticket.Status !== "3") {
+            // Update ticket status to '3' which stand for overdue
+            const [updateResult] = await pool.query(
+              "UPDATE pawning_ticket SET Status = '3' WHERE idPawning_Ticket = ?",
+              [ticketId]
+            );
+          }
+          if (updateResult.affectedRows === 0) {
+            throw new Error(
+              `Failed to update ticket status to overdue for ticket ID ${ticketId}`
+            );
+          }
 
           // Create customer log for penalty
 
@@ -492,12 +517,68 @@ export const addTicketLogsByTicketId = async (ticketId) => {
     return {
       success: true,
       message: `Successfully processed ticket ${ticketId}`,
-      logsAdded: logsAdded,
     };
   } catch (error) {
     console.error(`Error adding ticket logs for ticket ${ticketId}:`, error);
     throw new Error(
       `Error adding ticket logs for ticket ${ticketId}: ${error.message}`
     );
+  }
+};
+
+// Function to run on when a ticket got a new additonal charge
+export const createPawningTicketLogOnAdditionalCharge = async (
+  ticketId,
+  type,
+  userId,
+  amount
+) => {
+  try {
+    const [latestLogResult] = await pool.query(
+      "SELECT * FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? ORDER BY idTicket_Log DESC LIMIT 1",
+      [ticketId]
+    );
+
+    const latestAdvanceBalance =
+      parseFloat(latestLogResult[0]?.Advance_Balance) || 0;
+    const latestInterestBalance =
+      parseFloat(latestLogResult[0]?.Interest_Balance) || 0;
+    const latestServiceChargeBalance =
+      parseFloat(latestLogResult[0]?.Service_Charge_Balance) || 0;
+    const latestLateChargesBalance =
+      parseFloat(latestLogResult[0]?.Late_Charges_Balance) || 0;
+    const latestAdditionalChargeBalance =
+      parseFloat(latestLogResult[0]?.Aditional_Charge_Balance) || 0;
+    const newAdditionalCharge = parseFloat(amount) || 0;
+
+    const totalBalance =
+      latestAdvanceBalance +
+      latestInterestBalance +
+      latestServiceChargeBalance +
+      latestLateChargesBalance +
+      (latestAdditionalChargeBalance + newAdditionalCharge);
+
+    const [result] = await pool.query(
+      "INSERT INTO ticket_log (Pawning_Ticket_idPawning_Ticket, Type, Amount, Advance_Balance, Interest_Balance, Service_Charge_Balance, Late_Charges_Balance, Aditional_Charge_Balance, Total_Balance, User_idUser, Date_Time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())",
+      [
+        ticketId,
+        type,
+        newAdditionalCharge,
+        latestAdvanceBalance,
+        latestInterestBalance,
+        latestServiceChargeBalance,
+        latestLateChargesBalance,
+        latestAdditionalChargeBalance + newAdditionalCharge,
+        totalBalance,
+        userId,
+      ]
+    );
+
+    if (result.affectedRows === 0) {
+      throw new Error("Failed to create additional charge ticket log");
+    }
+  } catch (error) {
+    console.error("Error creating additional charge ticket log:", error);
+    throw new Error("Error creating additional charge ticket log");
   }
 };

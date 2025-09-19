@@ -15,7 +15,7 @@ export const searchByTickerNumberCustomerNICOrName = async (req, res, next) => {
     const searchPattern = formatSearchPattern(searchTerm); // Format the search term for SQL LIKE query
 
     const [result] = await pool.query(
-      "SELECT pt.idPawning_Ticket, pt.Ticket_No, c.Full_name, c.NIC FROM pawning_ticket pt JOIN customer c on pt.Customer_idCustomer = c.idCustomer WHERE (pt.Ticket_No LIKE ? OR c.NIC LIKE ? OR c.First_Name LIKE ?) AND pt.Branch_idBranch = ?  GROUP BY pt.idPawning_Ticket",
+      "SELECT pt.idPawning_Ticket, pt.Ticket_No, c.Full_name, c.NIC FROM pawning_ticket pt JOIN customer c on pt.Customer_idCustomer = c.idCustomer WHERE (pt.Ticket_No LIKE ? OR c.NIC LIKE ? OR c.First_Name LIKE ?) AND pt.Branch_idBranch = ? AND (pt.Status != '2' OR pt.Status IS NULL)",
       [searchPattern, searchPattern, searchPattern, req.branchId]
     );
 

@@ -15,7 +15,7 @@ export const searchByTickerNumberCustomerNICOrName = async (req, res, next) => {
     const searchPattern = formatSearchPattern(searchTerm); // Format the search term for SQL LIKE query
 
     const [result] = await pool.query(
-      "SELECT pt.idPawning_Ticket, pt.Ticket_No, c.Full_name, c.NIC FROM pawning_ticket pt JOIN customer c on pt.Customer_idCustomer = c.idCustomer WHERE (pt.Ticket_No LIKE ? OR c.NIC LIKE ? OR c.First_Name LIKE ?) AND pt.Branch_idBranch = ? AND pt.Status != 2 GROUP BY pt.idPawning_Ticket",
+      "SELECT pt.idPawning_Ticket, pt.Ticket_No, c.Full_name, c.NIC FROM pawning_ticket pt JOIN customer c on pt.Customer_idCustomer = c.idCustomer WHERE (pt.Ticket_No LIKE ? OR c.NIC LIKE ? OR c.First_Name LIKE ?) AND pt.Branch_idBranch = ?  GROUP BY pt.idPawning_Ticket",
       [searchPattern, searchPattern, searchPattern, req.branchId]
     );
 
@@ -81,7 +81,7 @@ export const getTicketDataById = async (req, res, next) => {
 
     // get the product name for the ticket
     const [productData] = await pool.query(
-      "SELECT Name FROM pawning_product WHERE idPawning_Product = ?",
+      "SELECT Name,Early_Settlement_Charge,Early_Settlement_Charge_Create_As,Early_Settlement_Charge_Value_type,Early_Settlement_Charge_Value,Interest_Method FROM pawning_product WHERE idPawning_Product = ?",
       [ticketData[0].Pawning_Product_idPawning_Product]
     );
 
@@ -161,6 +161,140 @@ export const getTicketDataById = async (req, res, next) => {
       delete payment.User_idUser;
     }
 
+    let earlySettlementCharge = 0;
+    // find the early settlement charge value
+    if (productData[0].Early_Settlement_Charge === "1") {
+      // if early settlement charge is active
+
+      // if create as is charge for product
+      if (
+        productData[0].Early_Settlement_Charge_Create_As ===
+        "Charge For Product"
+      ) {
+        if (
+          productData[0].Early_Settlement_Charge_Value_type === "Percentage"
+        ) {
+          // percentage of pawning advance amount
+          earlySettlementCharge =
+            (productData[0].Early_Settlement_Charge_Value / 100) *
+            ticketCharges[0].Advance_Balance;
+        } else if (
+          productData[0].Early_Settlement_Charge_Value_type === "Fixed Amount"
+        ) {
+          // fixed amount
+          earlySettlementCharge = productData[0].Early_Settlement_Charge_Value;
+        }
+      }
+
+      // if create as is Charge For Product Item
+      if (
+        productData[0].Early_Settlement_Charge_Create_As ===
+        "Charge For Product Item"
+      ) {
+        // check what is the interest method
+
+        // if interest for period
+        if (productData[0].Interest_Method === "Interest For Period") {
+          // get the early settlement value from product plans table by mathing the ticket period and period type
+          const [planData] = await pool.query(
+            "SELECT Early_Settlement_Charge_Value,Early_Settlement_Charge_Value_type FROM product_plan WHERE Pawning_Product_idPawning_Product = ? AND Period_Type = ? AND CAST(? AS UNSIGNED) BETWEEN CAST(Minimum_Period AS UNSIGNED) AND CAST(Maximum_Period AS UNSIGNED)",
+            [
+              ticketData[0].Pawning_Product_idPawning_Product,
+              ticketData[0].Period_Type,
+              ticketData[0].Period,
+            ]
+          );
+
+          if (planData.length > 0) {
+            if (
+              planData[0].Early_Settlement_Charge_Value_type === "percentage"
+            ) {
+              // percentage of pawning advance amount
+              earlySettlementCharge =
+                (planData[0].Early_Settlement_Charge_Value / 100) *
+                ticketCharges[0].Advance_Balance;
+            } else if (
+              planData[0].Early_Settlement_Charge_Value_type === "fixed"
+            ) {
+              // fixed amount
+              earlySettlementCharge = planData[0].Early_Settlement_Charge_Value;
+            }
+          }
+        }
+
+        // if Interest For Pawning Amount
+        if (productData[0].Interest_Method === "Interest For Pawning Amount") {
+          // get the early settlement charge from product plan table by matching the pawning advance amount with Minimum and Maximum Amount range
+          const [planData] = await pool.query(
+            "SELECT Early_Settlement_Charge_Value,Early_Settlement_Charge_Value_type FROM product_plan WHERE Pawning_Product_idPawning_Product = ? AND CAST(Minimum_Amount AS UNSIGNED) <= CAST(? AS UNSIGNED) AND CAST(Maximum_Amount AS UNSIGNED) >= CAST(? AS UNSIGNED)",
+            [
+              ticketData[0].Pawning_Product_idPawning_Product,
+              ticketCharges[0].Advance_Balance,
+              ticketCharges[0].Advance_Balance,
+            ]
+          );
+
+          if (planData.length > 0) {
+            if (
+              planData[0].Early_Settlement_Charge_Value_type === "percentage"
+            ) {
+              // percentage of pawning advance amount
+              earlySettlementCharge =
+                (planData[0].Early_Settlement_Charge_Value / 100) *
+                ticketCharges[0].Advance_Balance;
+            } else if (
+              planData[0].Early_Settlement_Charge_Value_type === "fixed"
+            ) {
+              // fixed amount
+              earlySettlementCharge = planData[0].Early_Settlement_Charge_Value;
+            }
+          }
+        }
+      }
+
+      // if Charge For Settlement Amount
+      if (
+        productData[0].Early_Settlement_Charge_Create_As ===
+        "Charge For Settlement Amount"
+      ) {
+        // go to the early_settlement_charges table and get the early settlement charge by matching pawning advance with From Amount and To Amount range
+        const [chargeData] = await pool.query(
+          "SELECT Value_Type,Amount FROM early_settlement_charges WHERE Pawning_Product_idPawning_Product = ? AND CAST(From_Amount AS UNSIGNED) <= CAST(? AS UNSIGNED) AND CAST(To_Amount AS UNSIGNED) >= CAST(? AS UNSIGNED)",
+          [
+            ticketData[0].Pawning_Product_idPawning_Product,
+            ticketCharges[0].Advance_Balance,
+            ticketCharges[0].Advance_Balance,
+          ]
+        );
+
+        if (chargeData.length > 0) {
+          if (chargeData[0].Value_Type === "Percentage") {
+            // percentage of pawning advance amount
+            earlySettlementCharge =
+              (chargeData[0].Amount / 100) * ticketCharges[0].Advance_Balance;
+          } else if (chargeData[0].Value_Type === "Fixed Amount") {
+            // fixed amount
+            earlySettlementCharge = chargeData[0].Amount;
+          }
+        }
+      }
+    }
+
+    function safeParse(val) {
+      const n = parseFloat(val);
+      return isNaN(n) ? 0 : n;
+    }
+
+    let minimumRenewalAmount =
+      safeParse(ticketCharges[0].Interest_Balance) +
+      safeParse(ticketCharges[0].Service_Charge_Balance) +
+      safeParse(ticketCharges[0].Late_Charges_Balance) +
+      safeParse(ticketCharges[0].Additional_Charge_Balance);
+
+    console.log("Minimum Renewal Amount:", minimumRenewalAmount);
+
+    ticketCharges[0].minimumRenewalAmount = minimumRenewalAmount;
+
     res.status(200).json({
       success: true,
       ticketDetails: {
@@ -169,6 +303,7 @@ export const getTicketDataById = async (req, res, next) => {
         articleItems,
         ticketCharges: ticketCharges[0] || {},
         paymentHistory,
+        earlySettlementCharge,
       },
     });
   } catch (error) {

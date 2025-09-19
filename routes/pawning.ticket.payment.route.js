@@ -7,6 +7,7 @@ import {
   getTicketLogDataById,
   getTicketAdditionalChargesById,
   createTicketAdditionalCharge,
+  createPaymentForTicket,
 } from "../controllers/pawning.ticket.payment.controller.js";
 
 const route = express.Router();
@@ -45,5 +46,12 @@ route.post(
   checkUserBranchAccess,
   createTicketAdditionalCharge
 ); // Create ticket additional charge
+
+route.post(
+  "/:branchId/ticket/:ticketId/part-payment",
+  protectedRoute,
+  checkUserBranchAccess,
+  createPaymentForTicket
+); // Create payment for ticket
 
 export default route;

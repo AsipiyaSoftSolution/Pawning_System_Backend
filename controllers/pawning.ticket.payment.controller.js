@@ -673,6 +673,16 @@ export const createTicketRenewalPayment = async (req, res, next) => {
       );
     }
 
+    // update the ticket's maturity date to today
+    const [updateMaturityResult] = await pool.query(
+      "UPDATE pawning_ticket SET Maturity_date = ? WHERE idPawning_Ticket = ?",
+      [new Date(), ticketId]
+    );
+
+    if (updateMaturityResult.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to update ticket maturity date"));
+    }
+
     // Insert into the payment table (date_time,description,ticket_no,amount,user,ticket_date,maturity_date,day_count,type)
     // maturity date should be today date
 

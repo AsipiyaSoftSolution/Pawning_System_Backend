@@ -8,6 +8,7 @@ import {
   getTicketAdditionalChargesById,
   createTicketAdditionalCharge,
   createPaymentForTicket,
+  createTicketRenewalPayment,
 } from "../controllers/pawning.ticket.payment.controller.js";
 
 const route = express.Router();
@@ -53,5 +54,12 @@ route.post(
   checkUserBranchAccess,
   createPaymentForTicket
 ); // Create payment for ticket
+
+route.post(
+  "/:branchId/ticket/:ticketId/renewal-payment",
+  protectedRoute,
+  checkUserBranchAccess,
+  createTicketRenewalPayment
+); // Create renewal payment for ticket
 
 export default route;

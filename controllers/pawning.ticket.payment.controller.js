@@ -15,7 +15,7 @@ export const searchByTickerNumberCustomerNICOrName = async (req, res, next) => {
     const searchPattern = formatSearchPattern(searchTerm); // Format the search term for SQL LIKE query
 
     const [result] = await pool.query(
-      "SELECT pt.idPawning_Ticket, pt.Ticket_No, c.Full_name, c.NIC FROM pawning_ticket pt JOIN customer c on pt.Customer_idCustomer = c.idCustomer WHERE (pt.Ticket_No LIKE ? OR c.NIC LIKE ? OR c.First_Name LIKE ?) AND pt.Branch_idBranch = ? GROUP BY pt.idPawning_Ticket",
+      "SELECT pt.idPawning_Ticket, pt.Ticket_No, c.Full_name, c.NIC FROM pawning_ticket pt JOIN customer c on pt.Customer_idCustomer = c.idCustomer WHERE (pt.Ticket_No LIKE ? OR c.NIC LIKE ? OR c.First_Name LIKE ?) AND pt.Branch_idBranch = ? AND (pt.Status != '2' OR pt.Status IS NULL)",
       [searchPattern, searchPattern, searchPattern, req.branchId]
     );
 
@@ -81,7 +81,7 @@ export const getTicketDataById = async (req, res, next) => {
 
     // get the product name for the ticket
     const [productData] = await pool.query(
-      "SELECT Name FROM pawning_product WHERE idPawning_Product = ?",
+      "SELECT Name,Early_Settlement_Charge,Early_Settlement_Charge_Create_As,Early_Settlement_Charge_Value_type,Early_Settlement_Charge_Value,Interest_Method FROM pawning_product WHERE idPawning_Product = ?",
       [ticketData[0].Pawning_Product_idPawning_Product]
     );
 
@@ -161,6 +161,147 @@ export const getTicketDataById = async (req, res, next) => {
       delete payment.User_idUser;
     }
 
+    let earlySettlementCharge = 0;
+    // find the early settlement charge value
+    if (productData[0].Early_Settlement_Charge === "1") {
+      // if early settlement charge is active
+
+      // if create as is charge for product
+      if (
+        productData[0].Early_Settlement_Charge_Create_As ===
+        "Charge For Product"
+      ) {
+        if (
+          productData[0].Early_Settlement_Charge_Value_type === "Percentage"
+        ) {
+          // percentage of pawning advance amount
+          earlySettlementCharge =
+            (productData[0].Early_Settlement_Charge_Value / 100) *
+            ticketCharges[0].Advance_Balance;
+        } else if (
+          productData[0].Early_Settlement_Charge_Value_type === "Fixed Amount"
+        ) {
+          // fixed amount
+          earlySettlementCharge = productData[0].Early_Settlement_Charge_Value;
+        }
+      }
+
+      // if create as is Charge For Product Item
+      if (
+        productData[0].Early_Settlement_Charge_Create_As ===
+        "Charge For Product Item"
+      ) {
+        // check what is the interest method
+
+        // if interest for period
+        if (productData[0].Interest_Method === "Interest For Period") {
+          // get the early settlement value from product plans table by mathing the ticket period and period type
+          const [planData] = await pool.query(
+            "SELECT Early_Settlement_Charge_Value,Early_Settlement_Charge_Value_type FROM product_plan WHERE Pawning_Product_idPawning_Product = ? AND Period_Type = ? AND CAST(? AS UNSIGNED) BETWEEN CAST(Minimum_Period AS UNSIGNED) AND CAST(Maximum_Period AS UNSIGNED)",
+            [
+              ticketData[0].Pawning_Product_idPawning_Product,
+              ticketData[0].Period_Type,
+              ticketData[0].Period,
+            ]
+          );
+
+          if (planData.length > 0) {
+            if (
+              planData[0].Early_Settlement_Charge_Value_type === "percentage"
+            ) {
+              // percentage of pawning advance amount
+              earlySettlementCharge =
+                (planData[0].Early_Settlement_Charge_Value / 100) *
+                ticketCharges[0].Advance_Balance;
+            } else if (
+              planData[0].Early_Settlement_Charge_Value_type === "fixed"
+            ) {
+              // fixed amount
+              earlySettlementCharge = planData[0].Early_Settlement_Charge_Value;
+            }
+          }
+        }
+
+        // if Interest For Pawning Amount
+        if (productData[0].Interest_Method === "Interest For Pawning Amount") {
+          // get the early settlement charge from product plan table by matching the pawning advance amount with Minimum and Maximum Amount range
+          const [planData] = await pool.query(
+            "SELECT Early_Settlement_Charge_Value,Early_Settlement_Charge_Value_type FROM product_plan WHERE Pawning_Product_idPawning_Product = ? AND CAST(Minimum_Amount AS UNSIGNED) <= CAST(? AS UNSIGNED) AND CAST(Maximum_Amount AS UNSIGNED) >= CAST(? AS UNSIGNED)",
+            [
+              ticketData[0].Pawning_Product_idPawning_Product,
+              ticketCharges[0].Advance_Balance,
+              ticketCharges[0].Advance_Balance,
+            ]
+          );
+
+          if (planData.length > 0) {
+            if (
+              planData[0].Early_Settlement_Charge_Value_type === "percentage"
+            ) {
+              // percentage of pawning advance amount
+              earlySettlementCharge =
+                (planData[0].Early_Settlement_Charge_Value / 100) *
+                ticketCharges[0].Advance_Balance;
+            } else if (
+              planData[0].Early_Settlement_Charge_Value_type === "fixed"
+            ) {
+              // fixed amount
+              earlySettlementCharge = planData[0].Early_Settlement_Charge_Value;
+            }
+          }
+        }
+      }
+
+      // if Charge For Settlement Amount
+      if (
+        productData[0].Early_Settlement_Charge_Create_As ===
+        "Charge For Settlement Amount"
+      ) {
+        // go to the early_settlement_charges table and get the early settlement charge by matching pawning advance with From Amount and To Amount range
+        const [chargeData] = await pool.query(
+          "SELECT Value_Type,Amount FROM early_settlement_charges WHERE Pawning_Product_idPawning_Product = ? AND CAST(From_Amount AS UNSIGNED) <= CAST(? AS UNSIGNED) AND CAST(To_Amount AS UNSIGNED) >= CAST(? AS UNSIGNED)",
+          [
+            ticketData[0].Pawning_Product_idPawning_Product,
+            ticketCharges[0].Advance_Balance,
+            ticketCharges[0].Advance_Balance,
+          ]
+        );
+
+        if (chargeData.length > 0) {
+          if (chargeData[0].Value_Type === "Percentage") {
+            // percentage of pawning advance amount
+            earlySettlementCharge =
+              (chargeData[0].Amount / 100) * ticketCharges[0].Advance_Balance;
+          } else if (chargeData[0].Value_Type === "Fixed Amount") {
+            // fixed amount
+            earlySettlementCharge = chargeData[0].Amount;
+          }
+        }
+      }
+    }
+
+    // calculate the minimum renewal amount
+    function safeParse(val) {
+      const n = parseFloat(val);
+      return isNaN(n) ? 0 : n;
+    }
+
+    let minimumRenewalAmount =
+      safeParse(ticketCharges[0].Interest_Balance) +
+      safeParse(ticketCharges[0].Service_Charge_Balance) +
+      safeParse(ticketCharges[0].Late_Charges_Balance) +
+      safeParse(ticketCharges[0].Additional_Charge_Balance);
+
+    console.log("Minimum Renewal Amount:", minimumRenewalAmount);
+
+    ticketCharges[0].minimumRenewalAmount = minimumRenewalAmount;
+
+    // calculaate the loan settlement amount
+    let loanSettlementAmount =
+      safeParse(ticketCharges[0].Total_Balance) +
+      safeParse(earlySettlementCharge);
+    ticketCharges[0].loanSettlementAmount = loanSettlementAmount;
+
     res.status(200).json({
       success: true,
       ticketDetails: {
@@ -169,6 +310,7 @@ export const getTicketDataById = async (req, res, next) => {
         articleItems,
         ticketCharges: ticketCharges[0] || {},
         paymentHistory,
+        earlySettlementCharge,
       },
     });
   } catch (error) {
@@ -290,6 +432,409 @@ export const createTicketAdditionalCharge = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Error creating ticket additional charge:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// create the part payment for a ticket
+export const createPaymentForTicket = async (req, res, next) => {
+  try {
+    const ticketId = req.params.id || req.params.ticketId;
+    const { paymentAmount } = req.body;
+    if (!ticketId) {
+      return next(errorHandler(400, "Ticket ID is required"));
+    }
+    if (!paymentAmount || isNaN(paymentAmount) || paymentAmount <= 0) {
+      return next(errorHandler(400, "Valid part payment amount is required"));
+    }
+
+    // check if the ticket exists and belongs to the branch
+    const [existingTicket] = await pool.query(
+      "SELECT Interest_apply_on,Maturity_date,Date_Time,Ticket_No FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+      [ticketId, req.branchId]
+    );
+    if (existingTicket.length === 0) {
+      return next(errorHandler(404, "No ticket found for the given ID"));
+    }
+
+    // get the lastest ticket log entry for the ticket
+    const [ticketLog] = await pool.query(
+      "SELECT * FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? ORDER BY idTicket_Log DESC LIMIT 1",
+      [ticketId]
+    );
+
+    if (ticketLog.length === 0) {
+      return next(
+        errorHandler(500, "No ticket log found for the given ticket")
+      );
+    }
+
+    // first insert into the payment table (date_time,description,ticket_no,amount,user,ticket_date,maturity_date,day_count,type)
+
+    // get the day count by from today date to ticket Date_Time
+    const today = new Date();
+    const ticketDate = new Date(existingTicket[0].Date_Time);
+    const timeDiff = Math.abs(today - ticketDate);
+    const dayCount = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
+
+    const [ticketPaymentResult] = await pool.query(
+      "INSERT INTO payment(Date_time,Description,Ticket_no,Amount,User,Ticket_Date,Maturity_Date,Day_Count,Type) VALUES(NOW(),?,?,?,?,?,?,?,?)",
+      [
+        `Customer Payment(Ticket No:${existingTicket[0].Ticket_No})`,
+        existingTicket[0].Ticket_No,
+        paymentAmount,
+        req.userId,
+        existingTicket[0].Date_Time,
+        existingTicket[0].Maturity_date,
+        dayCount,
+        "PART PAYMENT",
+      ]
+    );
+
+    if (ticketPaymentResult.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to create part payment"));
+    }
+
+    const createdTicketPaymentId = ticketPaymentResult.insertId; // get the created payment record to update payment amounts later
+
+    // now we have to update the ticket log balances by reducing the part payment amount
+    let remainingPayment = paymentAmount;
+    let {
+      Interest_Balance,
+      Service_Charge_Balance,
+      Late_Charges_Balance,
+      Aditional_Charge_Balance,
+      Advance_Balance,
+    } = ticketLog[0];
+
+    // to store in payment table
+    let paidInterest = 0;
+    let paidServiceCharge = 0;
+    let paidLateCharges = 0;
+    let paidAdditionalCharges = 0;
+    let paidAdvance = 0;
+
+    // pay the balances in order
+    // first pay additonal charges.
+    // penalty charges
+    // interest charges
+    // service charges
+    // advance balance
+
+    // Always pay as much as possible to each balance in order
+    function safePay(balance, remaining) {
+      balance = parseFloat(balance);
+      balance = isNaN(balance) ? 0 : balance;
+      let paid = 0;
+      if (remaining > 0 && balance > 0) {
+        paid = Math.min(remaining, balance);
+        remaining -= paid;
+        balance -= paid;
+      }
+      return { paid, balance, remaining };
+    }
+
+    // Additional Charges
+    let result = safePay(Aditional_Charge_Balance, remainingPayment);
+    paidAdditionalCharges = result.paid;
+    Aditional_Charge_Balance = result.balance;
+    remainingPayment = result.remaining;
+
+    // Late Charges
+    result = safePay(Late_Charges_Balance, remainingPayment);
+    paidLateCharges = result.paid;
+    Late_Charges_Balance = result.balance;
+    remainingPayment = result.remaining;
+
+    // Interest Charges
+    result = safePay(Interest_Balance, remainingPayment);
+    paidInterest = result.paid;
+    Interest_Balance = result.balance;
+    remainingPayment = result.remaining;
+
+    // Service Charges
+    result = safePay(Service_Charge_Balance, remainingPayment);
+    paidServiceCharge = result.paid;
+    Service_Charge_Balance = result.balance;
+    remainingPayment = result.remaining;
+
+    // Advance Balance
+    result = safePay(Advance_Balance, remainingPayment);
+    paidAdvance = result.paid;
+    Advance_Balance = result.balance;
+    remainingPayment = result.remaining;
+
+    // Total Balance
+    const Total_Balance =
+      Interest_Balance +
+      Service_Charge_Balance +
+      Late_Charges_Balance +
+      Aditional_Charge_Balance +
+      Advance_Balance;
+    // now update the ticket log with new balances
+
+    // insert the record into ticket log table
+    const [logResult] = await pool.query(
+      "INSERT INTO ticket_log(Pawning_Ticket_idPawning_Ticket,Date_Time,Type,Description,Amount,Interest_Balance,Service_Charge_Balance,Late_Charges_Balance,Aditional_Charge_Balance,Advance_Balance,Total_Balance,User_idUser,Type_Id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      [
+        ticketId,
+        new Date(),
+        "PAYMENT",
+        `Part payment received. Payment ID: ${createdTicketPaymentId}`,
+        paymentAmount,
+        Interest_Balance,
+        Service_Charge_Balance,
+        Late_Charges_Balance,
+        Aditional_Charge_Balance,
+        Advance_Balance,
+        Total_Balance,
+        req.userId,
+        createdTicketPaymentId,
+      ]
+    );
+
+    if (logResult.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to update ticket log"));
+    }
+
+    // insert into the payment table (paid_interest,paid_service_charge,paid_late_charges,paid_additional_charges,paid_advance)
+    const [updatePaymentResult] = await pool.query(
+      "UPDATE payment SET Interest_Payment = ?, Service_Charge_Payment = ?, Late_Charges_Payment = ?, Other_Charges_Payment = ?, Advance_Payment = ? WHERE id = ?",
+      [
+        paidInterest || 0,
+        paidServiceCharge || 0,
+        paidLateCharges || 0,
+        paidAdditionalCharges || 0,
+        paidAdvance || 0,
+        createdTicketPaymentId,
+      ]
+    );
+
+    if (updatePaymentResult.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to update payment details"));
+    }
+
+    res.status(201).json({
+      success: true,
+      message: "Part payment created successfully.",
+    });
+  } catch (error) {
+    console.error("Error creating part payment for ticket:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// make a payment for ticket renewal
+export const createTicketRenewalPayment = async (req, res, next) => {
+  try {
+    const ticketId = req.params.id || req.params.ticketId;
+    const { paymentAmount } = req.body;
+    if (!ticketId) {
+      return next(errorHandler(400, "Ticket ID is required"));
+    }
+    if (!paymentAmount || isNaN(paymentAmount) || paymentAmount <= 0) {
+      return next(errorHandler(400, "Valid part payment amount is required"));
+    }
+
+    // check if the ticket exists and belongs to the branch
+    const [existingTicket] = await pool.query(
+      "SELECT Interest_apply_on,Maturity_date,Date_Time,Ticket_No FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+      [ticketId, req.branchId]
+    );
+    if (existingTicket.length === 0) {
+      return next(errorHandler(404, "No ticket found for the given ID"));
+    }
+
+    // get the lastest ticket log entry for the ticket
+    const [ticketLog] = await pool.query(
+      "SELECT * FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? ORDER BY idTicket_Log DESC LIMIT 1",
+      [ticketId]
+    );
+
+    if (ticketLog.length === 0) {
+      return next(
+        errorHandler(500, "No ticket log found for the given ticket")
+      );
+    }
+
+    // First check payment amount is equal or greater than the ticket's other charges sum
+    const otherChargesTotal =
+      (parseFloat(ticketLog[0].Interest_Balance) || 0) +
+      (parseFloat(ticketLog[0].Service_Charge_Balance) || 0) +
+      (parseFloat(ticketLog[0].Late_Charges_Balance) || 0) +
+      (parseFloat(ticketLog[0].Aditional_Charge_Balance) || 0);
+
+    if (paymentAmount < otherChargesTotal) {
+      return next(
+        errorHandler(
+          400,
+          `Payment amount should be at least ${otherChargesTotal} to cover all other charges.`
+        )
+      );
+    }
+
+    // update the ticket's maturity date to today
+    const [updateMaturityResult] = await pool.query(
+      "UPDATE pawning_ticket SET Maturity_date = ? WHERE idPawning_Ticket = ?",
+      [new Date(), ticketId]
+    );
+
+    if (updateMaturityResult.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to update ticket maturity date"));
+    }
+
+    // Insert into the payment table (date_time,description,ticket_no,amount,user,ticket_date,maturity_date,day_count,type)
+    // maturity date should be today date
+
+    // get the day count by from today date to ticket Date_Time
+    const today = new Date();
+    const ticketDate = new Date(existingTicket[0].Date_Time);
+    const timeDiff = Math.abs(today - ticketDate);
+    const dayCount = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
+
+    const [ticketPaymentResult] = await pool.query(
+      "INSERT INTO payment(Date_time,Description,Ticket_no,Amount,User,Ticket_Date,Maturity_Date,Day_Count,Type) VALUES(NOW(),?,?,?,?,?,?,?,?)",
+      [
+        `Customer Payment(Ticket No:${existingTicket[0].Ticket_No})`,
+        existingTicket[0].Ticket_No,
+        paymentAmount,
+        req.userId,
+        existingTicket[0].Date_Time,
+        new Date(), // maturity date is today
+        dayCount,
+        "RENEWAL PAYMENT",
+      ]
+    );
+
+    if (ticketPaymentResult.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to create part payment"));
+    }
+
+    const createdTicketPaymentId = ticketPaymentResult.insertId; // get the created payment record to update payment amounts later
+
+    // now we have to update the ticket log balances by reducing the part payment amount
+    let remainingPayment = paymentAmount;
+    let {
+      Interest_Balance,
+      Service_Charge_Balance,
+      Late_Charges_Balance,
+      Aditional_Charge_Balance,
+      Advance_Balance,
+    } = ticketLog[0];
+
+    // to store in payment table
+    let paidInterest = 0;
+    let paidServiceCharge = 0;
+    let paidLateCharges = 0;
+    let paidAdditionalCharges = 0;
+    let paidAdvance = 0;
+
+    // pay the balances in order
+    // first pay additonal charges.
+    // penalty charges
+    // interest charges
+    // service charges
+    // advance balance
+
+    // Always pay as much as possible to each balance in order
+    function safePay(balance, remaining) {
+      balance = parseFloat(balance);
+      balance = isNaN(balance) ? 0 : balance;
+      let paid = 0;
+      if (remaining > 0 && balance > 0) {
+        paid = Math.min(remaining, balance);
+        remaining -= paid;
+        balance -= paid;
+      }
+      return { paid, balance, remaining };
+    }
+
+    // Additional Charges
+    let result = safePay(Aditional_Charge_Balance, remainingPayment);
+    paidAdditionalCharges = result.paid;
+    Aditional_Charge_Balance = result.balance;
+    remainingPayment = result.remaining;
+
+    // Late Charges
+    result = safePay(Late_Charges_Balance, remainingPayment);
+    paidLateCharges = result.paid;
+    Late_Charges_Balance = result.balance;
+    remainingPayment = result.remaining;
+
+    // Interest Charges
+    result = safePay(Interest_Balance, remainingPayment);
+    paidInterest = result.paid;
+    Interest_Balance = result.balance;
+    remainingPayment = result.remaining;
+
+    // Service Charges
+    result = safePay(Service_Charge_Balance, remainingPayment);
+    paidServiceCharge = result.paid;
+    Service_Charge_Balance = result.balance;
+    remainingPayment = result.remaining;
+
+    // Advance Balance
+    result = safePay(Advance_Balance, remainingPayment);
+    paidAdvance = result.paid;
+    Advance_Balance = result.balance;
+    remainingPayment = result.remaining;
+
+    // Total Balance
+    const Total_Balance =
+      Interest_Balance +
+      Service_Charge_Balance +
+      Late_Charges_Balance +
+      Aditional_Charge_Balance +
+      Advance_Balance;
+    // now update the ticket log with new balances
+
+    // insert the record into ticket log table
+    const [logResult] = await pool.query(
+      "INSERT INTO ticket_log(Pawning_Ticket_idPawning_Ticket,Date_Time,Type,Description,Amount,Interest_Balance,Service_Charge_Balance,Late_Charges_Balance,Aditional_Charge_Balance,Advance_Balance,Total_Balance,User_idUser,Type_Id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      [
+        ticketId,
+        new Date(),
+        "PAYMENT",
+        `Renewal payment received. Payment ID: ${createdTicketPaymentId}`,
+        paymentAmount,
+        Interest_Balance,
+        Service_Charge_Balance,
+        Late_Charges_Balance,
+        Aditional_Charge_Balance,
+        Advance_Balance,
+        Total_Balance,
+        req.userId,
+        createdTicketPaymentId,
+      ]
+    );
+
+    if (logResult.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to update ticket log"));
+    }
+
+    // insert into the payment table (paid_interest,paid_service_charge,paid_late_charges,paid_additional_charges,paid_advance)
+    const [updatePaymentResult] = await pool.query(
+      "UPDATE payment SET Interest_Payment = ?, Service_Charge_Payment = ?, Late_Charges_Payment = ?, Other_Charges_Payment = ?, Advance_Payment = ? WHERE id = ?",
+      [
+        paidInterest || 0,
+        paidServiceCharge || 0,
+        paidLateCharges || 0,
+        paidAdditionalCharges || 0,
+        paidAdvance || 0,
+        createdTicketPaymentId,
+      ]
+    );
+
+    if (updatePaymentResult.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to update payment details"));
+    }
+
+    res.status(201).json({
+      success: true,
+      message: "Renewal payment created successfully.",
+    });
+  } catch (error) {
+    console.error("Error creating part payment for ticket:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

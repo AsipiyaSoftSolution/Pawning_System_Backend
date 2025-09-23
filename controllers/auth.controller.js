@@ -1,7 +1,7 @@
 import { errorHandler } from "../utils/errorHandler.js";
 import { pool } from "../utils/db.js";
 import bcrypt from "bcryptjs";
-import { jwtToken } from "../utils/helper.js";
+import { jwtToken, generatePasswordResetToken } from "../utils/helper.js";
 
 // This function retrieves user information without the password when giving user id
 // It also retrieves the user's designation, company, branches, and company documents
@@ -173,6 +173,128 @@ export const checkAuth = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Check auth error:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+export const forgetPassword = async (req, res, next) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return next(errorHandler(400, "Email is required"));
+    }
+
+    const [existingUser] = await pool.query(
+      "SELECT idUser FROM user WHERE Email = ?",
+      [email]
+    );
+
+    if (!existingUser[0]) {
+      return next(errorHandler(404, "User with this email does not exist"));
+    }
+
+    // Generate a password reset token
+    const token = generatePasswordResetToken();
+    const tokenExpiry = new Date(Date.now() + 3600000); // Token valid for 1 hour from now
+
+    // Store the token and its expiry in the database
+    await pool.query(
+      "UPDATE user SET Reset_Password_Token = ?,Reset_Password_Token_Expires_At = ? WHERE idUser = ?",
+      [token, tokenExpiry, existingUser[0].idUser]
+    );
+
+    // send the email with the token
+    const resetUrl = `${process.env.CLIENT_URL}/reset-password?token=${token}&id=${existingUser[0].idUser}`;
+    console.log(`Password reset link (send this via email): ${resetUrl}`);
+
+    // have to implement email service to send the email
+
+    res.status(200).json({
+      message: "Password reset link has been sent to your email",
+    });
+  } catch (error) {
+    console.error("Forget password error:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+export const resetPassword = async (req, res, next) => {
+  try {
+    const { token, userId } = req.params;
+    const { newPassword } = req.body;
+
+    if (!token || !userId) {
+      return next(errorHandler(400, "Invalid or missing token/userId"));
+    }
+
+    if (!newPassword) {
+      return next(errorHandler(400, "New password is required"));
+    }
+    // check if the password is strong enough
+    if (newPassword.length < 8) {
+      return next(
+        errorHandler(400, "Password must be at least 8 characters long")
+      );
+    }
+    if (!/[A-Z]/.test(newPassword)) {
+      return next(
+        errorHandler(400, "Password must contain at least one uppercase letter")
+      );
+    }
+
+    if (!/[a-z]/.test(newPassword)) {
+      return next(
+        errorHandler(400, "Password must contain at least one lowercase letter")
+      );
+    }
+    if (!/[0-9]/.test(newPassword)) {
+      return next(
+        errorHandler(400, "Password must contain at least one number")
+      );
+    }
+    if (!/[!@#$%^&*]/.test(newPassword)) {
+      return next(
+        errorHandler(
+          400,
+          "Password must contain at least one special character"
+        )
+      );
+    }
+
+    // find there is a user with the token and userId and the token is not expired
+    const [user] = await pool.query(
+      "SELECT idUser,Reset_Password_Token,Reset_Password_Token_Expires_At FROM user WHERE idUser = ? ",
+      [userId]
+    );
+
+    if (!user[0] || user[0].Reset_Password_Token !== token) {
+      return next(errorHandler(400, "Invalid token"));
+    }
+
+    // check if the token is expired
+    if (new Date() > new Date(user[0].Reset_Password_Token_Expires_At)) {
+      return next(errorHandler(400, "Token has expired"));
+    }
+
+    // hash the new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    // update the password in the database and remove the token
+    const [result] = await pool.query(
+      "UPDATE user SET Password = ?, Reset_Password_Token = NULL, Reset_Password_Token_Expires_At = NULL WHERE idUser = ?",
+      [hashedPassword, userId]
+    );
+
+    if (result.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to update password"));
+    }
+
+    // send the success email later
+    res.status(200).json({
+      message: "Password has been reset successfully",
+    });
+  } catch (error) {
+    console.error("Reset password error:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

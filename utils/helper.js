@@ -74,3 +74,9 @@ export function formatSearchPattern(search) {
   if (typeof search !== "string") return "%%";
   return `%${search.replace(/[%_]/g, "\\$&")}%`;
 }
+
+// Generate a random token for password reset
+export const generatePasswordResetToken = () => {
+  const token = crypto.randomBytes(32).toString("hex");
+  return token;
+};

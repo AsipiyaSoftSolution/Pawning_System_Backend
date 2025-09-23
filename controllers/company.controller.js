@@ -633,6 +633,16 @@ export const getAllUsersForTheBranch = async (req, res, next) => {
     let status = req.query.status || "1";
     const offset = (page - 1) * limit;
 
+    console.log(status, "this is the status in the get all users function");
+    console.log(
+      req.branchId,
+      "this is the branch id in the get all users function"
+    );
+    console.log(
+      req.companyId,
+      "this is the company id in the get all users function"
+    );
+
     // format search term
     if (searchTerm && typeof searchTerm === "string") {
       searchTerm = formatSearchPattern(searchTerm);
@@ -640,25 +650,31 @@ export const getAllUsersForTheBranch = async (req, res, next) => {
 
     let paginationData;
     let users;
-    let statusCondition = status ? "AND u.Status = ?" : "";
+
+    // Build status condition and parameters properly
+    let statusCondition = "";
+    let baseParams = [];
 
     if (searchTerm) {
       // Parameters for search query - users who belong to the specific branch
-      let params = [
-        req.branchId,
-        `%${searchTerm}%`,
-        `%${searchTerm}%`,
-        req.companyId,
-      ];
-      if (status) params.push(status);
+      baseParams = [req.branchId, `%${searchTerm}%`, `%${searchTerm}%`];
+
+      // Add status condition and parameter
+      if (status) {
+        statusCondition = "AND u.Status = ?";
+        baseParams.push(status);
+      }
+
+      // Add company ID and logged user ID
+      baseParams.push(req.companyId, req.userId);
 
       // Get pagination data - count users who belong to this branch and match search
       paginationData = await getPaginationData(
         `SELECT COUNT(DISTINCT u.idUser) as total
          FROM user u
          JOIN user_has_branch ub ON u.idUser = ub.User_idUser
-         WHERE ub.Branch_idBranch = ? AND (u.full_name LIKE ? OR u.email LIKE ?) ${statusCondition} AND u.Company_idCompany = ?`,
-        params,
+         WHERE ub.Branch_idBranch = ? AND (u.full_name LIKE ? OR u.email LIKE ?) ${statusCondition} AND u.Company_idCompany = ? AND u.idUser != ?`,
+        baseParams,
         page,
         limit
       );
@@ -672,26 +688,37 @@ export const getAllUsersForTheBranch = async (req, res, next) => {
          JOIN user_has_branch ub ON u.idUser = ub.User_idUser
          LEFT JOIN designation d ON u.Designation_idDesignation = d.idDesignation
          LEFT JOIN branch b ON ub.Branch_idBranch = b.idBranch
-         WHERE ub_filter.Branch_idBranch = ? AND (u.full_name LIKE ? OR u.email LIKE ?) ${statusCondition} AND u.Company_idCompany = ?
+         WHERE ub_filter.Branch_idBranch = ? AND (u.full_name LIKE ? OR u.email LIKE ?) ${statusCondition} AND u.Company_idCompany = ? AND u.idUser != ?
          GROUP BY u.idUser
          LIMIT ? OFFSET ?`,
-        [...params, limit, offset]
+        [...baseParams, limit, offset]
       );
     } else {
       // Parameters for non-search query - users who belong to the specific branch
-      let params = [req.branchId, req.companyId];
-      if (status) params.push(status);
+      baseParams = [req.branchId];
+
+      // Add status condition and parameter
+      if (status) {
+        statusCondition = "AND u.Status = ?";
+        baseParams.push(status);
+      }
+
+      // Add company ID and logged user ID
+      baseParams.push(req.companyId, req.userId);
+
+      console.log(baseParams, "these are the params");
 
       // Get pagination data - count users who belong to this branch
       paginationData = await getPaginationData(
         `SELECT COUNT(DISTINCT u.idUser) as total
          FROM user u
          JOIN user_has_branch ub ON u.idUser = ub.User_idUser
-         WHERE ub.Branch_idBranch = ? ${statusCondition} AND u.Company_idCompany = ?`,
-        params,
+         WHERE ub.Branch_idBranch = ? ${statusCondition} AND u.Company_idCompany = ? AND u.idUser != ?`,
+        baseParams,
         page,
         limit
       );
+      console.log(paginationData, "this is the pagination data");
 
       // Get users who belong to this branch, but show ALL their branches
       [users] = await pool.query(
@@ -702,11 +729,13 @@ export const getAllUsersForTheBranch = async (req, res, next) => {
          JOIN user_has_branch ub ON u.idUser = ub.User_idUser
          LEFT JOIN designation d ON u.Designation_idDesignation = d.idDesignation
          LEFT JOIN branch b ON ub.Branch_idBranch = b.idBranch
-         WHERE ub_filter.Branch_idBranch = ? ${statusCondition} AND u.Company_idCompany = ?
+         WHERE ub_filter.Branch_idBranch = ? ${statusCondition} AND u.Company_idCompany = ? AND u.idUser != ?
          GROUP BY u.idUser
          LIMIT ? OFFSET ?`,
-        [...params, limit, offset]
+        [...baseParams, limit, offset]
       );
+
+      console.log(users, "this is the users data");
     }
 
     // Parse branchData into array of objects {idBranch, Name}
@@ -1351,9 +1380,9 @@ export const createTESTUser = async (req, res, next) => {
 
     // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(Email)) {
+    /*if (!emailRegex.test(Email)) {
       return next(errorHandler(400, "Please provide a valid email address"));
-    }
+    } */
 
     const [existingUser] = await pool.query(
       "SELECT idUser FROM user WHERE email = ?",

@@ -1351,9 +1351,9 @@ export const createTESTUser = async (req, res, next) => {
 
     // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(Email)) {
+    /*if (!emailRegex.test(Email)) {
       return next(errorHandler(400, "Please provide a valid email address"));
-    }
+    } */
 
     const [existingUser] = await pool.query(
       "SELECT idUser FROM user WHERE email = ?",

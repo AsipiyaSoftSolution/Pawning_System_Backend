@@ -29,6 +29,7 @@ import {
   deleteArticleCondition,
   getAllUsersForTheBranch,
   updateUser,
+  createTESTUser,
 } from "../controllers/company.controller.js";
 const route = express.Router();
 
@@ -68,14 +69,13 @@ route.patch(
   protectedRoute,
   updatePawningTicketNumberFormat
 ); // Update pawning ticket number format for the company
-route.get(
-  "/pawning-ticket-format",
-  protectedRoute,
-  getPawningTicketFormat
-); 
+route.get("/pawning-ticket-format", protectedRoute, getPawningTicketFormat);
 route.post("/article-condition", protectedRoute, createArticleCondition); // Create article condition
 route.get("/article-conditions", protectedRoute, getArticlesConditions); // Get all article conditions
 route.patch("/article-condition/:id", protectedRoute, updateArticleCondition); // Update article condition by ID
 route.delete("/article-condition/:id", protectedRoute, deleteArticleCondition); // Delete article condition by ID
+
+// TEST USER - to be removed in production
+route.post("/create-test-user", createTESTUser); // Create a test user
 
 export default route;

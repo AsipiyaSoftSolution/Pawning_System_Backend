@@ -15,8 +15,9 @@ export const pool = mysql.createPool({
 
   // Connection pool settings to prevent timeout issues
   connectionLimit: 10,
-  acquireTimeout: 30000, // 30 seconds to get a connection
-  timeout: 60000, // 60 seconds query timeout
+  acquireTimeout: 60000, // 60 seconds to get a connection
+  timeout: 120000, // 120 seconds query timeout
+  connectTimeout: 60000, // 60 seconds connection timeout
 
   // Keep connection alive
   enableKeepAlive: true,
@@ -25,16 +26,15 @@ export const pool = mysql.createPool({
   // Auto-reconnect settings
   reconnect: true,
 
-  // Retry configuration for connection failures
-  retry: {
-    count: 5,
-    interval: 1000,
-    conditions: [
-      (error) => error.code === "PROTOCOL_CONNECTION_LOST",
-      (error) => error.code === "ECONNRESET",
-      (error) => error.code === "ETIMEDOUT",
-    ],
+  // SSL/TLS settings for remote connections
+  ssl: {
+    rejectUnauthorized: false,
   },
+
+  // Additional connection options
+  idleTimeout: 900000, // 15 minutes
+  maxIdle: 10,
+  maxReusableConnections: 100,
 });
 
 // Add automatic connection validation
@@ -84,27 +84,46 @@ pool.execute = async function (...args) {
 };
 
 export const connectDB = async () => {
-  try {
-    const connection = await pool.getConnection();
+  let retries = 3;
 
-    // Test the connection
-    await connection.execute("SELECT 1");
+  while (retries > 0) {
+    try {
+      console.log(`Attempting to connect to database... (${4 - retries}/3)`);
+      const connection = await pool.getConnection();
 
-    connection.release();
-    console.log("Database connection established successfully");
-    return true;
-  } catch (error) {
-    console.error("Database connection error:", error);
+      // Test the connection
+      await connection.execute("SELECT 1");
 
-    // Specific error handling
-    if (error.code === "PROTOCOL_CONNECTION_LOST") {
-      console.error("Database connection was closed.");
-    } else if (error.code === "ER_CON_COUNT_ERROR") {
-      console.error("Database has too many connections.");
-    } else if (error.code === "ECONNREFUSED") {
-      console.error("Database connection was refused.");
+      connection.release();
+      console.log("Database connection established successfully");
+      return true;
+    } catch (error) {
+      console.error("Database connection error:", error.message);
+
+      // Specific error handling
+      if (error.code === "PROTOCOL_CONNECTION_LOST") {
+        console.error("Database connection was closed.");
+      } else if (error.code === "ER_CON_COUNT_ERROR") {
+        console.error("Database has too many connections.");
+      } else if (error.code === "ECONNREFUSED") {
+        console.error("Database connection was refused.");
+      } else if (error.code === "ETIMEDOUT" || error.code === "ENETUNREACH") {
+        console.error("Cannot reach database server. Please check:");
+        console.error("1. Database server is running");
+        console.error("2. Firewall allows connection to port 3306");
+        console.error("3. Network connectivity to", process.env.DB_HOST);
+        console.error("4. Database server allows remote connections");
+      } else if (error.code === "ER_ACCESS_DENIED_ERROR") {
+        console.error("Database credentials are incorrect");
+      }
+
+      retries--;
+      if (retries > 0) {
+        console.log(`Retrying in 5 seconds... (${retries} attempts remaining)`);
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+      } else {
+        throw error;
+      }
     }
-
-    throw error;
   }
 };

@@ -444,6 +444,7 @@ export const createPaymentForTicket = async (req, res, next) => {
     if (!ticketId) {
       return next(errorHandler(400, "Ticket ID is required"));
     }
+    console.log("Payment Amount:", paymentAmount);
     if (!paymentAmount || isNaN(paymentAmount) || paymentAmount <= 0) {
       return next(errorHandler(400, "Valid part payment amount is required"));
     }
@@ -835,6 +836,40 @@ export const createTicketRenewalPayment = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Error creating part payment for ticket:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// update pawning ticket note
+export const updatePawningTicketNote = async (req, res, next) => {
+  try {
+    const ticketId = req.params.id || req.params.ticketId;
+    const { note } = req.body;
+
+    if (!ticketId) {
+      return next(errorHandler(400, "Ticket ID is required"));
+    }
+    if (note === undefined || note === null) {
+      return next(errorHandler(400, "Note content is required"));
+    }
+
+    const [result] = await pool.query(
+      "UPDATE pawning_ticket SET Note = ? WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+      [note, ticketId, req.branchId]
+    );
+
+    if (result.affectedRows === 0) {
+      return next(
+        errorHandler(404, "No ticket found or note is the same as existing")
+      );
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Ticket note updated successfully",
+    });
+  } catch (error) {
+    console.error("Error in updatePawningTicketNote:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

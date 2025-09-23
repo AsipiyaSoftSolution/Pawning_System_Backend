@@ -1099,7 +1099,7 @@ export const getPawningTicketFormat = async (req, res, next) => {
       return res.status(200).json({
         success: true,
         message: "No pawning ticket format found",
-        format: null
+        format: null,
       });
     }
 
@@ -1109,8 +1109,9 @@ export const getPawningTicketFormat = async (req, res, next) => {
       format: {
         pawningTicketNumberFormatType: formatData[0].format_type,
         pawningTicketNumberFormat: formatData[0].format,
-        pawningTicketNumberAutoGenerateStartFrom: formatData[0].auto_generate_start_from
-      }
+        pawningTicketNumberAutoGenerateStartFrom:
+          formatData[0].auto_generate_start_from,
+      },
     });
   } catch (error) {
     console.error("Error fetching pawning ticket format:", error);
@@ -1332,6 +1333,81 @@ export const deleteArticleCondition = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Error deleting article condition:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// Create a new user for the TEST company (company ID 3) and assign to a branch
+export const createTESTUser = async (req, res, next) => {
+  try {
+    const {
+      Contact_no,
+      Designation_idDesignation,
+      Email,
+      Status,
+      full_name,
+      branchId,
+    } = req.body;
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(Email)) {
+      return next(errorHandler(400, "Please provide a valid email address"));
+    }
+
+    const [existingUser] = await pool.query(
+      "SELECT idUser FROM user WHERE email = ?",
+      [Email]
+    );
+    if (existingUser.length > 0) {
+      return next(errorHandler(400, "User with this email already exists"));
+    }
+
+    // Verify designation exists for this company
+    const [designationExists] = await pool.query(
+      "SELECT idDesignation FROM designation WHERE idDesignation = ? AND Company_idCompany = ?",
+      [Designation_idDesignation, 3]
+    );
+    if (designationExists.length === 0) {
+      return next(errorHandler(404, "Designation not found for this company"));
+    }
+
+    const tempPassword = Math.random().toString(36).slice(-8); // Generate a temporary password
+    console.log("Temporary password generated:", tempPassword);
+    // have to send this temp password to the user via email
+    // For now, we will just log it to the console (In production, use a proper email service)
+    // console.log(`Temporary password for ${email}: ${tempPassword}`);
+
+    const hashedPassword = await bcrypt.hash(tempPassword, 10); // Hash the temporary password
+
+    const [result] = await pool.query(
+      "INSERT INTO user (Email,Password, full_name, Designation_idDesignation, Company_idCompany,Contact_no) VALUES (?, ?, ?, ?, ?,?)",
+      [
+        Email,
+        hashedPassword,
+        full_name,
+        Designation_idDesignation,
+        3,
+        Contact_no,
+      ]
+    );
+
+    if (result.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to create user"));
+    }
+
+    const [userAssignToBranch] = await pool.query(
+      "INSERT INTO user_has_branch (User_idUser, Branch_idBranch) VALUES (?, ?)",
+      [result.insertId, branchId]
+    );
+
+    res.status(201).json({
+      success: true,
+      userId: result.insertId,
+      message: `User created successfully`,
+    });
+  } catch (error) {
+    console.error("Error creating user:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

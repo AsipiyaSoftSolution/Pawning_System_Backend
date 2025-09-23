@@ -9,6 +9,7 @@ import {
   createTicketAdditionalCharge,
   createPaymentForTicket,
   createTicketRenewalPayment,
+  updatePawningTicketNote,
 } from "../controllers/pawning.ticket.payment.controller.js";
 
 const route = express.Router();
@@ -53,7 +54,7 @@ route.post(
   protectedRoute,
   checkUserBranchAccess,
   createPaymentForTicket
-); // Create payment for ticket
+); // Create payment for ticket  (Part Payment)
 
 route.post(
   "/:branchId/ticket/:ticketId/renewal-payment",
@@ -61,5 +62,12 @@ route.post(
   checkUserBranchAccess,
   createTicketRenewalPayment
 ); // Create renewal payment for ticket
+
+route.patch(
+  "/:branchId/ticket/:ticketId/note-update",
+  protectedRoute,
+  checkUserBranchAccess,
+  updatePawningTicketNote
+); // Update ticket note
 
 export default route;

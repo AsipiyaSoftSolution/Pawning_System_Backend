@@ -104,4 +104,5 @@ router.post(
   checkUserBranchAccess,
   createTicketComment
 ); // Create a new ticket comment
+
 export default router;

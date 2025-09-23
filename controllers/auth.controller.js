@@ -217,3 +217,84 @@ export const forgetPassword = async (req, res, next) => {
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
+
+export const resetPassword = async (req, res, next) => {
+  try {
+    const { token, userId } = req.params;
+    const { newPassword } = req.body;
+
+    if (!token || !userId) {
+      return next(errorHandler(400, "Invalid or missing token/userId"));
+    }
+
+    if (!newPassword) {
+      return next(errorHandler(400, "New password is required"));
+    }
+    // check if the password is strong enough
+    if (newPassword.length < 8) {
+      return next(
+        errorHandler(400, "Password must be at least 8 characters long")
+      );
+    }
+    if (!/[A-Z]/.test(newPassword)) {
+      return next(
+        errorHandler(400, "Password must contain at least one uppercase letter")
+      );
+    }
+
+    if (!/[a-z]/.test(newPassword)) {
+      return next(
+        errorHandler(400, "Password must contain at least one lowercase letter")
+      );
+    }
+    if (!/[0-9]/.test(newPassword)) {
+      return next(
+        errorHandler(400, "Password must contain at least one number")
+      );
+    }
+    if (!/[!@#$%^&*]/.test(newPassword)) {
+      return next(
+        errorHandler(
+          400,
+          "Password must contain at least one special character"
+        )
+      );
+    }
+
+    // find there is a user with the token and userId and the token is not expired
+    const [user] = await pool.query(
+      "SELECT idUser,Reset_Password_Token,Reset_Password_Token_Expires_At FROM user WHERE idUser = ? ",
+      [userId]
+    );
+
+    if (!user[0] || user[0].Reset_Password_Token !== token) {
+      return next(errorHandler(400, "Invalid token"));
+    }
+
+    // check if the token is expired
+    if (new Date() > new Date(user[0].Reset_Password_Token_Expires_At)) {
+      return next(errorHandler(400, "Token has expired"));
+    }
+
+    // hash the new password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    // update the password in the database and remove the token
+    const [result] = await pool.query(
+      "UPDATE user SET Password = ?, Reset_Password_Token = NULL, Reset_Password_Token_Expires_At = NULL WHERE idUser = ?",
+      [hashedPassword, userId]
+    );
+
+    if (result.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to update password"));
+    }
+
+    // send the success email later
+    res.status(200).json({
+      message: "Password has been reset successfully",
+    });
+  } catch (error) {
+    console.error("Reset password error:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};

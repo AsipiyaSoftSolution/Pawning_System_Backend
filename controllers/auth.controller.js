@@ -204,7 +204,7 @@ export const forgetPassword = async (req, res, next) => {
     );
 
     // send the email with the token
-    const resetUrl = `${process.env.CLIENT_URL}/reset-password?token=${token}&id=${existingUser[0].idUser}`;
+    const resetUrl = `${process.env.CLIENT_URL}/reset-password/${token}/${existingUser[0].idUser}`;
     console.log(`Password reset link (send this via email): ${resetUrl}`);
 
     // have to implement email service to send the email

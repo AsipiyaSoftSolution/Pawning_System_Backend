@@ -1,5 +1,6 @@
 import jwt from "jsonwebtoken";
 import { pool } from "../utils/db.js";
+import crypto from "crypto";
 export const jwtToken = (
   userId,
   email,

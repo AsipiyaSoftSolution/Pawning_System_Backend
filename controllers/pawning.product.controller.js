@@ -193,11 +193,21 @@ export const getPawningProducts = async (req, res, next) => {
       limit
     );
 
-    const [pawningProducts] = await pool.query(
+    let pawningProducts;
+    [pawningProducts] = await pool.query(
       `SELECT idPawning_Product,Name,Interest_Method,Service_Charge,Early_Settlement_Charge,Late_Charge_Status FROM pawning_product WHERE Branch_idBranch = ? LIMIT ? OFFSET ?`,
       [req.branchId, limit, offset]
     );
     console.log("fetched pawning products:", pawningProducts);
+
+    // find number of active tickets for each product
+    for (let product of pawningProducts) {
+      const [activeTickets] = await pool.query(
+        `SELECT COUNT(*) AS activeCount FROM pawning_ticket WHERE Pawning_Product_idPawning_Product = ? AND Status != '2'`,
+        [product.idPawning_Product]
+      );
+      product.activeTickets = activeTickets[0].activeCount || 0;
+    }
 
     res.status(200).json({
       success: true,

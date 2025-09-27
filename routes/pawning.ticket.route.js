@@ -14,6 +14,11 @@ import {
   getTicketDataById,
   getTicketComments,
   createTicketComment,
+  getPawningTicketsForApproval,
+  approvePawningTicket,
+  rejectPawningTicket,
+  getApprovedPawningTickets,
+  activatePawningTicket,
 } from "../controllers/pawning.ticket.controller.js";
 const router = express.Router();
 
@@ -105,4 +110,38 @@ router.post(
   createTicketComment
 ); // Create a new ticket comment
 
+router.get(
+  "/:branchId/tickets-for-approval",
+  protectedRoute,
+  checkUserBranchAccess,
+  getPawningTicketsForApproval
+); // Get pawning tickets for approval
+
+router.patch(
+  "/:branchId/ticket-status-to-approve-before-loan-disbursement/:ticketId",
+  protectedRoute,
+  checkUserBranchAccess,
+  approvePawningTicket
+); // Approve a pawning ticket status to -1 before loan disbursement
+
+router.patch(
+  "/:branchId/ticket-status-to-reject/:ticketId",
+  protectedRoute,
+  checkUserBranchAccess,
+  rejectPawningTicket
+); // Reject a pawning ticket
+
+router.get(
+  "/:branchId/approved-tickets",
+  protectedRoute,
+  checkUserBranchAccess,
+  getApprovedPawningTickets
+); // Get all approved pawning tickets
+
+router.patch(
+  "/:branchId/mark-ticket-as-active/:ticketId",
+  protectedRoute,
+  checkUserBranchAccess,
+  activatePawningTicket
+); // Activate a pawning ticket
 export default router;

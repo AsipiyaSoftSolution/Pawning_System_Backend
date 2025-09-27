@@ -17,6 +17,8 @@ import {
   getPawningTicketsForApproval,
   approvePawningTicket,
   rejectPawningTicket,
+  getApprovedPawningTickets,
+  activatePawningTicket,
 } from "../controllers/pawning.ticket.controller.js";
 const router = express.Router();
 
@@ -129,4 +131,17 @@ router.patch(
   rejectPawningTicket
 ); // Reject a pawning ticket
 
+router.get(
+  "/:branchId/approved-tickets",
+  protectedRoute,
+  checkUserBranchAccess,
+  getApprovedPawningTickets
+); // Get all approved pawning tickets
+
+router.patch(
+  "/:branchId/mark-ticket-as-active/:ticketId",
+  protectedRoute,
+  checkUserBranchAccess,
+  activatePawningTicket
+); // Activate a pawning ticket
 export default router;

@@ -869,3 +869,220 @@ export const createTicketComment = async (req, res, next) => {
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
+
+// send pawning tickets for ticket approval
+export const getPawningTicketsForApproval = async (req, res, next) => {
+  try {
+    const { product, date, nic } = req.query;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    // Build base WHERE conditions for both count and data queries
+    let baseWhereConditions =
+      "pt.Branch_idBranch = ? AND (pt.Status IS NULL OR pt.Status = '0')";
+    let countParams = [req.branchId];
+    let dataParams = [req.branchId];
+
+    // Add filter conditions dynamically
+    if (product) {
+      baseWhereConditions += " AND pp.Name = ?";
+      countParams.push(product);
+      dataParams.push(product);
+    }
+
+    if (date) {
+      baseWhereConditions +=
+        " AND DATE(STR_TO_DATE(pt.Date_Time, '%Y-%m-%d %H:%i:%s')) = ?";
+      countParams.push(date);
+      dataParams.push(date);
+    }
+
+    if (nic) {
+      const formatedNIC = formatSearchPattern(nic); // clear and format NIC for SQL LIKE query
+      baseWhereConditions += " AND c.NIC LIKE ?";
+      countParams.push(formatedNIC);
+      dataParams.push(formatedNIC);
+    }
+
+    // Build count query with same conditions as main query
+    const countQuery = `SELECT COUNT(*) AS total
+                        FROM pawning_ticket pt
+                 LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
+                 LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product 
+                       WHERE ${baseWhereConditions}`;
+
+    const paginationData = await getPaginationData(
+      countQuery,
+      countParams,
+      page,
+      limit
+    );
+
+    // Build main data query - fetch ticket data with customer NIC and product name
+    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No,pt.Date_Time, pt.Maturity_Date, pt.Pawning_Advance_Amount, pt.Status,  c.NIC, pp.Name AS ProductName
+                 FROM pawning_ticket pt
+          LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
+          LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product
+                WHERE ${baseWhereConditions}
+             ORDER BY pt.idPawning_Ticket DESC LIMIT ? OFFSET ?`;
+
+    dataParams.push(limit, offset);
+
+    const [tickets] = await pool.query(query, dataParams);
+    console.log(tickets, "tickets for approval");
+
+    res.status(200).json({
+      success: true,
+      tickets: tickets || [],
+      pagination: paginationData,
+    });
+  } catch (error) {
+    console.error("Error in getPawningTicketsForApproval:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// ticket approve (state to -1 approved before loan disbursement)
+export const approvePawningTicket = async (req, res, next) => {
+  try {
+    const ticketId = req.params.id || req.params.ticketId;
+    const { note } = req.body;
+    if (!ticketId) {
+      return next(errorHandler(400, "Ticket ID is required"));
+    }
+
+    if (note && note.length > 500) {
+      return next(errorHandler(400, "Note cannot exceed 500 characters"));
+    }
+
+    if (note) {
+      const sanitizedNote = note.replace(/</g, "&lt;").replace(/>/g, "&gt;"); // basic sanitization
+      req.body.note = sanitizedNote;
+    }
+
+    // Check if the ticket exists and is pending approval
+    const [existingTicketRow] = await pool.query(
+      "SELECT Status,idPawning_Ticket FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+      [ticketId, req.branchId]
+    );
+
+    if (existingTicketRow.length === 0) {
+      return next(errorHandler(404, "No ticket found for the given ID"));
+    }
+
+    // Check if ticket is already approved or in different status
+    const currentStatus = existingTicketRow[0].Status;
+    if (currentStatus !== null && currentStatus !== "0") {
+      return next(
+        errorHandler(400, "Only tickets with pending status can be approved")
+      );
+    }
+
+    const ticketIdToUpdate = existingTicketRow[0].idPawning_Ticket;
+
+    // Update the ticket status to approved (-1)
+    const [result] = await pool.query(
+      "UPDATE pawning_ticket SET Status = '-1' WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+      [ticketIdToUpdate, req.branchId]
+    );
+
+    if (result.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to approve the ticket"));
+    }
+
+    // insert a record to ticket_has_approval table
+    const [approvalResult] = await pool.query(
+      "INSERT INTO ticket_has_approval (Pawning_Ticket_idPawning_Ticket, User, Date_Time, Note, Type) VALUES (?, ?, NOW(), ?, ?)",
+      [ticketIdToUpdate, req.userId, req.body.note || null, "APPROVE"]
+    );
+
+    if (approvalResult.affectedRows === 0) {
+      return next(
+        errorHandler(500, "Failed to record the ticket approval action")
+      );
+    }
+
+    res.status(200).json({
+      success: true,
+      ticketId: ticketIdToUpdate,
+      message: "Pawning ticket approved successfully.",
+    });
+  } catch (error) {
+    console.error("Error in approvePawningTicket:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// reject pawning ticket (set state to 4 rejected)
+export const rejectPawningTicket = async (req, res, next) => {
+  try {
+    const ticketId = req.params.id || req.params.ticketId;
+    const { note } = req.body;
+    if (!ticketId) {
+      return next(errorHandler(400, "Ticket ID is required"));
+    }
+    if (!note) {
+      return next(errorHandler(400, "Rejection note is required"));
+    }
+
+    if (note.length > 500) {
+      return next(errorHandler(400, "Note cannot exceed 500 characters"));
+    }
+
+    if (note) {
+      const sanitizedNote = note.replace(/</g, "&lt;").replace(/>/g, "&gt;"); // basic sanitization
+      req.body.note = sanitizedNote;
+    }
+
+    // Check if the ticket exists and is pending approval
+    const [existingTicketRow] = await pool.query(
+      "SELECT Status,idPawning_Ticket FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+      [ticketId, req.branchId]
+    );
+
+    if (existingTicketRow.length === 0) {
+      return next(errorHandler(404, "No ticket found for the given ID"));
+    }
+
+    // Check if ticket is already approved or in different status
+    const currentStatus = existingTicketRow[0].Status;
+    if (currentStatus !== null && currentStatus !== "0") {
+      return next(
+        errorHandler(400, "Only tickets with pending status can be rejected")
+      );
+    }
+
+    const ticketIdToUpdate = existingTicketRow[0].idPawning_Ticket;
+    // Update the ticket status to rejected (4)
+    const [result] = await pool.query(
+      "UPDATE pawning_ticket SET Status = '4' WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+      [ticketIdToUpdate, req.branchId]
+    );
+
+    if (result.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to reject the ticket"));
+    }
+
+    // insert a record to ticket_has_approval table
+    const [approvalResult] = await pool.query(
+      "INSERT INTO ticket_has_approval (Pawning_Ticket_idPawning_Ticket, User, Date_Time, Note, Type) VALUES (?, ?, NOW(), ?, ?)",
+      [ticketIdToUpdate, req.userId, req.body.note, "REJECT"]
+    );
+
+    if (approvalResult.affectedRows === 0) {
+      return next(
+        errorHandler(500, "Failed to record the ticket rejection action")
+      );
+    }
+
+    res.status(200).json({
+      success: true,
+      ticketId: ticketIdToUpdate,
+      message: "Pawning ticket rejected successfully.",
+    });
+  } catch (error) {
+    console.error("Error in rejectPawningTicket:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};

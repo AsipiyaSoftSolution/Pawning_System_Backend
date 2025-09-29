@@ -274,7 +274,7 @@ export const getTodayCashierRegistry = async (req, res, next) => {
 
     // Fetch the updated registry for the day if any
     const [updatedRegistryResult] = await pool.query(
-      "SELECT dr.*, u.full_name as enteredUser FROM daily_registry dr JOIN user on dr.User_idUser = u.idUser WHERE dr.User_idUser = ? AND dr.Date = CURDATE() AND Description = 'Day Start Updated'",
+      "SELECT dr.*, u.full_name as enteredUser FROM daily_registry dr JOIN user u ON dr.User_idUser = u.idUser WHERE dr.User_idUser = ? AND dr.Date = CURDATE() AND dr.Description = 'Day Start Updated'",
       [req.userId]
     );
 

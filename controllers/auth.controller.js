@@ -51,6 +51,12 @@ const userWithoutPassword = async (userId) => {
       Document_Type: doc.Document_Type,
     }));
 
+    // Check if user got a cashier account and if yes send cashier account id
+    const [cashierAccount] = await pool.query(
+      "SELECT idAccounting_Accounts,Cashier_idCashier FROM accounting_accounts WHERE Cashier_idCashier = ?",
+      [user[0].idUser]
+    );
+
     user = {
       ...user[0],
       designation: desgination[0]?.Description,
@@ -58,6 +64,11 @@ const userWithoutPassword = async (userId) => {
       branches: userBranches,
       companyDocuments: companyDocuments,
       branchIds: branchIds.map((branch) => branch.Branch_idBranch),
+      isCashier: cashierAccount.length > 0,
+      cashierAccountId:
+        cashierAccount.length > 0
+          ? cashierAccount[0].idAccounting_Accounts
+          : null,
     };
 
     const { Password, ...userWithoutPassword } = user;

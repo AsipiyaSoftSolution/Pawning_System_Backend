@@ -119,7 +119,6 @@ export const addAccountCreateLog = async (
 
 // create transfer logs for both accounts (from and to)
 export const addAccountTransferLogs = async (
-  connection,
   fromAccountId,
   toAccountId,
   fromAccountName,
@@ -133,7 +132,7 @@ export const addAccountTransferLogs = async (
 ) => {
   try {
     // Log for FROM account (debit)
-    await connection.query(
+    await pool.query(
       "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts, Date_Time, Type, Description, Debit, Credit, Balance, Contra_Account, User_idUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
       [
         fromAccountId,
@@ -149,7 +148,7 @@ export const addAccountTransferLogs = async (
     );
 
     // Log for TO account (credit)
-    await connection.query(
+    await pool.query(
       "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts, Date_Time, Type, Description, Debit, Credit, Balance, Contra_Account, User_idUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
       [
         toAccountId,
@@ -166,5 +165,41 @@ export const addAccountTransferLogs = async (
   } catch (error) {
     console.error("Error creating account transfer logs:", error);
     throw new Error("Failed to create account transfer logs");
+  }
+};
+
+// create a log to accounting_accounts_log when a cashier registry is started for the day
+export const addCashierRegistryStartLog = async (
+  accountId,
+  type,
+  description,
+  debit,
+  credit,
+  balance,
+  contra_account,
+  userId
+) => {
+  try {
+    const [result] = await pool.query(
+      "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts,Date_Time,Type,Description,Debit,Credit,Balance,Contra_Account,User_idUser) VALUES(?,?,?,?,?,?,?,?,?)",
+      [
+        accountId,
+        new Date(),
+        type,
+        description,
+        debit,
+        credit,
+        balance,
+        contra_account,
+        userId,
+      ]
+    );
+
+    if (result.affectedRows === 0) {
+      throw new Error("Failed to create cashier registry start log");
+    }
+  } catch (error) {
+    console.error("Error creating cashier registry start log:", error);
+    throw new Error("Failed to create cashier registry start log");
   }
 };

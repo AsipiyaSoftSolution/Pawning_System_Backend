@@ -180,20 +180,34 @@ export const getAccountLogById = async (req, res, next) => {
 
     // Get logs data
     const [logs] = await pool.query(
-      `SELECT aal.*, u.full_name AS Processed_By 
+      `SELECT aal.*, u.full_name AS Processed_By,
+              ca.Account_Name AS Contra_Account_Name,
+              ca.Account_Code AS Contra_Account_Code
        FROM accounting_accounts_log aal 
        JOIN user u ON aal.User_idUser = u.idUser 
+       LEFT JOIN accounting_accounts ca ON aal.Contra_Account = ca.idAccounting_Accounts
        WHERE ${whereCondition} 
        ORDER BY STR_TO_DATE(aal.Date_Time, '%Y-%m-%d %H:%i:%s') DESC 
        LIMIT ? OFFSET ?`,
       queryParams
     );
 
+    // Format logs to include contra account info when available
+    const formattedLogs = logs.map((log) => ({
+      ...log,
+      contra_account: log.Contra_Account
+        ? {
+            name: log.Contra_Account_Name,
+            code: log.Contra_Account_Code,
+          }
+        : null,
+    }));
+
     res.status(200).json({
       success: true,
       message: "Account logs retrieved successfully",
       pagination: paginationData,
-      logs,
+      logs: formattedLogs,
     });
   } catch (error) {
     console.error("Get account log error:", error);

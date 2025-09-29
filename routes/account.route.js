@@ -34,9 +34,9 @@ route.get(
   getAccountsForBranch
 );
 
-// get accounts data for transfer dropdown select
+// get accounts data for transfer and other operations
 route.get(
-  "/:branchId/accounts-for-transfer",
+  "/:branchId/accounts-for-operations",
   protectedRoute,
   checkUserBranchAccess,
   getAccountsForTransfer

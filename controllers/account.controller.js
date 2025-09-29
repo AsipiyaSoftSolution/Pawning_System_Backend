@@ -1,6 +1,7 @@
 import { errorHandler } from "../utils/errorHandler.js";
 import { pool } from "../utils/db.js";
 import { getPaginationData } from "../utils/helper.js";
+import { addAccountCreateLog } from "../utils/accounting.account.logs.js";
 
 // Create a new account
 export const createAccount = async (req, res, next) => {
@@ -30,7 +31,7 @@ export const createAccount = async (req, res, next) => {
     }
 
     const [result] = await pool.query(
-      "INSERT INTO  accounting_accounts(Account_Type,Account_Name,Account_Code,Account_Number,Group_Of_Type,Type,Note,User_idUser,Status,Branch_idBranch) VALUES(?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO  accounting_accounts(Account_Type,Account_Name,Account_Code,Account_Number,Group_Of_Type,Type,Note,User_idUser,Status,Branch_idBranch,Account_Balance) VALUES(?,?,?,?,?,?,?,?,?,?,0)",
       [
         accountType,
         accountName,
@@ -52,6 +53,18 @@ export const createAccount = async (req, res, next) => {
     const [createdAccount] = await pool.query(
       "SELECT u.full_name AS Created_By, aa.idAccounting_Accounts ,aa.Account_Type, aa.Account_Name, aa.Account_Code, aa.Account_Balance, aa.Note  FROM accounting_accounts aa JOIN user u ON aa.User_idUser = u.idUser WHERE aa.idAccounting_Accounts = ?",
       [result.insertId]
+    );
+
+    // create a log entry for the new account creation
+    await addAccountCreateLog(
+      createdAccount[0].idAccounting_Accounts,
+      `Account Creation - ${accountType}`,
+      `Account ${accountName} with code ${accountCode}`,
+      0,
+      0,
+      0,
+      null,
+      req.userId
     );
 
     res.status(201).json({
@@ -232,7 +245,7 @@ export const getAccountsForBranch = async (req, res, next) => {
 export const getAccountsForTransfer = async (req, res, next) => {
   try {
     const [accounts] = await pool.query(
-      `SELECT idAccounting_Accounts, Account_Name, Account_Code, Account_Balance 
+      `SELECT idAccounting_Accounts, Account_Name, Account_Code, Account_Balance,Account_Type
              FROM accounting_accounts 
              WHERE Branch_idBranch = ? AND Status = '1'
              ORDER BY Account_Name ASC`,

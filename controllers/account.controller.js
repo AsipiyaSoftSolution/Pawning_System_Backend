@@ -400,3 +400,136 @@ export const transferBetweenAccounts = async (req, res, next) => {
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
+
+// send transfer records
+export const sendTransferRecords = async (req, res, next) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+    const { start_date, end_date } = req.query;
+
+    // Validate pagination parameters
+    if (page <= 0 || limit <= 0 || limit > 100) {
+      return next(errorHandler(400, "Invalid pagination parameters"));
+    }
+
+    // Build dynamic WHERE conditions for date filtering
+    let whereCondition = "aal.Type = 'Internal Account Transfer Out'";
+    let countWhereCondition = "Type = 'Internal Account Transfer Out'";
+    let queryParams = [];
+    let countParams = [];
+
+    // Handle date filtering
+    if (start_date && end_date) {
+      // Validate date formats
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRegex.test(start_date) || !dateRegex.test(end_date)) {
+        return next(errorHandler(400, "Invalid date format. Use YYYY-MM-DD"));
+      }
+
+      // Validate date range
+      if (new Date(start_date) > new Date(end_date)) {
+        return next(errorHandler(400, "start_date cannot be after end_date"));
+      }
+
+      whereCondition +=
+        " AND DATE(STR_TO_DATE(aal.Date_Time, '%Y-%m-%d %H:%i:%s')) BETWEEN ? AND ?";
+      countWhereCondition +=
+        " AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d %H:%i:%s')) BETWEEN ? AND ?";
+      queryParams.push(start_date, end_date);
+      countParams.push(start_date, end_date);
+    } else if (start_date) {
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRegex.test(start_date)) {
+        return next(
+          errorHandler(400, "Invalid start_date format. Use YYYY-MM-DD")
+        );
+      }
+
+      whereCondition +=
+        " AND DATE(STR_TO_DATE(aal.Date_Time, '%Y-%m-%d %H:%i:%s')) >= ?";
+      countWhereCondition +=
+        " AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d %H:%i:%s')) >= ?";
+      queryParams.push(start_date);
+      countParams.push(start_date);
+    } else if (end_date) {
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRegex.test(end_date)) {
+        return next(
+          errorHandler(400, "Invalid end_date format. Use YYYY-MM-DD")
+        );
+      }
+
+      whereCondition +=
+        " AND DATE(STR_TO_DATE(aal.Date_Time, '%Y-%m-%d %H:%i:%s')) <= ?";
+      countWhereCondition +=
+        " AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d %H:%i:%s')) <= ?";
+      queryParams.push(end_date);
+      countParams.push(end_date);
+    }
+
+    // Get pagination data - only count "Transfer Out" records to avoid duplicates
+    const paginationData = await getPaginationData(
+      `SELECT COUNT(*) as total FROM accounting_accounts_log WHERE ${countWhereCondition}`,
+      countParams,
+      page,
+      limit
+    );
+
+    // Add pagination parameters to existing query params
+    queryParams.push(limit, offset);
+
+    // Get transfer records with combined information
+    const [transfers] = await pool.query(
+      `SELECT 
+         aal.Date_Time as transfer_date,
+         aal.Debit as amount,
+         aal.Description,
+         fromAccount.Account_Name as from_account_name,
+         fromAccount.Account_Code as from_account_code,
+         toAccount.Account_Name as to_account_name,
+         toAccount.Account_Code as to_account_code,
+         u.full_name as processed_by,
+         CASE 
+           WHEN aal.Description LIKE '%| Reason:%' 
+           THEN TRIM(SUBSTRING(aal.Description, LOCATE('| Reason:', aal.Description) + 10))
+           ELSE NULL 
+         END as reason
+       FROM accounting_accounts_log aal
+       JOIN accounting_accounts fromAccount ON aal.Accounting_Accounts_idAccounting_Accounts = fromAccount.idAccounting_Accounts
+       JOIN accounting_accounts toAccount ON aal.Contra_Account = toAccount.idAccounting_Accounts
+       JOIN user u ON aal.User_idUser = u.idUser
+       WHERE ${whereCondition}
+       ORDER BY STR_TO_DATE(aal.Date_Time, '%Y-%m-%d %H:%i:%s') DESC
+       LIMIT ? OFFSET ?`,
+      queryParams
+    );
+
+    // Format the transfer records for better readability
+    const formattedTransfers = transfers.map((transfer) => ({
+      transfer_date: transfer.transfer_date,
+      from_account: {
+        name: transfer.from_account_name,
+        code: transfer.from_account_code,
+      },
+      to_account: {
+        name: transfer.to_account_name,
+        code: transfer.to_account_code,
+      },
+      amount: parseFloat(transfer.amount),
+      reason: transfer.reason,
+      processed_by: transfer.processed_by,
+    }));
+
+    res.status(200).json({
+      success: true,
+      message: "Transfer records retrieved successfully",
+      pagination: paginationData,
+      transfers: formattedTransfers,
+    });
+  } catch (error) {
+    console.error("Send transfer records error:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};

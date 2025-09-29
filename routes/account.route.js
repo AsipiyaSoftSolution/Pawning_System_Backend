@@ -7,6 +7,7 @@ import {
   getAccountsForBranch,
   getAccountsForTransfer,
   transferBetweenAccounts,
+  sendTransferRecords,
 } from "../controllers/account.controller.js";
 
 const route = express.Router();
@@ -49,5 +50,13 @@ route.post(
   protectedRoute,
   checkUserBranchAccess,
   transferBetweenAccounts
+);
+
+// send transfer records
+route.get(
+  "/:branchId/transfer-records",
+  protectedRoute,
+  checkUserBranchAccess,
+  sendTransferRecords
 );
 export default route;

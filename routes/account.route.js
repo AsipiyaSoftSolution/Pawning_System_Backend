@@ -6,6 +6,7 @@ import {
   getAccountLogById,
   getAccountsForBranch,
   getAccountsForTransfer,
+  transferBetweenAccounts,
 } from "../controllers/account.controller.js";
 
 const route = express.Router();
@@ -34,11 +35,19 @@ route.get(
   getAccountsForBranch
 );
 
-// get accounts data for transfer dropdown select
+// get accounts data for transfer and other operations
 route.get(
-  "/:branchId/accounts-for-transfer",
+  "/:branchId/accounts-for-operations",
   protectedRoute,
   checkUserBranchAccess,
   getAccountsForTransfer
+);
+
+// transfer between accounts
+route.post(
+  "/:branchId/transfer-between-accounts",
+  protectedRoute,
+  checkUserBranchAccess,
+  transferBetweenAccounts
 );
 export default route;

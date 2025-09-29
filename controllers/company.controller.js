@@ -2,6 +2,7 @@ import { errorHandler } from "../utils/errorHandler.js";
 import { pool } from "../utils/db.js";
 import bcrypt from "bcrypt";
 import { getPaginationData, formatSearchPattern } from "../utils/helper.js";
+import { addAccountCreateLog } from "../utils/accounting.account.logs.js";
 
 // Get COmpany Details
 export const getCompanyDetails = async (req, res, next) => {
@@ -636,6 +637,9 @@ export const createUser = async (req, res, next) => {
     }
 
     if (accountType && accountType === "cashier") {
+      const accountCode = Math.floor(
+        100000 + Math.random() * 900000
+      ).toString(); // generate a random 6 digit account code
       // create a cashier account for the user - cashiers can only have one branch
       const [cashierAccount] = await pool.query(
         "INSERT INTO accounting_accounts (Account_Name, Account_Type, Created_At,Type,Group_Of_Type,User_idUser,Cashier_idCashier,Branch_idBranch,Account_Balance,Status,Account_Code) VALUES (?,?,NOW(),?,?,?,?,?,?,?,?)",
@@ -649,8 +653,19 @@ export const createUser = async (req, res, next) => {
           branchData[0].idBranch, // cashier must have exactly one branch
           0,
           1,
-          Math.floor(100000 + Math.random() * 900000).toString(), // generate a random 6 digit account code
+          accountCode,
         ]
+      );
+      // create create account log...
+      await addAccountCreateLog(
+        cashierAccount.insertId,
+        "Account Creation - Cashier Account",
+        `Account Cashier Account-${full_name} with code ${accountCode} `,
+        0,
+        0,
+        0,
+        null,
+        req.userId
       );
 
       if (cashierAccount.affectedRows === 0) {

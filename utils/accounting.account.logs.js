@@ -116,3 +116,55 @@ export const addAccountCreateLog = async (
     throw new Error("Failed to create account creation log");
   }
 };
+
+// create transfer logs for both accounts (from and to)
+export const addAccountTransferLogs = async (
+  connection,
+  fromAccountId,
+  toAccountId,
+  fromAccountName,
+  toAccountName,
+  transferAmount,
+  newFromBalance,
+  newToBalance,
+  reason,
+  userId,
+  transferDate = new Date()
+) => {
+  try {
+    // Log for FROM account (debit)
+    await connection.query(
+      "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts, Date_Time, Type, Description, Debit, Credit, Balance, Contra_Account, User_idUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        fromAccountId,
+        transferDate,
+        "Internal Account Transfer Out",
+        `To ${toAccountName}${reason ? ` | Reason: ${reason}` : ""}`,
+        transferAmount,
+        0,
+        newFromBalance,
+        toAccountId,
+        userId,
+      ]
+    );
+
+    // Log for TO account (credit)
+    await connection.query(
+      "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts, Date_Time, Type, Description, Debit, Credit, Balance, Contra_Account, User_idUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        toAccountId,
+        transferDate,
+        "Internal Account Transfer In",
+        `From ${fromAccountName}${reason ? ` | Reason: ${reason}` : ""}`,
+        0,
+        transferAmount,
+        newToBalance,
+        fromAccountId,
+        userId,
+      ]
+    );
+  } catch (error) {
+    console.error("Error creating account transfer logs:", error);
+    throw new Error("Failed to create account transfer logs");
+  }
+};

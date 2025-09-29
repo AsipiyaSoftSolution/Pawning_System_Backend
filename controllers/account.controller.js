@@ -1,7 +1,10 @@
 import { errorHandler } from "../utils/errorHandler.js";
 import { pool } from "../utils/db.js";
 import { getPaginationData } from "../utils/helper.js";
-import { addAccountCreateLog } from "../utils/accounting.account.logs.js";
+import {
+  addAccountCreateLog,
+  addAccountTransferLogs,
+} from "../utils/accounting.account.logs.js";
 
 // Create a new account
 export const createAccount = async (req, res, next) => {
@@ -266,6 +269,132 @@ export const getAccountsForTransfer = async (req, res, next) => {
 // transfer amount between accounts
 export const transferBetweenAccounts = async (req, res, next) => {
   try {
+    const { fromAccountId, toAccountId, amount, reason } = req.body;
+
+    // Input validation
+    if (!fromAccountId || !toAccountId || !amount) {
+      return next(
+        errorHandler(400, "From account, to account and amount are required")
+      );
+    }
+
+    // Validate amount is a positive number
+    const transferAmount = parseFloat(amount);
+    if (isNaN(transferAmount) || transferAmount <= 0) {
+      return next(errorHandler(400, "Amount must be a positive number"));
+    }
+
+    // Validate account IDs are positive integers
+    const fromAccountIdNum = parseInt(fromAccountId);
+    const toAccountIdNum = parseInt(toAccountId);
+
+    if (
+      isNaN(fromAccountIdNum) ||
+      fromAccountIdNum <= 0 ||
+      isNaN(toAccountIdNum) ||
+      toAccountIdNum <= 0
+    ) {
+      return next(errorHandler(400, "Invalid account IDs"));
+    }
+
+    // Prevent self-transfer
+    if (fromAccountIdNum === toAccountIdNum) {
+      return next(errorHandler(400, "Cannot transfer to the same account"));
+    }
+
+    // Check if from account exists and is active
+    const [fromAccount] = await pool.query(
+      "SELECT Account_Balance, Account_Name FROM accounting_accounts WHERE idAccounting_Accounts = ? AND Branch_idBranch = ? AND Status = '1'",
+      [fromAccountIdNum, req.branchId]
+    );
+
+    if (fromAccount.length === 0) {
+      return next(errorHandler(404, "From account not found or inactive"));
+    }
+
+    // Check if amount is available in the from account
+    if (parseFloat(fromAccount[0].Account_Balance) < transferAmount) {
+      return next(errorHandler(400, "Insufficient funds in from account"));
+    }
+
+    // Check if to account exists and is active
+    const [toAccount] = await pool.query(
+      "SELECT Account_Balance, Account_Name FROM accounting_accounts WHERE idAccounting_Accounts = ? AND Branch_idBranch = ? AND Status = '1'",
+      [toAccountIdNum, req.branchId]
+    );
+
+    if (toAccount.length === 0) {
+      return next(errorHandler(404, "To account not found or inactive"));
+    }
+
+    // Start transaction
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      // Deduct amount from fromAccount
+      const newFromBalance =
+        parseFloat(fromAccount[0].Account_Balance) - transferAmount;
+      const [deductResult] = await conn.query(
+        "UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ?",
+        [newFromBalance, fromAccountIdNum]
+      );
+
+      if (deductResult.affectedRows === 0) {
+        await conn.rollback();
+        conn.release();
+        return next(
+          errorHandler(500, "Failed to deduct amount from from account")
+        );
+      }
+
+      // Add amount to toAccount
+      const newToBalance =
+        parseFloat(toAccount[0].Account_Balance) + transferAmount;
+      const [addResult] = await conn.query(
+        "UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ?",
+        [newToBalance, toAccountIdNum]
+      );
+
+      if (addResult.affectedRows === 0) {
+        await conn.rollback();
+        conn.release();
+        return next(errorHandler(500, "Failed to add amount to to account"));
+      }
+
+      const transferDate = new Date(); // adding same date
+
+      // Create transfer logs for both accounts
+      await addAccountTransferLogs(
+        conn,
+        fromAccountIdNum,
+        toAccountIdNum,
+        fromAccount[0].Account_Name,
+        toAccount[0].Account_Name,
+        transferAmount,
+        newFromBalance,
+        newToBalance,
+        reason,
+        req.userId,
+        transferDate
+      );
+
+      // Commit transaction
+      await conn.commit();
+      conn.release();
+
+      res.status(200).json({
+        success: true,
+        message: "Transfer completed successfully",
+      });
+    } catch (error) {
+      await conn.rollback();
+      conn.release();
+      console.error("Transfer transaction error:", error);
+      return next(
+        errorHandler(500, "Transfer failed - transaction rolled back")
+      );
+    }
   } catch (error) {
     console.error("Transfer between accounts error:", error);
     return next(errorHandler(500, "Internal Server Error"));

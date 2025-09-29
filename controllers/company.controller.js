@@ -2,6 +2,7 @@ import { errorHandler } from "../utils/errorHandler.js";
 import { pool } from "../utils/db.js";
 import bcrypt from "bcrypt";
 import { getPaginationData, formatSearchPattern } from "../utils/helper.js";
+import { addAccountCreateLog } from "../utils/accounting.account.logs.js";
 
 // Get COmpany Details
 export const getCompanyDetails = async (req, res, next) => {
@@ -526,6 +527,7 @@ export const createUser = async (req, res, next) => {
       Email,
       Status,
       full_name,
+      accountType,
       branchData,
     } = req.body;
     if (!Email || !full_name || !Designation_idDesignation || !Contact_no) {
@@ -555,11 +557,32 @@ export const createUser = async (req, res, next) => {
       return next(errorHandler(404, "Designation not found for this company"));
     }
 
+    // Validate cashier account type restrictions
+    if (accountType === "cashier") {
+      if (
+        !branchData ||
+        !Array.isArray(branchData) ||
+        branchData.length === 0
+      ) {
+        return next(
+          errorHandler(400, "Cashier account type requires exactly one branch")
+        );
+      }
+      if (branchData.length > 1) {
+        return next(
+          errorHandler(
+            400,
+            "Cashier account type can only be assigned to one branch"
+          )
+        );
+      }
+    }
+
     const tempPassword = Math.random().toString(36).slice(-8); // Generate a temporary password
     console.log("Temporary password generated:", tempPassword);
     // have to send this temp password to the user via email
     // For now, we will just log it to the console (In production, use a proper email service)
-    // console.log(`Temporary password for ${email}: ${tempPassword}`);
+    console.log(`Temporary password for ${Email}: ${tempPassword}`);
 
     const hashedPassword = await bcrypt.hash(tempPassword, 10); // Hash the temporary password
 
@@ -610,6 +633,43 @@ export const createUser = async (req, res, next) => {
             )
           );
         }
+      }
+    }
+
+    if (accountType && accountType === "cashier") {
+      const accountCode = Math.floor(
+        100000 + Math.random() * 900000
+      ).toString(); // generate a random 6 digit account code
+      // create a cashier account for the user - cashiers can only have one branch
+      const [cashierAccount] = await pool.query(
+        "INSERT INTO accounting_accounts (Account_Name, Account_Type, Created_At,Type,Group_Of_Type,User_idUser,Cashier_idCashier,Branch_idBranch,Account_Balance,Status,Account_Code) VALUES (?,?,NOW(),?,?,?,?,?,?,?,?)",
+        [
+          "Cashier Account - " + full_name,
+          "Cashier Account",
+          "Cashier",
+          "Cashier",
+          req.userId, // created userId
+          result.insertId,
+          branchData[0].idBranch, // cashier must have exactly one branch
+          0,
+          1,
+          accountCode,
+        ]
+      );
+      // create create account log...
+      await addAccountCreateLog(
+        cashierAccount.insertId,
+        "Account Creation - Cashier Account",
+        `Account Cashier Account-${full_name} with code ${accountCode} `,
+        0,
+        0,
+        0,
+        null,
+        req.userId
+      );
+
+      if (cashierAccount.affectedRows === 0) {
+        return next(errorHandler(500, "Failed to create cashier account"));
       }
     }
 

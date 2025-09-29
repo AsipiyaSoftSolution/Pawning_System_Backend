@@ -206,7 +206,7 @@ export const getArticleTypes = async (req, res, next) => {
     let paginationData;
     let articleTypes;
 
-    if (search && typeof search !== "string") {
+    if (search && typeof search === "string") {
       const searchPattern = formatSearchPattern(search); // helper function to format the search pattern
 
       paginationData = await getPaginationData(
@@ -221,18 +221,29 @@ export const getArticleTypes = async (req, res, next) => {
         "SELECT * FROM article_types WHERE Description LIKE ? AND Company_idCompany = ? LIMIT ? OFFSET ?",
         [`%${searchPattern}%`, req.companyId, limit, offset]
       );
+    } else {
+      paginationData = await getPaginationData(
+        "SELECT COUNT(*) as total FROM article_types WHERE Company_idCompany = ?",
+        [req.companyId],
+        page,
+        limit
+      );
+      [articleTypes] = await pool.query(
+        "SELECT * FROM article_types WHERE Company_idCompany = ? LIMIT ? OFFSET ?",
+        [req.companyId, limit, offset]
+      );
     }
 
-    paginationData = await getPaginationData(
-      "SELECT COUNT(*) as total FROM article_types WHERE Company_idCompany = ?",
-      [req.companyId],
-      page,
-      limit
-    );
-    [articleTypes] = await pool.query(
-      "SELECT * FROM article_types WHERE Company_idCompany = ? LIMIT ? OFFSET ?",
-      [req.companyId, limit, offset]
-    );
+    // Fetch categories for each article type
+    for (let i = 0; i < articleTypes.length; i++) {
+      const [categories] = await pool.query(
+        "SELECT * FROM article_categories WHERE Article_types_idArticle_types = ?",
+        [articleTypes[i].idArticle_Types]
+      );
+      
+      // Add categories as an array of description strings to each article type
+      articleTypes[i].categories = categories.map(cat => cat.Description);
+    }
 
     res.status(200).json({
       message: "Article types fetched successfully",
@@ -312,6 +323,13 @@ export const deleteArticleType = async (req, res, next) => {
       return next(errorHandler(404, "Article type not found to delete"));
     }
 
+    // First delete all associated article categories to avoid foreign key constraint violations
+    await pool.query(
+      "DELETE FROM article_categories WHERE Article_types_idArticle_types = ?",
+      [existingArticle[0].idArticle_Types]
+    );
+
+    // Then delete the article type
     const [result] = await pool.query(
       "DELETE FROM article_types WHERE idArticle_Types = ?",
       [existingArticle[0].idArticle_Types]
@@ -476,12 +494,12 @@ export const getArticleCategories = async (req, res, next) => {
       return next(errorHandler(400, "Article type ID is required"));
     }
 
-    if (search && typeof search !== "string") {
+    if (search && typeof search === "string") {
       const searchPattern = formatSearchPattern(search);
       // Get pagination data
       paginationData = await getPaginationData(
         "SELECT COUNT(*) as total FROM article_categories WHERE Article_types_idArticle_types = ? AND Description LIKE ?",
-        [articleTypeId, searchPattern],
+        [articleTypeId, `%${searchPattern}%`],
         page,
         limit
       );
@@ -491,19 +509,19 @@ export const getArticleCategories = async (req, res, next) => {
         "SELECT * FROM article_categories WHERE Article_types_idArticle_types = ? AND Description LIKE ? LIMIT ? OFFSET ?",
         [articleTypeId, `%${searchPattern}%`, limit, offset]
       );
+    } else {
+      paginationData = await getPaginationData(
+        "SELECT COUNT(*) as total FROM article_categories WHERE Article_types_idArticle_types = ?",
+        [articleTypeId],
+        page,
+        limit
+      );
+
+      [articleCategories] = await pool.query(
+        "SELECT * FROM article_categories WHERE Article_types_idArticle_types = ? LIMIT ? OFFSET ?",
+        [articleTypeId, limit, offset]
+      );
     }
-
-    paginationData = await getPaginationData(
-      "SELECT COUNT(*) as total FROM article_categories WHERE Article_types_idArticle_types = ?",
-      [articleTypeId],
-      page,
-      limit
-    );
-
-    [articleCategories] = await pool.query(
-      "SELECT * FROM article_categories WHERE Article_types_idArticle_types = ? LIMIT ? OFFSET ?",
-      [articleTypeId, limit, offset]
-    );
 
     res.status(200).json({
       message: "Article categories fetched successfully",

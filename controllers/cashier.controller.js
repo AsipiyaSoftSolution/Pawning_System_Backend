@@ -6,6 +6,7 @@ import {
   addCashierRegistryStartLog,
 } from "../utils/accounting.account.logs.js";
 
+// Start cashier registry for the day (Start or update if already started)
 export const startCashierRegistryForDay = async (req, res, next) => {
   let connection;
 
@@ -16,6 +17,17 @@ export const startCashierRegistryForDay = async (req, res, next) => {
         errorHandler(400, "fromAccountId, toAccountId and entries are required")
       );
     }
+    // validate accounts id's
+
+    if (fromAccountId === toAccountId) {
+      return next(
+        errorHandler(400, "from Account and to Account cannot be the same")
+      );
+    }
+
+    // Parse Account IDs to integers
+    const parsedFromAccountId = parseInt(fromAccountId, 10);
+    const parsedToAccountId = parseInt(toAccountId, 10);
 
     // Validate fromAccountId and toAccountId
     const [fromAccount] = await pool.query(
@@ -77,26 +89,27 @@ export const startCashierRegistryForDay = async (req, res, next) => {
     try {
       // deduct amount from fromAccount
       const newFromAccountBalance =
-        parseFloat(fromAccount[0].Account_Balance) - totalAmount;
+        parseFloat(fromAccount[0].Account_Balance) - parseFloat(totalAmount);
       await connection.query(
-        "UPDATE accounting_accounts SET Current_Balance = ? WHERE idAccounting_Accounts = ?",
+        "UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ?",
         [newFromAccountBalance, fromAccountId]
       );
 
       // add amount to toAccount
       const newToAccountBalance =
-        parseFloat(toAccount[0].Account_Balance) + totalAmount;
+        parseFloat(toAccount[0].Account_Balance) + parseFloat(totalAmount);
       await connection.query(
-        "UPDATE accounting_accounts SET Current_Balance = ? WHERE idAccounting_Accounts = ?",
+        "UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ?",
         [newToAccountBalance, toAccountId]
       );
 
       // add account transfer logs for both accounts
       await addAccountTransferLogs(
+        connection,
         fromAccountId,
         toAccountId,
-        fromAccount[0].Name,
-        toAccount[0].Name,
+        fromAccount[0].Account_Name,
+        toAccount[0].Account_Name,
         totalAmount,
         newFromAccountBalance,
         newToAccountBalance,
@@ -146,6 +159,7 @@ export const startCashierRegistryForDay = async (req, res, next) => {
 
         // Make a log entry for the cashier registry update
         await addCashierRegistryStartLog(
+          connection,
           toAccountId,
           "Cashier Registry Updated",
           `Cashier registry Updated. Total Amount: ${totalAmount}`,
@@ -192,6 +206,7 @@ export const startCashierRegistryForDay = async (req, res, next) => {
 
         // Make a log entry for the cashier registry start
         await addCashierRegistryStartLog(
+          connection,
           toAccountId,
           "Cashier Registry Start",
           `Cashier registry started for the day. Total Amount: ${totalAmount}`,
@@ -225,5 +240,69 @@ export const startCashierRegistryForDay = async (req, res, next) => {
     if (connection) {
       connection.release();
     }
+  }
+};
+
+// Send daily registry and daily registry cash entries of the day (started data and updated data if any)
+export const getTodayCashierRegistry = async (req, res, next) => {
+  try {
+    let startedRegistry;
+    let cashEntries = [];
+
+    let updatedRegistry;
+    let updatedCashEntries = [];
+
+    // Fetch the started registry for the day
+    const [startedRegistryResult] = await pool.query(
+      "SELECT dr.*, u.full_name as enteredUser FROM daily_registry dr JOIN user u ON dr.User_idUser = u.idUser WHERE dr.User_idUser = ? AND dr.Date = CURDATE() AND dr.Description = 'Day Start'",
+      [req.userId]
+    );
+
+    if (startedRegistryResult.length > 0) {
+      startedRegistry = startedRegistryResult[0];
+    }
+
+    // Fetch cash entries for the started registry
+    const [cashEntriesResult] = await pool.query(
+      "SELECT * FROM daily_registry_has_cash WHERE Daily_registry_idDaily_Registry = ?",
+      [startedRegistry ? startedRegistry.idDaily_Registry : 0]
+    );
+
+    if (cashEntriesResult.length > 0) {
+      cashEntries = cashEntriesResult;
+    }
+
+    // Fetch the updated registry for the day if any
+    const [updatedRegistryResult] = await pool.query(
+      "SELECT dr.*, u.full_name as enteredUser FROM daily_registry dr JOIN user on dr.User_idUser = u.idUser WHERE dr.User_idUser = ? AND dr.Date = CURDATE() AND Description = 'Day Start Updated'",
+      [req.userId]
+    );
+
+    if (updatedRegistryResult.length > 0) {
+      updatedRegistry = updatedRegistryResult[0];
+    }
+
+    // Fetch cash entries for the updated registry
+    const [updatedCashEntriesResult] = await pool.query(
+      "SELECT * FROM daily_registry_has_cash WHERE Daily_registry_idDaily_Registry = ?",
+      [updatedRegistry ? updatedRegistry.idDaily_Registry : 0]
+    );
+    if (updatedCashEntriesResult.length > 0) {
+      updatedCashEntries = updatedCashEntriesResult;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Today's cashier registry fetched successfully",
+      registryData: {
+        startedRegistry,
+        cashEntries,
+        updatedRegistry,
+        updatedCashEntries,
+      },
+    });
+  } catch (error) {
+    console.error("Get Today Cashier Registry error:", error);
+    return next(errorHandler(500, "Internal Server Error"));
   }
 };

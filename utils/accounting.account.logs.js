@@ -119,6 +119,7 @@ export const addAccountCreateLog = async (
 
 // create transfer logs for both accounts (from and to)
 export const addAccountTransferLogs = async (
+  connection,
   fromAccountId,
   toAccountId,
   fromAccountName,
@@ -132,7 +133,7 @@ export const addAccountTransferLogs = async (
 ) => {
   try {
     // Log for FROM account (debit)
-    await pool.query(
+    await connection.query(
       "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts, Date_Time, Type, Description, Debit, Credit, Balance, Contra_Account, User_idUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
       [
         fromAccountId,
@@ -148,7 +149,7 @@ export const addAccountTransferLogs = async (
     );
 
     // Log for TO account (credit)
-    await pool.query(
+    await connection.query(
       "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts, Date_Time, Type, Description, Debit, Credit, Balance, Contra_Account, User_idUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
       [
         toAccountId,
@@ -170,6 +171,7 @@ export const addAccountTransferLogs = async (
 
 // create a log to accounting_accounts_log when a cashier registry is started for the day
 export const addCashierRegistryStartLog = async (
+  connection,
   accountId,
   type,
   description,
@@ -180,7 +182,7 @@ export const addCashierRegistryStartLog = async (
   userId
 ) => {
   try {
-    const [result] = await pool.query(
+    const [result] = await connection.query(
       "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts,Date_Time,Type,Description,Debit,Credit,Balance,Contra_Account,User_idUser) VALUES(?,?,?,?,?,?,?,?,?)",
       [
         accountId,

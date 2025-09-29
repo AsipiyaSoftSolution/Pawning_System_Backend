@@ -3,7 +3,7 @@ import { pool } from "../utils/db.js";
 import { getPaginationData } from "../utils/helper.js";
 
 // Create a new account
-export const createAccount = async (req, res) => {
+export const createAccount = async (req, res, next) => {
   try {
     const { accountType, accountName, accountCode, accountNo, note } = req.body;
     if (!accountType || !accountName || !accountCode) {
@@ -50,7 +50,7 @@ export const createAccount = async (req, res) => {
     }
 
     const [createdAccount] = await pool.query(
-      "SELECT u.full_name AS Created_By, aa.Account_Type, aa.Account_Name, aa.Account_Code, aa.Account_Balance, aa.Note  FROM accounting_accounts aa JOIN user u ON aa.User_idUser = u.idUser WHERE aa.idAccounting_Accounts = ?",
+      "SELECT u.full_name AS Created_By, aa.idAccounting_Accounts ,aa.Account_Type, aa.Account_Name, aa.Account_Code, aa.Account_Balance, aa.Note  FROM accounting_accounts aa JOIN user u ON aa.User_idUser = u.idUser WHERE aa.idAccounting_Accounts = ?",
       [result.insertId]
     );
 
@@ -207,7 +207,7 @@ export const getAccountsForBranch = async (req, res, next) => {
 
     // Get accounts data
     const [accounts] = await pool.query(
-      `SELECT  aa.Account_Type, aa.Account_Name, aa.Account_Code, aa.Account_Balance, aa.Note , u.full_name AS Created_By 
+      `SELECT  aa.idAccounting_Accounts,aa.Account_Type,aa.Account_Number, aa.Account_Name, aa.Account_Code, aa.Account_Balance, aa.Note , u.full_name AS Created_By 
              FROM accounting_accounts aa 
              JOIN user u ON aa.User_idUser = u.idUser 
              WHERE aa.Branch_idBranch = ? 

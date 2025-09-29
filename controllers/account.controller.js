@@ -379,13 +379,39 @@ export const transferBetweenAccounts = async (req, res, next) => {
         transferDate
       );
 
+      // Get user's full name for the response
+      const [userInfo] = await conn.query(
+        "SELECT full_name FROM user WHERE idUser = ?",
+        [req.userId]
+      );
+
       // Commit transaction
       await conn.commit();
       conn.release();
 
+      // Return complete transfer record information to manage state on frontend
       res.status(200).json({
         success: true,
         message: "Transfer completed successfully",
+        transfer: {
+          transfer_date: transferDate
+            .toISOString()
+            .slice(0, 19)
+            .replace("T", " "),
+          from_account: {
+            id: fromAccountIdNum,
+            name: fromAccount[0].Account_Name,
+            new_balance: newFromBalance,
+          },
+          to_account: {
+            id: toAccountIdNum,
+            name: toAccount[0].Account_Name,
+            new_balance: newToBalance,
+          },
+          amount: transferAmount,
+          reason: reason || null,
+          processed_by: userInfo[0]?.full_name || "Unknown User",
+        },
       });
     } catch (error) {
       await conn.rollback();

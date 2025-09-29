@@ -6,7 +6,7 @@ import { startCashierRegistryForDay } from "../controllers/cashier.controller.js
 const route = express.Router();
 
 route.post(
-  "/start-cashier-registry",
+  "/:branchId/cashier-registry-start-or-update",
   protectedRoute,
   checkUserBranchAccess,
   startCashierRegistryForDay

@@ -582,3 +582,54 @@ export const createPawningTicketLogOnAdditionalCharge = async (
     throw new Error("Error creating additional charge ticket log");
   }
 };
+
+// create a log when a ticket is approved
+export const createPawningTicketLogOnApprovalandLoanDisbursement = async (
+  ticketId,
+  typeId,
+  type,
+  description,
+  userId
+) => {
+  try {
+    // get the lastest ticket log
+    const [latestLogResult] = await pool.query(
+      "SELECT * FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? ORDER BY idTicket_Log DESC LIMIT 1",
+      [ticketId]
+    );
+
+    const latestAdvanceBalance =
+      parseFloat(latestLogResult[0]?.Advance_Balance) || 0;
+    const latestInterestBalance =
+      parseFloat(latestLogResult[0]?.Interest_Balance) || 0;
+    const latestServiceChargeBalance =
+      parseFloat(latestLogResult[0]?.Service_Charge_Balance) || 0;
+    const latestLateChargesBalance =
+      parseFloat(latestLogResult[0]?.Late_Charges_Balance) || 0;
+    const latestAdditionalChargeBalance =
+      parseFloat(latestLogResult[0]?.Aditional_Charge_Balance) || 0;
+    const latestAmount = parseFloat(latestLogResult[0]?.Amount) || 0;
+    const latestTotalBalance =
+      parseFloat(latestLogResult[0]?.Total_Balance) || 0;
+
+    const [result] = await pool.query(
+      "INSERT INTO ticket_log (Pawning_Ticket_idPawning_Ticket, Type, Type_Id, Description, Amount, Advance_Balance, Interest_Balance, Service_Charge_Balance, Late_Charges_Balance, Aditional_Charge_Balance, Total_Balance, User_idUser, Date_Time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())",
+      [
+        ticketId,
+        type,
+        typeId,
+        description,
+        latestAmount,
+        latestAdvanceBalance,
+        latestInterestBalance,
+        latestServiceChargeBalance,
+        latestLateChargesBalance,
+        latestAdditionalChargeBalance,
+        latestTotalBalance,
+        userId,
+      ]
+    );
+  } catch (error) {
+    throw new Error("Error creating approval ticket log");
+  }
+};

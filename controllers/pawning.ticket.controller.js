@@ -6,6 +6,7 @@ import {
   createPawningTicketLogOnCreate,
   markServiceChargeInTicketLog,
   addTicketLogsByTicketId,
+  createPawningTicketLogOnApprovalandLoanDisbursement,
 } from "../utils/pawning.ticket.logs.js";
 import { createCustomerLogOnCreateTicket } from "../utils/customer.logs.js";
 import { formatSearchPattern } from "../utils/helper.js";
@@ -1013,6 +1014,15 @@ export const approvePawningTicket = async (req, res, next) => {
       );
     }
 
+    // create a log in ticket log for approval action
+    await createPawningTicketLogOnApprovalandLoanDisbursement(
+      ticketIdToUpdate,
+      approvalResult.insertId,
+      "APPROVE-TICKET",
+      req.body.note || "Ticket approved",
+      req.userId
+    );
+
     res.status(200).json({
       success: true,
       ticketId: ticketIdToUpdate,
@@ -1201,15 +1211,35 @@ export const getApprovedPawningTickets = async (req, res, next) => {
 
 // make approved ticket as active once we disburse the loan
 export const activatePawningTicket = async (req, res, next) => {
+  let connection;
   try {
     const ticketId = req.params.id || req.params.ticketId;
+    const { fromAccountId, amount } = req.body;
     if (!ticketId) {
       return next(errorHandler(400, "Ticket ID is required"));
     }
 
+    if (!fromAccountId) {
+      return next(errorHandler(400, "From Account ID is required"));
+    }
+
+    if (!amount || isNaN(amount) || Number(amount) <= 0) {
+      return next(errorHandler(400, "A valid disbursement amount is required"));
+    }
+
+    // check if there is a valid from account
+    const [fromAccount] = await pool.query(
+      "SELECT idAccounting_Accounts, Account_Type, Account_Balance, Cashier_idCashier, Branch_idBranch FROM accounting_accounts WHERE idAccounting_Accounts = ? AND Branch_idBranch = ?",
+      [fromAccountId, req.branchId]
+    );
+
+    if (fromAccount.length === 0) {
+      return next(errorHandler(404, "From Account not found"));
+    }
+
     // Check if the ticket exists and is approved
     const [existingTicketRow] = await pool.query(
-      "SELECT Status,idPawning_Ticket FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+      "SELECT Status,idPawning_Ticket,Pawning_Advance_Amount FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
       [ticketId, req.branchId]
     );
 
@@ -1227,23 +1257,364 @@ export const activatePawningTicket = async (req, res, next) => {
 
     const ticketIdToUpdate = existingTicketRow[0].idPawning_Ticket;
 
-    // Update the ticket status to active (1)
-    const [result] = await pool.query(
-      "UPDATE pawning_ticket SET Status = '1' WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
-      [ticketIdToUpdate, req.branchId]
-    );
-
-    if (result.affectedRows === 0) {
-      return next(errorHandler(500, "Failed to activate the ticket"));
+    // check if the disbursement amount is not more than the approved advance amount
+    if (amount > parseFloat(existingTicketRow[0].Pawning_Advance_Amount)) {
+      return next(
+        errorHandler(
+          400,
+          "Disbursement amount cannot be more than the approved advance amount"
+        )
+      );
     }
 
+    // check if the account has sufficient balance
+    if (amount > parseFloat(fromAccount[0].Account_Balance)) {
+      return next(
+        errorHandler(400, "Insufficient balance in the selected account")
+      );
+    }
+
+    // begin transaction
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    // check if from Account is either cashier account or not
+    if (fromAccount[0].Account_Type === "Cashier") {
+      // check if this user is assigned to this cashier account
+      if (
+        fromAccount[0].Cashier_idCashier !== req.userId ||
+        fromAccount[0].Branch_idBranch !== req.branchId
+      ) {
+        await connection.rollback();
+        connection.release();
+        return next(
+          errorHandler(
+            403,
+            "You are not authorized to use this cashier account"
+          )
+        );
+      }
+
+      // Update the ticket status to active (1)
+      const [result] = await connection.query(
+        "UPDATE pawning_ticket SET Status = '1' WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+        [ticketIdToUpdate, req.branchId]
+      );
+
+      const balanceAfterDisbursement = parseFloat(
+        fromAccount[0].Account_Balance - amount
+      );
+
+      // deduct the amount from the cashier account balance
+      const [updateAccountResult] = await connection.query(
+        "UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ? AND Branch_idBranch = ? AND Cashier_idCashier = ?",
+        [balanceAfterDisbursement, fromAccountId, req.branchId, req.userId]
+      );
+
+      if (result.affectedRows === 0 || updateAccountResult.affectedRows === 0) {
+        await connection.rollback();
+        connection.release();
+        return next(errorHandler(500, "Failed to activate the ticket"));
+      }
+
+      // insert a credit log to accounting accounting logs
+      const [accountingLogResult] = await connection.query(
+        "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts, Date_Time, Type, Description, Debit, Credit, Balance, Contra_Account, User_idUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+          fromAccountId,
+          new Date(),
+          "Ticket Loan Disbursement",
+          `Loan disbursement for ticket #${ticketIdToUpdate}`,
+          0,
+          amount,
+          balanceAfterDisbursement,
+          null,
+          req.userId,
+        ]
+      );
+    } else {
+      // check if the specific branch has the permission to use non-cashier accounts for disbursements
+      if (fromAccount[0].Branch_idBranch !== req.branchId) {
+        await connection.rollback();
+        connection.release();
+        return next(
+          errorHandler(
+            403,
+            "You are not authorized to use this account from this branch"
+          )
+        );
+      }
+
+      // Update the ticket status to active (1)
+      const [result] = await connection.query(
+        "UPDATE pawning_ticket SET Status = '1' WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+        [ticketIdToUpdate, req.branchId]
+      );
+
+      if (result.affectedRows === 0) {
+        await connection.rollback();
+        connection.release();
+        return next(errorHandler(500, "Failed to activate the ticket"));
+      }
+
+      const balanceAfterDisbursement = parseFloat(
+        fromAccount[0].Account_Balance - amount
+      );
+      // deduct the amount from the account balance
+      const [updateAccountResult] = await connection.query(
+        "UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ? AND Branch_idBranch = ?",
+        [balanceAfterDisbursement, fromAccountId, req.branchId]
+      );
+
+      if (updateAccountResult.affectedRows === 0) {
+        await connection.rollback();
+        connection.release();
+        return next(errorHandler(500, "Failed to update account balance"));
+      }
+
+      // insert a credit log to accounting accounting logs
+      const [accountingLogResult] = await connection.query(
+        "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts, Date_Time, Type, Description, Debit, Credit, Balance, Contra_Account, User_idUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+          fromAccountId,
+          new Date(),
+          "Ticket Loan Disbursement",
+          `Loan disbursement for ticket #${ticketIdToUpdate}`,
+          0,
+          amount,
+          balanceAfterDisbursement,
+          null,
+          req.userId,
+        ]
+      );
+    }
+
+    // create a log in ticket log for loan disbursement action
+    await createPawningTicketLogOnApprovalandLoanDisbursement(
+      existingTicketRow[0].idPawning_Ticket,
+      null,
+      "LOAN-DISBURSEMENT",
+      "Ticket activated and loan disbursed",
+      req.userId
+    );
+
+    await connection.commit();
+    connection.release();
     res.status(200).json({
       success: true,
       ticketId: ticketIdToUpdate,
-      message: "Pawning ticket activated successfully.",
+      message: "Pawning ticket activated and loan disbursed successfully.",
     });
   } catch (error) {
+    if (connection) {
+      await connection.rollback();
+      connection.release();
+    }
     console.error("Error in activatePawningTicket:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// send active (1) pawning tickets
+export const sendActiveTickets = async (req, res, next) => {
+  try {
+    const { product, start_date, end_date, nic } = req.query;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    // Build base WHERE conditions for both count and data queries
+    let baseWhereConditions = "pt.Branch_idBranch = ? AND pt.Status = '1'";
+    let countParams = [req.branchId];
+    let dataParams = [req.branchId];
+
+    // Add filter conditions dynamically
+    if (product) {
+      // Sanitize product name for LIKE query
+      const sanitizedProduct = `%${product.replace(/[%_\\]/g, "\\$&")}%`;
+      baseWhereConditions += " AND pp.Name LIKE ?";
+      countParams.push(sanitizedProduct);
+      dataParams.push(sanitizedProduct);
+    }
+
+    if (start_date) {
+      // Validate date format (YYYY-MM-DD)
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRegex.test(start_date)) {
+        return next(
+          errorHandler(400, "Invalid start_date format. Use YYYY-MM-DD")
+        );
+      }
+      baseWhereConditions +=
+        " AND DATE(STR_TO_DATE(pt.Date_Time, '%Y-%m-%d %H:%i:%s')) >= ?";
+      countParams.push(start_date);
+      dataParams.push(start_date);
+    }
+
+    if (end_date) {
+      // Validate date format (YYYY-MM-DD)
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRegex.test(end_date)) {
+        return next(
+          errorHandler(400, "Invalid end_date format. Use YYYY-MM-DD")
+        );
+      }
+      baseWhereConditions +=
+        " AND DATE(STR_TO_DATE(pt.Date_Time, '%Y-%m-%d %H:%i:%s')) <= ?";
+      countParams.push(end_date);
+      dataParams.push(end_date);
+    }
+
+    // Validate date range if both dates are provided
+    if (start_date && end_date) {
+      if (new Date(start_date) > new Date(end_date)) {
+        return next(errorHandler(400, "start_date cannot be after end_date"));
+      }
+    }
+
+    if (nic) {
+      // Sanitize and format NIC for SQL LIKE query
+      const sanitizedNIC = nic.replace(/[^a-zA-Z0-9]/g, ""); // Remove special characters
+
+      const formattedNIC = formatSearchPattern(sanitizedNIC);
+      baseWhereConditions += " AND c.NIC LIKE ?";
+      countParams.push(formattedNIC);
+      dataParams.push(formattedNIC);
+    }
+
+    // Build count query with same conditions as main query
+    const countQuery = `SELECT COUNT(*) AS total
+                        FROM pawning_ticket pt
+                 LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
+                 LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product 
+                       WHERE ${baseWhereConditions}`;
+    const paginationData = await getPaginationData(
+      countQuery,
+      countParams,
+      page,
+      limit
+    );
+
+    // Build main data query - fetch ticket data with customer NIC and product name
+    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, pt.Pawning_Advance_Amount, pt.Status, c.Full_name, c.NIC, c.Mobile_No, pp.Name AS ProductName
+                  FROM pawning_ticket pt
+            LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
+            LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product
+                  WHERE ${baseWhereConditions}
+               ORDER BY pt.idPawning_Ticket DESC LIMIT ? OFFSET ?`;
+    dataParams.push(limit, offset);
+
+    const [tickets] = await pool.query(query, dataParams);
+
+    res.status(200).json({
+      success: true,
+      tickets: tickets || [],
+      pagination: paginationData,
+    });
+  } catch (error) {
+    console.error("Error in getApprovedPawningTickets:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// send settled (2) pawning tickets
+export const sendSettledTickets = async (req, res, next) => {
+  try {
+    const { product, start_date, end_date, nic } = req.query;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    // Build base WHERE conditions for both count and data queries
+    let baseWhereConditions = "pt.Branch_idBranch = ? AND pt.Status = '2'";
+    let countParams = [req.branchId];
+    let dataParams = [req.branchId];
+
+    // Add filter conditions dynamically
+    if (product) {
+      // Sanitize product name for LIKE query
+      const sanitizedProduct = `%${product.replace(/[%_\\]/g, "\\$&")}%`;
+      baseWhereConditions += " AND pp.Name LIKE ?";
+      countParams.push(sanitizedProduct);
+      dataParams.push(sanitizedProduct);
+    }
+
+    if (start_date) {
+      // Validate date format (YYYY-MM-DD)
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRegex.test(start_date)) {
+        return next(
+          errorHandler(400, "Invalid start_date format. Use YYYY-MM-DD")
+        );
+      }
+      baseWhereConditions +=
+        " AND DATE(STR_TO_DATE(pt.Date_Time, '%Y-%m-%d %H:%i:%s')) >= ?";
+      countParams.push(start_date);
+      dataParams.push(start_date);
+    }
+
+    if (end_date) {
+      // Validate date format (YYYY-MM-DD)
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRegex.test(end_date)) {
+        return next(
+          errorHandler(400, "Invalid end_date format. Use YYYY-MM-DD")
+        );
+      }
+      baseWhereConditions +=
+        " AND DATE(STR_TO_DATE(pt.Date_Time, '%Y-%m-%d %H:%i:%s')) <= ?";
+      countParams.push(end_date);
+      dataParams.push(end_date);
+    }
+
+    // Validate date range if both dates are provided
+    if (start_date && end_date) {
+      if (new Date(start_date) > new Date(end_date)) {
+        return next(errorHandler(400, "start_date cannot be after end_date"));
+      }
+    }
+
+    if (nic) {
+      // Sanitize and format NIC for SQL LIKE query
+      const sanitizedNIC = nic.replace(/[^a-zA-Z0-9]/g, ""); // Remove special characters
+
+      const formattedNIC = formatSearchPattern(sanitizedNIC);
+      baseWhereConditions += " AND c.NIC LIKE ?";
+      countParams.push(formattedNIC);
+      dataParams.push(formattedNIC);
+    }
+
+    // Build count query with same conditions as main query
+    const countQuery = `SELECT COUNT(*) AS total
+                        FROM pawning_ticket pt
+                 LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
+                 LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product 
+                       WHERE ${baseWhereConditions}`;
+    const paginationData = await getPaginationData(
+      countQuery,
+      countParams,
+      page,
+      limit
+    );
+
+    // Build main data query - fetch ticket data with customer NIC and product name
+    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, pt.Pawning_Advance_Amount, pt.Status, c.Full_name, c.NIC, c.Mobile_No, pp.Name AS ProductName
+                  FROM pawning_ticket pt
+            LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
+            LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product
+                  WHERE ${baseWhereConditions}
+               ORDER BY pt.idPawning_Ticket DESC LIMIT ? OFFSET ?`;
+    dataParams.push(limit, offset);
+
+    const [tickets] = await pool.query(query, dataParams);
+
+    res.status(200).json({
+      success: true,
+      tickets: tickets || [],
+      pagination: paginationData,
+    });
+  } catch (error) {
+    console.error("Error in getApprovedPawningTickets:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

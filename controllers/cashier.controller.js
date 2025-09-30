@@ -257,13 +257,11 @@ export const getTodayCashierRegistry = async (req, res, next) => {
   try {
     let startedRegistry = null;
     let cashEntries = [];
-
     let updatedRegistries = [];
-    let allUpdatedCashEntries = [];
 
     // Fetch the started registry for the day
     const [startedRegistryResult] = await pool.query(
-      "SELECT dr.*, u.full_name as enteredUser FROM daily_registry dr JOIN user u ON dr.User_idUser = u.idUser WHERE dr.User_idUser = ? AND dr.Date = CURDATE() AND dr.Description = 'Day Start' ORDER BY dr.Time DESC LIMIT 1",
+      "SELECT dr.idDaily_Registry, dr.Date, dr.Time, dr.Description, dr.Total_Amount, dr.Created_at, u.full_name as enteredUser FROM daily_registry dr JOIN user u ON dr.User_idUser = u.idUser WHERE dr.User_idUser = ? AND dr.Date = CURDATE() AND dr.Description = 'Day Start' ORDER BY dr.Time DESC LIMIT 1",
       [req.userId]
     );
 
@@ -272,38 +270,31 @@ export const getTodayCashierRegistry = async (req, res, next) => {
 
       // Fetch cash entries for the started registry
       const [cashEntriesResult] = await pool.query(
-        "SELECT * FROM daily_registry_has_cash WHERE Daily_registry_idDaily_Registry = ?",
+        "SELECT Denomination, Quantity, Amount FROM daily_registry_has_cash WHERE Daily_registry_idDaily_Registry = ? ORDER BY Denomination DESC",
         [startedRegistry.idDaily_Registry]
       );
 
-      if (cashEntriesResult.length > 0) {
-        cashEntries = cashEntriesResult;
-      }
+      cashEntries = cashEntriesResult;
     }
 
     // Fetch ALL updated registries for the day (can be multiple)
     const [updatedRegistriesResult] = await pool.query(
-      "SELECT dr.*, u.full_name as enteredUser FROM daily_registry dr JOIN user u ON dr.User_idUser = u.idUser WHERE dr.User_idUser = ? AND dr.Date = CURDATE() AND dr.Description = 'Day Start Updated' ORDER BY dr.Time ASC",
+      "SELECT dr.idDaily_Registry, dr.Time, dr.Description, dr.Total_Amount, dr.Created_at, u.full_name as enteredUser FROM daily_registry dr JOIN user u ON dr.User_idUser = u.idUser WHERE dr.User_idUser = ? AND dr.Date = CURDATE() AND dr.Description = 'Day Start Updated' ORDER BY dr.Time ASC",
       [req.userId]
     );
 
     if (updatedRegistriesResult.length > 0) {
-      updatedRegistries = updatedRegistriesResult;
-
       // Fetch cash entries for each updated registry
-      for (const registry of updatedRegistries) {
+      for (const registry of updatedRegistriesResult) {
         const [updatedCashEntriesResult] = await pool.query(
-          "SELECT * FROM daily_registry_has_cash WHERE Daily_registry_idDaily_Registry = ?",
+          "SELECT Denomination, Quantity, Amount FROM daily_registry_has_cash WHERE Daily_registry_idDaily_Registry = ? ORDER BY Denomination DESC",
           [registry.idDaily_Registry]
         );
 
-        if (updatedCashEntriesResult.length > 0) {
-          allUpdatedCashEntries.push({
-            registryId: registry.idDaily_Registry,
-            registryTime: registry.Time,
-            entries: updatedCashEntriesResult,
-          });
-        }
+        updatedRegistries.push({
+          ...registry,
+          cashEntries: updatedCashEntriesResult,
+        });
       }
     }
 
@@ -338,7 +329,7 @@ export const getTodayCashierRegistry = async (req, res, next) => {
       };
     });
 
-    // Add started registry cash entries
+    // Add started registry cash entries to summary
     cashEntries.forEach((entry) => {
       const denom = parseInt(entry.Denomination);
       if (denominationSummary[denom]) {
@@ -348,9 +339,9 @@ export const getTodayCashierRegistry = async (req, res, next) => {
       }
     });
 
-    // Add all updated registries cash entries
-    allUpdatedCashEntries.forEach((registryEntries) => {
-      registryEntries.entries.forEach((entry) => {
+    // Add all updated registries cash entries to summary
+    updatedRegistries.forEach((registry) => {
+      registry.cashEntries.forEach((entry) => {
         const denom = parseInt(entry.Denomination);
         if (denominationSummary[denom]) {
           denominationSummary[denom].totalQuantity +=
@@ -376,7 +367,6 @@ export const getTodayCashierRegistry = async (req, res, next) => {
         startedRegistry,
         cashEntries,
         updatedRegistries,
-        updatedCashEntries: allUpdatedCashEntries,
         totalCashierBalanceAddedToday,
         denominationSummary: denominationSummaryArray,
         summaryStats: {

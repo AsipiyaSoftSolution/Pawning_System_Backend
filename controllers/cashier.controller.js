@@ -252,60 +252,122 @@ export const startCashierRegistryForDay = async (req, res, next) => {
   }
 };
 
-// Send daily registry and daily registry cash entries of the day (started data and updated data if any) and total balance of cashier account
+// Send daily registry and daily registry cash entries of the day (started data and updated data if any)
 export const getTodayCashierRegistry = async (req, res, next) => {
   try {
-    let startedRegistry;
+    let startedRegistry = null;
     let cashEntries = [];
 
-    let updatedRegistry;
-    let updatedCashEntries = [];
+    let updatedRegistries = [];
+    let allUpdatedCashEntries = [];
 
     // Fetch the started registry for the day
     const [startedRegistryResult] = await pool.query(
-      "SELECT dr.*, u.full_name as enteredUser FROM daily_registry dr JOIN user u ON dr.User_idUser = u.idUser WHERE dr.User_idUser = ? AND dr.Date = CURDATE() AND dr.Description = 'Day Start'",
+      "SELECT dr.*, u.full_name as enteredUser FROM daily_registry dr JOIN user u ON dr.User_idUser = u.idUser WHERE dr.User_idUser = ? AND dr.Date = CURDATE() AND dr.Description = 'Day Start' ORDER BY dr.Time DESC LIMIT 1",
       [req.userId]
     );
 
     if (startedRegistryResult.length > 0) {
       startedRegistry = startedRegistryResult[0];
+
+      // Fetch cash entries for the started registry
+      const [cashEntriesResult] = await pool.query(
+        "SELECT * FROM daily_registry_has_cash WHERE Daily_registry_idDaily_Registry = ?",
+        [startedRegistry.idDaily_Registry]
+      );
+
+      if (cashEntriesResult.length > 0) {
+        cashEntries = cashEntriesResult;
+      }
     }
 
-    // Fetch cash entries for the started registry
-    const [cashEntriesResult] = await pool.query(
-      "SELECT * FROM daily_registry_has_cash WHERE Daily_registry_idDaily_Registry = ?",
-      [startedRegistry ? startedRegistry.idDaily_Registry : 0]
-    );
-
-    if (cashEntriesResult.length > 0) {
-      cashEntries = cashEntriesResult;
-    }
-
-    // Fetch the updated registry for the day if any
-    const [updatedRegistryResult] = await pool.query(
-      "SELECT dr.*, u.full_name as enteredUser FROM daily_registry dr JOIN user u ON dr.User_idUser = u.idUser WHERE dr.User_idUser = ? AND dr.Date = CURDATE() AND dr.Description = 'Day Start Updated'",
+    // Fetch ALL updated registries for the day (can be multiple)
+    const [updatedRegistriesResult] = await pool.query(
+      "SELECT dr.*, u.full_name as enteredUser FROM daily_registry dr JOIN user u ON dr.User_idUser = u.idUser WHERE dr.User_idUser = ? AND dr.Date = CURDATE() AND dr.Description = 'Day Start Updated' ORDER BY dr.Time ASC",
       [req.userId]
     );
 
-    if (updatedRegistryResult.length > 0) {
-      updatedRegistry = updatedRegistryResult[0];
+    if (updatedRegistriesResult.length > 0) {
+      updatedRegistries = updatedRegistriesResult;
+
+      // Fetch cash entries for each updated registry
+      for (const registry of updatedRegistries) {
+        const [updatedCashEntriesResult] = await pool.query(
+          "SELECT * FROM daily_registry_has_cash WHERE Daily_registry_idDaily_Registry = ?",
+          [registry.idDaily_Registry]
+        );
+
+        if (updatedCashEntriesResult.length > 0) {
+          allUpdatedCashEntries.push({
+            registryId: registry.idDaily_Registry,
+            registryTime: registry.Time,
+            entries: updatedCashEntriesResult,
+          });
+        }
+      }
     }
 
-    // Fetch cash entries for the updated registry
-    const [updatedCashEntriesResult] = await pool.query(
-      "SELECT * FROM daily_registry_has_cash WHERE Daily_registry_idDaily_Registry = ?",
-      [updatedRegistry ? updatedRegistry.idDaily_Registry : 0]
-    );
-    if (updatedCashEntriesResult.length > 0) {
-      updatedCashEntries = updatedCashEntriesResult;
+    // Calculate total cashier balance added today
+    let totalCashierBalanceAddedToday = 0;
+
+    // Add started registry amount
+    if (startedRegistry) {
+      totalCashierBalanceAddedToday +=
+        parseFloat(startedRegistry.Total_Amount) || 0;
     }
 
-    let totalCashierBalanceAddedToday = startedRegistry
-      ? parseFloat(startedRegistry.Total_Amount)
-      : 0;
-    totalCashierBalanceAddedToday += updatedRegistry
-      ? parseFloat(updatedRegistry.Total_Amount)
-      : 0;
+    // Add all updated registries amounts
+    updatedRegistries.forEach((registry) => {
+      totalCashierBalanceAddedToday += parseFloat(registry.Total_Amount) || 0;
+    });
+
+    // Round to 2 decimal places to avoid floating point errors
+    totalCashierBalanceAddedToday =
+      Math.round(totalCashierBalanceAddedToday * 100) / 100;
+
+    // Calculate total by denomination across all registries
+    const denominationSummary = {};
+    const validDenominations = [1, 2, 5, 10, 50, 100, 500, 1000, 5000];
+
+    // Initialize denomination summary
+    validDenominations.forEach((denom) => {
+      denominationSummary[denom] = {
+        denomination: denom,
+        totalQuantity: 0,
+        totalAmount: 0,
+      };
+    });
+
+    // Add started registry cash entries
+    cashEntries.forEach((entry) => {
+      const denom = parseInt(entry.Denomination);
+      if (denominationSummary[denom]) {
+        denominationSummary[denom].totalQuantity +=
+          parseInt(entry.Quantity) || 0;
+        denominationSummary[denom].totalAmount += parseFloat(entry.Amount) || 0;
+      }
+    });
+
+    // Add all updated registries cash entries
+    allUpdatedCashEntries.forEach((registryEntries) => {
+      registryEntries.entries.forEach((entry) => {
+        const denom = parseInt(entry.Denomination);
+        if (denominationSummary[denom]) {
+          denominationSummary[denom].totalQuantity +=
+            parseInt(entry.Quantity) || 0;
+          denominationSummary[denom].totalAmount +=
+            parseFloat(entry.Amount) || 0;
+        }
+      });
+    });
+
+    // Convert denomination summary to array and filter out zero quantities
+    const denominationSummaryArray = Object.values(denominationSummary)
+      .filter((item) => item.totalQuantity > 0)
+      .map((item) => ({
+        ...item,
+        totalAmount: Math.round(item.totalAmount * 100) / 100,
+      }));
 
     res.status(200).json({
       success: true,
@@ -313,9 +375,14 @@ export const getTodayCashierRegistry = async (req, res, next) => {
       registryData: {
         startedRegistry,
         cashEntries,
-        updatedRegistry,
-        updatedCashEntries,
+        updatedRegistries,
+        updatedCashEntries: allUpdatedCashEntries,
         totalCashierBalanceAddedToday,
+        denominationSummary: denominationSummaryArray,
+        summaryStats: {
+          totalRegistries: (startedRegistry ? 1 : 0) + updatedRegistries.length,
+          totalUpdates: updatedRegistries.length,
+        },
       },
     });
   } catch (error) {

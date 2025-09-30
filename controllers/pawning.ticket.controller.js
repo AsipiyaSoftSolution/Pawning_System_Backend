@@ -697,6 +697,8 @@ export const getTicketDataById = async (req, res, next) => {
     let customerData;
     let articleItems;
     let balanceLogs;
+    let paymentHistory;
+    let ticketLogs;
 
     [ticketData] = await pool.query(
       "SELECT * FROM pawning_ticket WHERE idPawning_Ticket = ? AND  Branch_idBranch = ?",
@@ -787,6 +789,22 @@ export const getTicketDataById = async (req, res, next) => {
       return next(errorHandler(404, "No balance log found for the ticket"));
     }
 
+    // fetch payment history for the ticket
+    [paymentHistory] = await pool.query(
+      "SELECT p.Date_Time, p.Type, p.Amount, p.Description, u.full_name FROM payment p LEFT JOIN user u ON p.User = u.idUser WHERE p.Ticket_no = ? ORDER BY STR_TO_DATE(p.Date_Time, '%Y-%m-%d %H:%i:%s') DESC",
+      [String(ticketData[0].Ticket_No)]
+    );
+
+    // fetch ticket logs for the ticket
+    [ticketLogs] = await pool.query(
+      `SELECT tl.*, u.full_name 
+         FROM ticket_log tl
+    LEFT JOIN user u ON tl.User_idUser = u.idUser
+        WHERE tl.Pawning_Ticket_idPawning_Ticket = ? 
+     ORDER BY tl.idTicket_Log ASC`,
+      [ticketData[0].idPawning_Ticket]
+    );
+
     res.status(200).json({
       success: true,
       ticketData: {
@@ -794,6 +812,8 @@ export const getTicketDataById = async (req, res, next) => {
         customerData: customerData[0],
         articleItems,
         balanceData: balanceLogs[0],
+        paymentHistory: paymentHistory || [],
+        ticketLogs: ticketLogs || [],
       },
     });
   } catch (error) {

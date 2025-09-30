@@ -17,8 +17,8 @@ export const startCashierRegistryForDay = async (req, res, next) => {
         errorHandler(400, "fromAccountId, toAccountId and entries are required")
       );
     }
-    // validate accounts id's
 
+    // validate accounts id's
     if (fromAccountId === toAccountId) {
       return next(
         errorHandler(400, "from Account and to Account cannot be the same")
@@ -48,18 +48,15 @@ export const startCashierRegistryForDay = async (req, res, next) => {
     }
 
     // bills and coins available in Sri Lanka
-    const denomination = [1, 2, 5, 10, 50, 100, 500, 1000, 5000];
+    const validDenominations = [1, 2, 5, 10, 50, 100, 500, 1000, 5000];
 
     // validate entries
     for (const entry of entries) {
-      if (!entry.amount || entry.amount <= 0) {
-        return next(errorHandler(400, "Amount must be greater than 0"));
-      }
-
-      if (entry.denomination && entry.denomination <= 0) {
+      if (!entry.denomination || entry.denomination <= 0) {
         return next(errorHandler(400, "Denomination must be greater than 0"));
       }
-      if (entry.denomination && !denomination.includes(entry.denomination)) {
+
+      if (!validDenominations.includes(entry.denomination)) {
         return next(
           errorHandler(400, `Denomination ${entry.denomination} is not valid`)
         );
@@ -68,16 +65,27 @@ export const startCashierRegistryForDay = async (req, res, next) => {
       if (!entry.quantity || entry.quantity <= 0) {
         return next(errorHandler(400, "Quantity must be greater than 0"));
       }
+
+      // Ensure quantity is an integer
+      if (!Number.isInteger(entry.quantity)) {
+        return next(errorHandler(400, "Quantity must be a whole number"));
+      }
     }
 
-    // Calculate total amount from entries
+    // Calculate total amount from entries (denomination × quantity)
     let totalAmount = 0;
     entries.forEach((entry) => {
-      totalAmount += entry.amount * entry.quantity;
+      const entryAmount =
+        parseFloat(entry.denomination) * parseInt(entry.quantity);
+      totalAmount += entryAmount;
     });
 
+    // Round to 2 decimal places to avoid floating point errors
+    totalAmount = Math.round(totalAmount * 100) / 100;
+
     // Check if transfer from account has sufficient balance
-    if (parseFloat(fromAccount[0].Account_Balance) < parseFloat(totalAmount)) {
+    const fromAccountBalance = parseFloat(fromAccount[0].Account_Balance);
+    if (fromAccountBalance < totalAmount) {
       return next(
         errorHandler(400, "Insufficient balance in Transfer From Account")
       );
@@ -89,15 +97,16 @@ export const startCashierRegistryForDay = async (req, res, next) => {
     try {
       // deduct amount from fromAccount
       const newFromAccountBalance =
-        parseFloat(fromAccount[0].Account_Balance) - parseFloat(totalAmount);
+        Math.round((fromAccountBalance - totalAmount) * 100) / 100;
       await connection.query(
         "UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ?",
         [newFromAccountBalance, fromAccountId]
       );
 
       // add amount to toAccount
+      const toAccountBalance = parseFloat(toAccount[0].Account_Balance);
       const newToAccountBalance =
-        parseFloat(toAccount[0].Account_Balance) + parseFloat(totalAmount);
+        Math.round((toAccountBalance + totalAmount) * 100) / 100;
       await connection.query(
         "UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ?",
         [newToAccountBalance, toAccountId]
@@ -126,7 +135,7 @@ export const startCashierRegistryForDay = async (req, res, next) => {
       if (existingRegistry.length > 0) {
         // insert entries to daily_registry and daily_registry_has_cash tables
         const [dailyRegistryResult] = await connection.query(
-          "INSERT INTO daily_registry (Date,Time, Description, User_idUser,Total_Amount) VALUES (CURDATE(), CURTIME(), ?, ?,?)",
+          "INSERT INTO daily_registry (Date, Time, Description, User_idUser, Total_Amount) VALUES (CURDATE(), CURTIME(), ?, ?, ?)",
           ["Day Start Updated", req.userId, totalAmount]
         );
 
@@ -139,14 +148,14 @@ export const startCashierRegistryForDay = async (req, res, next) => {
 
         const dailyRegistryId = dailyRegistryResult.insertId;
         for (const entry of entries) {
+          const entryAmount =
+            Math.round(
+              parseFloat(entry.denomination) * parseInt(entry.quantity) * 100
+            ) / 100;
+
           const result = await connection.query(
             "INSERT INTO daily_registry_has_cash (Daily_registry_idDaily_Registry, Denomination, Quantity, Amount) VALUES (?, ?, ?, ?)",
-            [
-              dailyRegistryId,
-              entry.denomination,
-              entry.quantity,
-              entry.amount * entry.quantity,
-            ]
+            [dailyRegistryId, entry.denomination, entry.quantity, entryAmount]
           );
 
           if (!result || result[0].affectedRows === 0) {
@@ -173,7 +182,7 @@ export const startCashierRegistryForDay = async (req, res, next) => {
         // if no existing registry, this is going to be the first registry for the day
         // insert entries to daily_registry and daily_registry_has_cash tables
         const [dailyRegistryResult] = await connection.query(
-          "INSERT INTO daily_registry (Date,Time, Description, User_idUser,Total_Amount) VALUES (CURDATE(), CURTIME(), ?, ?,?)",
+          "INSERT INTO daily_registry (Date, Time, Description, User_idUser, Total_Amount) VALUES (CURDATE(), CURTIME(), ?, ?, ?)",
           ["Day Start", req.userId, totalAmount]
         );
 
@@ -186,14 +195,14 @@ export const startCashierRegistryForDay = async (req, res, next) => {
 
         const dailyRegistryId = dailyRegistryResult.insertId;
         for (const entry of entries) {
+          const entryAmount =
+            Math.round(
+              parseFloat(entry.denomination) * parseInt(entry.quantity) * 100
+            ) / 100;
+
           const result = await connection.query(
             "INSERT INTO daily_registry_has_cash (Daily_registry_idDaily_Registry, Denomination, Quantity, Amount) VALUES (?, ?, ?, ?)",
-            [
-              dailyRegistryId,
-              entry.denomination,
-              entry.quantity,
-              entry.amount * entry.quantity,
-            ]
+            [dailyRegistryId, entry.denomination, entry.quantity, entryAmount]
           );
 
           if (!result || result[0].affectedRows === 0) {
@@ -243,7 +252,7 @@ export const startCashierRegistryForDay = async (req, res, next) => {
   }
 };
 
-// Send daily registry and daily registry cash entries of the day (started data and updated data if any)
+// Send daily registry and daily registry cash entries of the day (started data and updated data if any) and total balance of cashier account
 export const getTodayCashierRegistry = async (req, res, next) => {
   try {
     let startedRegistry;
@@ -291,6 +300,13 @@ export const getTodayCashierRegistry = async (req, res, next) => {
       updatedCashEntries = updatedCashEntriesResult;
     }
 
+    let totalCashierBalanceAddedToday = startedRegistry
+      ? parseFloat(startedRegistry.Total_Amount)
+      : 0;
+    totalCashierBalanceAddedToday += updatedRegistry
+      ? parseFloat(updatedRegistry.Total_Amount)
+      : 0;
+
     res.status(200).json({
       success: true,
       message: "Today's cashier registry fetched successfully",
@@ -299,6 +315,7 @@ export const getTodayCashierRegistry = async (req, res, next) => {
         cashEntries,
         updatedRegistry,
         updatedCashEntries,
+        totalCashierBalanceAddedToday,
       },
     });
   } catch (error) {

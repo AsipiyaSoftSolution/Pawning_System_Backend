@@ -4,6 +4,9 @@ import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
 import {
   startCashierRegistryForDay,
   getTodayCashierRegistry,
+  getCashierAccountLogsData,
+  getCashierDashboardSummary,
+  getCashierDenominationSummary,
 } from "../controllers/cashier.controller.js";
 
 const route = express.Router();
@@ -24,4 +27,27 @@ route.get(
   getTodayCashierRegistry
 );
 
+// Get cashier account logs data for current date to cashier dashboard for the current day
+route.get(
+  "/:branchId/cashier-account-logs-current-date/:accountId",
+  protectedRoute,
+  checkUserBranchAccess,
+  getCashierAccountLogsData
+);
+
+// Get cashier dashboard summary data for the day
+route.get(
+  "/:branchId/cashier-dashboard-summary/:accountId",
+  protectedRoute,
+  checkUserBranchAccess,
+  getCashierDashboardSummary
+);
+
+// Get cashier denomination summary data for the day
+route.get(
+  "/:branchId/cashier-denomination-summary/:accountId",
+  protectedRoute,
+  checkUserBranchAccess,
+  getCashierDenominationSummary
+);
 export default route;

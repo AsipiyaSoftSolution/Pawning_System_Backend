@@ -380,3 +380,200 @@ export const getTodayCashierRegistry = async (req, res, next) => {
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
+
+// send cashier account logs of the day with pagination to cashier dashboard
+export const getCashierAccountLogsData = async (req, res, next) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    const cashierAccountId = req.params.accountId || req.params.id;
+
+    if (!cashierAccountId) {
+      return next(errorHandler(400, "Cashier Account ID is required"));
+    }
+
+    // validate account id
+    const [account] = await pool.query(
+      "SELECT * FROM accounting_accounts WHERE idAccounting_Accounts = ? AND Branch_idBranch = ?",
+      [cashierAccountId, req.branchId]
+    );
+
+    if (account.length === 0) {
+      return next(errorHandler(400, "Invalid Cashier Account ID"));
+    }
+
+    // validate pagination params
+    if (page <= 0 || limit <= 0) {
+      return next(
+        errorHandler(400, "Page and limit must be positive integers")
+      );
+    }
+
+    // Get total count of logs for pagination
+    const paginationData = await getPaginationData(
+      "SELECT COUNT(*) as total FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND STR_TO_DATE(Date_Time, '%Y-%m-%d') = CURDATE()",
+      [cashierAccountId],
+      page,
+      limit
+    );
+
+    // get log data
+    const [logs] = await pool.query(
+      "SELECT aal.*, u.full_name as enteredUser FROM accounting_accounts_log aal JOIN user u ON aal.User_idUser = u.idUser WHERE aal.Accounting_Accounts_idAccounting_Accounts = ? AND STR_TO_DATE(Date_Time, '%Y-%m-%d') = CURDATE()  ORDER BY aal.idAccounting_Accounts_Log DESC LIMIT ? OFFSET ?",
+      [cashierAccountId, limit, offset]
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Cashier Account Logs fetched successfully",
+      logs,
+      pagination: paginationData,
+    });
+  } catch (error) {
+    console.error("Get Cashier Account Logs Data error:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// Send day start registry balance, current balance,ticket issued amount and payment received amount for the the current day
+export const getCashierDashboardSummary = async (req, res, next) => {
+  try {
+    const cashierAccountId = req.params.accountId || req.params.id;
+    if (!cashierAccountId) {
+      return next(errorHandler(400, "Cashier Account ID is required"));
+    }
+
+    // validate account id
+    const [account] = await pool.query(
+      "SELECT * FROM accounting_accounts WHERE idAccounting_Accounts = ? AND Branch_idBranch = ?",
+      [cashierAccountId, req.branchId]
+    );
+
+    if (account.length === 0) {
+      return next(errorHandler(400, "Invalid Cashier Account ID"));
+    }
+
+    const currentBalance = parseFloat(account[0].Account_Balance) || 0; // assign current balance from account balance
+
+    let dayStartBalance = 0;
+    // get day start registry balance for today
+    const [dayStartRegistry] = await pool.query(
+      "SELECT Total_Amount FROM daily_registry WHERE User_idUser = ? AND Date = CURDATE() AND Description = 'Day Start' ORDER BY Time DESC LIMIT 1",
+      [req.userId]
+    );
+
+    if (dayStartRegistry.length > 0) {
+      dayStartBalance = parseFloat(dayStartRegistry[0].Total_Amount) || 0;
+    }
+
+    // get total ticket issued amount for today
+    let ticketIssuedAmount = 0;
+    const [ticketIssues] = await pool.query(
+      "SELECT SUM(CAST(Credit AS DECIMAL(10,2))) as totalIssued FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND User_idUser = ? AND Type = 'Pawning Ticket Issued' AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d %H:%i:%s')) = CURDATE()",
+      [cashierAccountId, req.userId]
+    );
+
+    if (ticketIssues.length > 0) {
+      ticketIssuedAmount = parseFloat(ticketIssues[0].totalIssued) || 0;
+    }
+    // get payment received amount for today (to be implemented)
+    let paymentReceivedAmount = 0;
+
+    res.status(200).json({
+      success: true,
+      message: "Cashier Dashboard Summary fetched successfully",
+      summary: {
+        dayStartBalance,
+        currentBalance,
+        ticketIssuedAmount,
+        paymentReceivedAmount,
+      },
+    });
+  } catch (error) {
+    console.error("Get Cashier Dashboard Summary error:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// Send all cashier account's denomination summary (denomination,quantity and amount) for the current day
+export const getCashierDenominationSummary = async (req, res, next) => {
+  try {
+    const cashierAccountId = req.params.accountId || req.params.id;
+    if (!cashierAccountId) {
+      return next(errorHandler(400, "Cashier Account ID is required"));
+    }
+
+    // validate account id
+    const [account] = await pool.query(
+      "SELECT * FROM accounting_accounts WHERE idAccounting_Accounts = ? AND Branch_idBranch = ?",
+      [cashierAccountId, req.branchId]
+    );
+
+    if (account.length === 0) {
+      return next(errorHandler(400, "Invalid Cashier Account ID"));
+    }
+
+    // bills and coins available in Sri Lanka
+    const validDenominations = [1, 2, 5, 10, 50, 100, 500, 1000, 5000];
+    const denominationSummary = {};
+    // Initialize denomination summary
+    validDenominations.forEach((denom) => {
+      denominationSummary[denom] = {
+        denomination: denom,
+        totalQuantity: 0,
+        totalAmount: 0,
+      };
+    });
+
+    // get all daily registries for today
+    const [dailyRegistries] = await pool.query(
+      "SELECT idDaily_Registry FROM daily_registry WHERE User_idUser = ? AND Date = CURDATE()",
+      [req.userId]
+    );
+
+    if (dailyRegistries.length > 0) {
+      // for each registry get cash entries and add to summary
+      for (const registry of dailyRegistries) {
+        const [cashEntries] = await pool.query(
+          "SELECT Denomination, Quantity, Amount FROM daily_registry_has_cash WHERE Daily_registry_idDaily_Registry = ?",
+          [registry.idDaily_Registry]
+        );
+        cashEntries.forEach((entry) => {
+          const denom = parseInt(entry.Denomination);
+          if (denominationSummary[denom]) {
+            denominationSummary[denom].totalQuantity +=
+              parseInt(entry.Quantity) || 0;
+            denominationSummary[denom].totalAmount +=
+              parseFloat(entry.Amount) || 0;
+          }
+        });
+      }
+
+      // Convert denomination summary to array and filter out zero quantities
+      const denominationSummaryArray = Object.values(denominationSummary)
+        .filter((item) => item.totalQuantity > 0)
+        .map((item) => ({
+          ...item,
+          totalAmount: Math.round(item.totalAmount * 100) / 100,
+        }));
+
+      res.status(200).json({
+        success: true,
+        message: "Cashier Denomination Summary fetched successfully",
+        denominationSummary: denominationSummaryArray,
+      });
+    } else {
+      // no registries found for today
+      res.status(200).json({
+        success: true,
+        message: "No cashier registries found for today",
+        denominationSummary: [],
+      });
+    }
+  } catch (error) {
+    console.error("Get Cashier Denomination Summary error:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};

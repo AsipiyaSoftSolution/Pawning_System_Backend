@@ -168,3 +168,40 @@ export const addAccountTransferLogs = async (
     throw new Error("Failed to create account transfer logs");
   }
 };
+
+// create a log to accounting_accounts_log when a cashier registry is started for the day
+export const addCashierRegistryStartLog = async (
+  connection,
+  accountId,
+  type,
+  description,
+  debit,
+  credit,
+  balance,
+  contra_account,
+  userId
+) => {
+  try {
+    const [result] = await connection.query(
+      "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts,Date_Time,Type,Description,Debit,Credit,Balance,Contra_Account,User_idUser) VALUES(?,?,?,?,?,?,?,?,?)",
+      [
+        accountId,
+        new Date(),
+        type,
+        description,
+        debit,
+        credit,
+        balance,
+        contra_account,
+        userId,
+      ]
+    );
+
+    if (result.affectedRows === 0) {
+      throw new Error("Failed to create cashier registry start log");
+    }
+  } catch (error) {
+    console.error("Error creating cashier registry start log:", error);
+    throw new Error("Failed to create cashier registry start log");
+  }
+};

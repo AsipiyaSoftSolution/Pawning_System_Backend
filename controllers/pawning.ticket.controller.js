@@ -795,6 +795,16 @@ export const getTicketDataById = async (req, res, next) => {
       [String(ticketData[0].Ticket_No)]
     );
 
+    // fetch ticket logs for the ticket
+    [ticketLogs] = await pool.query(
+      `SELECT tl.*, u.full_name 
+         FROM ticket_log tl
+    LEFT JOIN user u ON tl.User_idUser = u.idUser
+        WHERE tl.Pawning_Ticket_idPawning_Ticket = ? 
+     ORDER BY tl.idTicket_Log ASC`,
+      [ticketData[0].idPawning_Ticket]
+    );
+
     res.status(200).json({
       success: true,
       ticketData: {
@@ -803,6 +813,7 @@ export const getTicketDataById = async (req, res, next) => {
         articleItems,
         balanceData: balanceLogs[0],
         paymentHistory: paymentHistory || [],
+        ticketLogs: ticketLogs || [],
       },
     });
   } catch (error) {

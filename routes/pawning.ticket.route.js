@@ -19,6 +19,8 @@ import {
   rejectPawningTicket,
   getApprovedPawningTickets,
   activatePawningTicket,
+  sendActiveTickets,
+  sendSettledTickets,
 } from "../controllers/pawning.ticket.controller.js";
 const router = express.Router();
 
@@ -144,4 +146,18 @@ router.patch(
   checkUserBranchAccess,
   activatePawningTicket
 ); // Activate a pawning ticket
+
+router.get(
+  "/:branchId/active-tickets",
+  protectedRoute,
+  checkUserBranchAccess,
+  sendActiveTickets
+); // Get all active pawning tickets
+
+router.get(
+  "/:branchId/settled-tickets",
+  protectedRoute,
+  checkUserBranchAccess,
+  sendSettledTickets
+); // Get all overdue pawning tickets
 export default router;

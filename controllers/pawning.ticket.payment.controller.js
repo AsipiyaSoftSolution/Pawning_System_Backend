@@ -668,12 +668,26 @@ export const createPaymentForTicket = async (req, res, next) => {
 export const createTicketRenewalPayment = async (req, res, next) => {
   try {
     const ticketId = req.params.id || req.params.ticketId;
-    const { paymentAmount } = req.body;
+    const { paymentAmount, toAccountId } = req.body;
     if (!ticketId) {
       return next(errorHandler(400, "Ticket ID is required"));
     }
     if (!paymentAmount || isNaN(paymentAmount) || paymentAmount <= 0) {
       return next(errorHandler(400, "Valid part payment amount is required"));
+    }
+
+    if (!toAccountId) {
+      return next(errorHandler(400, "To Account ID is required"));
+    }
+
+    // validate toAccountId exists in the accounts table
+    const [accountData] = await pool.query(
+      "SELECT * FROM accounting_accounts WHERE idAccounting_Accounts = ?",
+      [toAccountId]
+    );
+
+    if (accountData.length === 0) {
+      return next(errorHandler(400, "Invalid To Account ID"));
     }
 
     // check if the ticket exists and belongs to the branch
@@ -868,6 +882,31 @@ export const createTicketRenewalPayment = async (req, res, next) => {
     if (updatePaymentResult.affectedRows === 0) {
       return next(errorHandler(500, "Failed to update payment details"));
     }
+
+    // update the balance of the toAccountId in the accounting_accounts table by increasing the balance
+    let currentBalance = parseFloat(accountData[0].Account_Balance) || 0;
+    currentBalance += parseFloat(paymentAmount); // increase the balance
+    // update the account balance in acocunting_accounts table
+    const [updateAccountResult] = await pool.query(
+      "UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ?",
+      [currentBalance, toAccountId]
+    );
+
+    // add a debit entry to accounting_accounts_log table
+    const [accountLogResult] = await pool.query(
+      "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts,Date_Time,Type,Description,Debit,Credit,Balance,Contra_Account,User_idUser) VALUES (?,?,?,?,?,?,?,?,?)",
+      [
+        toAccountId,
+        new Date(),
+        "Ticket Renewal Payment",
+        `Customer Renewal Payment (Ticket No: ${existingTicket[0].Ticket_No})`,
+        paymentAmount,
+        0,
+        currentBalance,
+        null,
+        req.userId,
+      ]
+    );
 
     res.status(201).json({
       success: true,

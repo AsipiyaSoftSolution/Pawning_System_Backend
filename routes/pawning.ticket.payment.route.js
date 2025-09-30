@@ -10,6 +10,7 @@ import {
   createPaymentForTicket,
   createTicketRenewalPayment,
   updatePawningTicketNote,
+  createTicketSettlementPayment,
 } from "../controllers/pawning.ticket.payment.controller.js";
 
 const route = express.Router();
@@ -55,6 +56,13 @@ route.post(
   checkUserBranchAccess,
   createPaymentForTicket
 ); // Create payment for ticket  (Part Payment)
+
+route.post(
+  "/:branchId/ticket/:ticketId/settlement-payment",
+  protectedRoute,
+  checkUserBranchAccess,
+  createTicketSettlementPayment
+); // Create settlement payment for ticket
 
 route.post(
   "/:branchId/ticket/:ticketId/renewal-payment",

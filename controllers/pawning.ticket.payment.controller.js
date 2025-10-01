@@ -1253,3 +1253,91 @@ export const updatePawningTicketNote = async (req, res, next) => {
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
+
+// get tickets payment histories data for the branch
+export const getTicketsPaymentsHistory = async (req, res, next) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+    const { start_date, end_date } = req.query;
+
+    // Build base WHERE conditions
+    let baseWhereConditions = "pt.Branch_idBranch = ?";
+    let countParams = [req.branchId];
+    let dataParams = [req.branchId];
+
+    // Add date filter conditions dynamically
+    if (start_date) {
+      // Validate date format (YYYY-MM-DD)
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRegex.test(start_date)) {
+        return next(
+          errorHandler(400, "Invalid start_date format. Use YYYY-MM-DD")
+        );
+      }
+      baseWhereConditions +=
+        " AND DATE(STR_TO_DATE(p.Date_time, '%Y-%m-%d %H:%i:%s')) >= ?";
+      countParams.push(start_date);
+      dataParams.push(start_date);
+    }
+
+    if (end_date) {
+      // Validate date format (YYYY-MM-DD)
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRegex.test(end_date)) {
+        return next(
+          errorHandler(400, "Invalid end_date format. Use YYYY-MM-DD")
+        );
+      }
+      baseWhereConditions +=
+        " AND DATE(STR_TO_DATE(p.Date_time, '%Y-%m-%d %H:%i:%s')) <= ?";
+      countParams.push(end_date);
+      dataParams.push(end_date);
+    }
+
+    // Validate date range if both dates are provided
+    if (start_date && end_date) {
+      if (new Date(start_date) > new Date(end_date)) {
+        return next(errorHandler(400, "start_date cannot be after end_date"));
+      }
+    }
+
+    // Build count query
+    const countQuery = `SELECT COUNT(*) AS total 
+                        FROM payment p
+                        JOIN pawning_ticket pt ON p.Ticket_no COLLATE utf8mb4_unicode_ci = pt.Ticket_No COLLATE utf8mb4_unicode_ci
+                        WHERE ${baseWhereConditions}`;
+
+    const paginationData = await getPaginationData(
+      countQuery,
+      countParams,
+      page,
+      limit
+    );
+
+    // Build main data query
+    const dataQuery = `SELECT p.*, u.full_name AS officerName, pt.idPawning_Ticket, pt.Status AS Ticket_Status
+                       FROM payment p
+                       JOIN pawning_ticket pt ON p.Ticket_no COLLATE utf8mb4_unicode_ci = pt.Ticket_No COLLATE utf8mb4_unicode_ci
+                       LEFT JOIN user u ON p.User = u.idUser
+                       WHERE ${baseWhereConditions}
+                       ORDER BY STR_TO_DATE(p.Date_time, '%Y-%m-%d %H:%i:%s') DESC
+                       LIMIT ? OFFSET ?`;
+
+    dataParams.push(limit, offset);
+
+    const [payments] = await pool.query(dataQuery, dataParams);
+
+    console.log(payments, "tickets payments history");
+
+    res.status(200).json({
+      success: true,
+      payments: payments || [],
+      pagination: paginationData,
+    });
+  } catch (error) {
+    console.error("Error fetching ticket payment history:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};

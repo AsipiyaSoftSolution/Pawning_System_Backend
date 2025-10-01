@@ -11,6 +11,7 @@ import {
   createTicketRenewalPayment,
   updatePawningTicketNote,
   createTicketSettlementPayment,
+  getTicketsPaymentsHistory,
 } from "../controllers/pawning.ticket.payment.controller.js";
 
 const route = express.Router();
@@ -77,5 +78,13 @@ route.patch(
   checkUserBranchAccess,
   updatePawningTicketNote
 ); // Update ticket note
+
+// get all tickets payment histories data for the branch
+route.get(
+  "/:branchId/tickets-payments-history",
+  protectedRoute,
+  checkUserBranchAccess,
+  getTicketsPaymentsHistory
+);
 
 export default route;

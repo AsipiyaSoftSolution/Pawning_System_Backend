@@ -1317,10 +1317,12 @@ export const getTicketsPaymentsHistory = async (req, res, next) => {
     );
 
     // Build main data query
-    const dataQuery = `SELECT p.*, u.full_name AS officerName, pt.idPawning_Ticket, pt.Status AS Ticket_Status
+    const dataQuery = `SELECT p.*, u.full_name AS officerName, pt.idPawning_Ticket, pt.Status AS Ticket_Status, 
+                              c.Full_name AS customerName, c.NIC AS customerNIC, c.Mobile_No AS customerMobile
                        FROM payment p
                        JOIN pawning_ticket pt ON p.Ticket_no COLLATE utf8mb4_unicode_ci = pt.Ticket_No COLLATE utf8mb4_unicode_ci
                        LEFT JOIN user u ON p.User = u.idUser
+                       LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
                        WHERE ${baseWhereConditions}
                        ORDER BY STR_TO_DATE(p.Date_time, '%Y-%m-%d %H:%i:%s') DESC
                        LIMIT ? OFFSET ?`;

@@ -2,6 +2,10 @@ import { errorHandler } from "../utils/errorHandler.js";
 import { pool } from "../utils/db.js";
 import bcrypt from "bcryptjs";
 import { jwtToken, generatePasswordResetToken } from "../utils/helper.js";
+import {
+  sendPasswordResetEmail,
+  sendPasswordResetSuccessEmail,
+} from "../utils/mailConfig.js";
 
 // This function retrieves user information without the password when giving user id
 // It also retrieves the user's designation, company, branches, and company documents
@@ -196,7 +200,7 @@ export const forgetPassword = async (req, res, next) => {
     }
 
     const [existingUser] = await pool.query(
-      "SELECT idUser FROM user WHERE Email = ?",
+      "SELECT idUser,full_name FROM user WHERE Email = ?",
       [email]
     );
 
@@ -213,15 +217,31 @@ export const forgetPassword = async (req, res, next) => {
       "UPDATE user SET Reset_Password_Token = ?,Reset_Password_Token_Expires_At = ? WHERE idUser = ?",
       [token, tokenExpiry, existingUser[0].idUser]
     );
-
-    // send the email with the token
+    // reset url
     const resetUrl = `${process.env.CLIENT_URL}/reset-password/${token}/${existingUser[0].idUser}`;
-    console.log(`Password reset link (send this via email): ${resetUrl}`);
 
-    // have to implement email service to send the email
+    // Send the password reset email
+    const emailSent = await sendPasswordResetEmail(
+      email,
+      resetUrl,
+      existingUser[0].full_name
+    );
+
+    if (!emailSent) {
+      console.error("Failed to send password reset email to:", email);
+      return next(
+        errorHandler(
+          500,
+          "Failed to send password reset email. Please try again."
+        )
+      );
+    }
+
+    console.log(`✓ Password reset email sent successfully to: ${email}`);
 
     res.status(200).json({
-      message: "Password reset link has been sent to your email",
+      success: true,
+      message: "Password reset link has been sent to your email address",
     });
   } catch (error) {
     console.error("Forget password error:", error);
@@ -274,7 +294,7 @@ export const resetPassword = async (req, res, next) => {
 
     // find there is a user with the token and userId and the token is not expired
     const [user] = await pool.query(
-      "SELECT idUser,Reset_Password_Token,Reset_Password_Token_Expires_At FROM user WHERE idUser = ? ",
+      "SELECT idUser,Email,full_name,Reset_Password_Token,Reset_Password_Token_Expires_At FROM user WHERE idUser = ? ",
       [userId]
     );
 
@@ -300,9 +320,25 @@ export const resetPassword = async (req, res, next) => {
       return next(errorHandler(500, "Failed to update password"));
     }
 
-    // send the success email later
+    // Send password reset success email
+    const emailSent = await sendPasswordResetSuccessEmail(
+      user[0].Email,
+      user[0].full_name
+    );
+
+    if (!emailSent) {
+      console.error(
+        "Failed to send password reset success email to:",
+        user[0].Email
+      );
+      // Don't fail the password reset if email fails, just log it
+    } else {
+      console.log(`✓ Password reset success email sent to: ${user[0].Email}`);
+    }
+
     res.status(200).json({
-      message: "Password has been reset successfully",
+      success: true,
+      message: "Password has been reset successfully.",
     });
   } catch (error) {
     console.error("Reset password error:", error);

@@ -3,6 +3,7 @@ import { pool } from "../utils/db.js";
 import bcrypt from "bcrypt";
 import { getPaginationData, formatSearchPattern } from "../utils/helper.js";
 import { addAccountCreateLog } from "../utils/accounting.account.logs.js";
+import { sendWelcomeEmail } from "../utils/mailConfig.js";
 
 // Get COmpany Details
 export const getCompanyDetails = async (req, res, next) => {
@@ -241,9 +242,9 @@ export const getArticleTypes = async (req, res, next) => {
         "SELECT * FROM article_categories WHERE Article_types_idArticle_types = ?",
         [articleTypes[i].idArticle_Types]
       );
-      
+
       // Add categories as an array of description strings to each article type
-      articleTypes[i].categories = categories.map(cat => cat.Description);
+      articleTypes[i].categories = categories.map((cat) => cat.Description);
     }
 
     res.status(200).json({
@@ -689,6 +690,12 @@ export const createUser = async (req, res, next) => {
       if (cashierAccount.affectedRows === 0) {
         return next(errorHandler(500, "Failed to create cashier account"));
       }
+    }
+
+    // Send welcome email with temporary password
+    const emailSent = await sendWelcomeEmail(Email, full_name);
+    if (!emailSent) {
+      console.error("Failed to send welcome email to the user");
     }
 
     res.status(201).json({

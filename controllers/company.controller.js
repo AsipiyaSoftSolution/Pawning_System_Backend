@@ -1153,7 +1153,7 @@ export const getBranchData = async (req, res, next) => {
 };
 
 // Format type for customer number and pawning ticket number
-const availableFormatTypes = ["customize", "auto"];
+const availableFormatTypes = ["Custom Format", "Format"];
 
 // Create or update company customer number fomats and pawning ticket number formats in the company
 export const updateCustomerNumberFormat = async (req, res, next) => {
@@ -1265,15 +1265,22 @@ export const updatePawningTicketNumberFormat = async (req, res, next) => {
     let result;
     if (existingFormat.length > 0) {
       // Update existing record
-      [result] = await pool.query(
-        "UPDATE pawning_ticket_format SET format_type = ?, format = ?, auto_generate_start_from = ? WHERE company_id = ?",
-        [
-          pawningTicketNumberFormatType,
-          pawningTicketNumberFormat,
-          pawningTicketNumberAutoGenerateStartFrom || 1,
-          req.companyId,
-        ]
-      );
+      if (pawningTicketNumberFormatType === "Custom Format") {
+        [result] = await pool.query(
+          "UPDATE pawning_ticket_format SET format_type = ?, format = ?, auto_generate_start_from = ? WHERE company_id = ?",
+          [pawningTicketNumberFormatType, null, null, req.companyId]
+        );
+      } else {
+        [result] = await pool.query(
+          "UPDATE pawning_ticket_format SET format_type = ?, format = ?, auto_generate_start_from = ? WHERE company_id = ?",
+          [
+            pawningTicketNumberFormatType,
+            pawningTicketNumberFormat,
+            pawningTicketNumberAutoGenerateStartFrom || 1,
+            req.companyId,
+          ]
+        );
+      }
     } else {
       // Insert new record
       [result] = await pool.query(

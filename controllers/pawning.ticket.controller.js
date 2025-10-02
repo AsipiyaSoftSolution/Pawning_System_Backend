@@ -159,7 +159,7 @@ export const createPawningTicket = async (req, res, next) => {
         data.ticketData.payableValue,
         data.ticketData.pawningAdvance,
         data.ticketData.interestRate,
-        data.ticketData.serviceCharge,
+        serviceChargeRate, // service charge rate
         data.ticketData.lateChargePercent,
         data.ticketData.interestApplyOn,
         req.userId,
@@ -167,7 +167,8 @@ export const createPawningTicket = async (req, res, next) => {
         data.ticketData.productId,
         data.ticketData.pawningAdvance, // as total amount
         productData[0]?.Service_Charge_Value_Type || "unknown",
-        serviceChargeRate, // service charge rate
+        data.ticketData.serviceCharge, // service charge rate
+        ,
         0, // initial early settlement charge balance set to 0
         0, // initial additional charges balance set to 0
         0, // initial service charge balance set to 0
@@ -270,7 +271,7 @@ export const createPawningTicket = async (req, res, next) => {
       ticketId,
       "SERVICE CHARGE",
       req.userId,
-      data.ticketData.serviceCharge
+      serviceChargeRate // service charge amount
     );
 
     // create customer log for ticket creation

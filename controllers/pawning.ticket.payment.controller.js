@@ -146,20 +146,9 @@ export const getTicketDataById = async (req, res, next) => {
 
     // get ticket payment history from ticket payment table
     [paymentHistory] = await pool.query(
-      "SELECT idTicket_payment,Date_Time,Payment_Type,Paid_Amount,User_idUser FROM ticket_payment WHERE Pawning_Ticket_idPawning_Ticket = ? ",
-      [ticketData[0].idPawning_Ticket]
+      "SELECT p.Date_Time, p.Type, p.Amount, p.Description, u.full_name FROM payment p LEFT JOIN user u ON p.User = u.idUser WHERE p.Ticket_no = ? ORDER BY STR_TO_DATE(p.Date_Time, '%Y-%m-%d %H:%i:%s') DESC",
+      [String(ticketData[0].Ticket_No)]
     );
-
-    // get the officer name for each payment entry
-    for (let payment of paymentHistory) {
-      const [officerData] = await pool.query(
-        "SELECT full_name FROM user WHERE idUser = ?",
-        [payment.User_idUser]
-      );
-      payment.officerName = officerData[0]?.full_name || "Unknown Officer"; // attach officer name to payment data
-      // remove User_idUser from payment entry
-      delete payment.User_idUser;
-    }
 
     let earlySettlementCharge = 0;
     // find the early settlement charge value

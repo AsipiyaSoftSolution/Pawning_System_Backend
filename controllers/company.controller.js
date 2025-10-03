@@ -1153,7 +1153,7 @@ export const getBranchData = async (req, res, next) => {
 };
 
 // Format type for customer number and pawning ticket number
-const availableFormatTypes = ["customize", "auto"];
+const availableFormatTypes = ["Custom Format", "Format"];
 
 // Create or update company customer number fomats and pawning ticket number formats in the company
 export const updateCustomerNumberFormat = async (req, res, next) => {
@@ -1265,15 +1265,22 @@ export const updatePawningTicketNumberFormat = async (req, res, next) => {
     let result;
     if (existingFormat.length > 0) {
       // Update existing record
-      [result] = await pool.query(
-        "UPDATE pawning_ticket_format SET format_type = ?, format = ?, auto_generate_start_from = ? WHERE company_id = ?",
-        [
-          pawningTicketNumberFormatType,
-          pawningTicketNumberFormat,
-          pawningTicketNumberAutoGenerateStartFrom || 1,
-          req.companyId,
-        ]
-      );
+      if (pawningTicketNumberFormatType === "Custom Format") {
+        [result] = await pool.query(
+          "UPDATE pawning_ticket_format SET format_type = ?, format = ?, auto_generate_start_from = ? WHERE company_id = ?",
+          [pawningTicketNumberFormatType, null, null, req.companyId]
+        );
+      } else {
+        [result] = await pool.query(
+          "UPDATE pawning_ticket_format SET format_type = ?, format = ?, auto_generate_start_from = ? WHERE company_id = ?",
+          [
+            pawningTicketNumberFormatType,
+            pawningTicketNumberFormat,
+            pawningTicketNumberAutoGenerateStartFrom || 1,
+            req.companyId,
+          ]
+        );
+      }
     } else {
       // Insert new record
       [result] = await pool.query(
@@ -1447,6 +1454,32 @@ export const deleteArticleCondition = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Error deleting article condition:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// get all privilages
+export const getAllPrivilages = async (req, res, next) => {
+  try {
+    const [privilages] = await pool.query(
+      "SELECT idUser_privilages,Description FROM user_privilages"
+    );
+
+    if (privilages.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: "No privilages found for this company",
+        privilages: [],
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Privilages fetched successfully",
+      privilages,
+    });
+  } catch (error) {
+    console.error("Error fetching privilages:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

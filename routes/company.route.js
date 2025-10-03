@@ -30,10 +30,12 @@ import {
   getAllUsersForTheBranch,
   updateUser,
   createTESTUser,
+  getAllPrivilages,
 } from "../controllers/company.controller.js";
 const route = express.Router();
 
 route.get("/", protectedRoute, getCompanyDetails); // Get company details
+route.get("/privileges", protectedRoute, getAllPrivilages); // Get all privileges that can be assigned to designations
 route.post("/designation", protectedRoute, creteDesignation); // create new designation
 route.get("/designations", protectedRoute, getDesignations); // Get all designations of the company
 route.get("/designation/privileges", protectedRoute, getDesignationPrivileges); // Get privileges that can be assigned to designations

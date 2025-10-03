@@ -1458,6 +1458,32 @@ export const deleteArticleCondition = async (req, res, next) => {
   }
 };
 
+// get all privilages
+export const getAllPrivilages = async (req, res, next) => {
+  try {
+    const [privilages] = await pool.query(
+      "SELECT idUser_privilages,Description FROM user_privilages"
+    );
+
+    if (privilages.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: "No privilages found for this company",
+        privilages: [],
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Privilages fetched successfully",
+      privilages,
+    });
+  } catch (error) {
+    console.error("Error fetching privilages:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
 // Create a new user for the TEST company (company ID 3) and assign to a branch
 export const createTESTUser = async (req, res, next) => {
   try {

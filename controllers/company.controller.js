@@ -1558,3 +1558,298 @@ export const createTESTUser = async (req, res, next) => {
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
+
+// create designation with privilages
+export const creteDesignationWithPrivilages = async (req, res, next) => {
+  try {
+    const { description, privilageIds } = req.body;
+    if (!description) {
+      return next(errorHandler(400, "Designation description is required"));
+    }
+
+    if (
+      !privilageIds ||
+      !Array.isArray(privilageIds) ||
+      privilageIds.length === 0
+    ) {
+      return next(
+        errorHandler(
+          400,
+          "At least one privilage must be assigned to the designation"
+        )
+      );
+    }
+
+    // Check if designation already exists for this company
+    const [existingDesignation] = await pool.query(
+      "SELECT * FROM designation WHERE Description Like ? AND Company_idCompany = ?",
+      [description, req.companyId]
+    );
+
+    if (existingDesignation.length > 0) {
+      return next(
+        errorHandler(400, "Designation with this description already exists")
+      );
+    }
+
+    // check if privlages are valid
+    const [validPrivilages] = await pool.query(
+      `SELECT idUser_privilages FROM user_privilages WHERE idUser_privilages IN (?)`,
+      [privilageIds]
+    );
+
+    if (validPrivilages.length !== privilageIds.length) {
+      return next(errorHandler(400, "One or more privilages are invalid"));
+    }
+
+    // create the designation
+    const [createdDesignation] = await pool.query(
+      "INSERT INTO designation (Description, Company_idCompany) VALUES (?, ?)",
+      [description, req.companyId]
+    );
+
+    if (createdDesignation.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to create designation"));
+    }
+
+    for (const privilageId of privilageIds) {
+      const [assignPrivilage] = await pool.query(
+        "INSERT INTO designation_has_user_privilages (Designation_idDesignation,User_Privilages_idUser_Privilages,Status,Last_Updated_User,Last_Updated_Time) VALUES(?, ?, ?, ?, NOW())",
+        [createdDesignation.insertId, privilageId, 1, req.userId]
+      );
+      if (assignPrivilage.affectedRows === 0) {
+        return next(
+          errorHandler(
+            500,
+            "Failed to assign one or more privilages to the designation, please try again"
+          )
+        );
+      }
+    }
+
+    res.status(201).json({
+      success: true,
+      designation: {
+        idDesignation: createdDesignation.insertId,
+        Description: description,
+        privilages: privilageIds,
+      },
+      message: "Designation created successfully",
+    });
+  } catch (error) {
+    console.error("Error creating designation:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// get all desgination with privilages
+export const getDesignationsWithPrivilages = async (req, res, next) => {
+  try {
+    // get all designations for the company
+    const [designations] = await pool.query(
+      "SELECT idDesignation, Description FROM designation WHERE Company_idCompany = ?",
+      [req.companyId]
+    );
+
+    // get privilages for each designation
+    for (const designation of designations) {
+      const [privilages] = await pool.query(
+        `SELECT dp.User_Privilages_idUser_Privilages as idUser_privilages
+         FROM designation_has_user_privilages dp
+         JOIN user_privilages up ON dp.User_Privilages_idUser_Privilages = up.idUser_privilages
+         WHERE dp.Designation_idDesignation = ? AND dp.Status = 1`,
+        [designation.idDesignation]
+      );
+      designation.privilages = privilages;
+    }
+
+    res.status(200).json({
+      success: true,
+      designations,
+    });
+  } catch (error) {
+    console.error("Error fetching designations with privilages:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// update desgination description and privilages
+export const updateDesignationWithPrivilages = async (req, res, next) => {
+  try {
+    const desginationId = req.params.id || req.params.designationId;
+    const { description, privilageIds } = req.body;
+
+    if (!desginationId) {
+      return next(errorHandler(400, "Designation ID is required"));
+    }
+
+    if (!description) {
+      return next(errorHandler(400, "Designation description is required"));
+    }
+
+    if (
+      !privilageIds ||
+      !Array.isArray(privilageIds) ||
+      privilageIds.length === 0
+    ) {
+      return next(
+        errorHandler(
+          400,
+          "At least one privilage must be assigned to the designation"
+        )
+      );
+    }
+
+    // Check if designation exists for this company
+    const [existingDesignation] = await pool.query(
+      "SELECT * FROM designation WHERE idDesignation = ? AND Company_idCompany = ?",
+      [desginationId, req.companyId]
+    );
+
+    if (existingDesignation.length === 0) {
+      return next(errorHandler(404, "Designation not found"));
+    }
+
+    // check if privlages are valid
+    const [validPrivilages] = await pool.query(
+      `SELECT idUser_privilages FROM user_privilages WHERE idUser_privilages IN (?)`,
+      [privilageIds]
+    );
+
+    if (validPrivilages.length !== privilageIds.length) {
+      return next(errorHandler(400, "One or more privilages are invalid"));
+    }
+
+    // update the designation description
+    const [updatedDesignation] = await pool.query(
+      "UPDATE designation SET Description = ? WHERE idDesignation = ?",
+      [description, desginationId]
+    );
+
+    if (updatedDesignation.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to update designation"));
+    }
+
+    // check and update privilages if there are any changes
+    const [currentPrivilages] = await pool.query(
+      "SELECT User_Privilages_idUser_Privilages FROM designation_has_user_privilages WHERE Designation_idDesignation = ? AND Status = 1",
+      [desginationId]
+    );
+    const currentPrivilageIds = currentPrivilages.map(
+      (row) => row.User_Privilages_idUser_Privilages
+    );
+
+    // Find privilages to remove (in DB but not in new data)
+    const privilagesToRemove = currentPrivilageIds.filter(
+      (id) => !privilageIds.includes(id)
+    );
+
+    // Remove privilages (Make status 0)
+    if (privilagesToRemove.length > 0) {
+      const [removeResult] = await pool.query(
+        `UPDATE designation_has_user_privilages 
+         SET Status = 0, Last_Updated_User = ?, Last_Updated_Time = NOW() 
+         WHERE Designation_idDesignation = ? AND User_Privilages_idUser_Privilages IN (?)`,
+        [req.userId, desginationId, privilagesToRemove]
+      );
+
+      if (removeResult.affectedRows === 0) {
+        return next(
+          errorHandler(500, "Failed to remove some privilages from designation")
+        );
+      }
+    }
+    // Find privilages to add (in new data but not in DB)
+    const privilagesToAdd = privilageIds.filter(
+      (id) => !currentPrivilageIds.includes(id)
+    );
+
+    // Add new privilages
+    for (const privilageId of privilagesToAdd) {
+      const [addResult] = await pool.query(
+        "INSERT INTO designation_has_user_privilages (Designation_idDesignation,User_Privilages_idUser_Privilages,Status,Last_Updated_User,Last_Updated_Time) VALUES(?, ?, ?, ?, NOW())",
+        [desginationId, privilageId, 1, req.userId]
+      );
+      if (addResult.affectedRows === 0) {
+        return next(
+          errorHandler(
+            500,
+            "Failed to assign one or more privilages to the designation, please try again"
+          )
+        );
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      designation: {
+        idDesignation: desginationId,
+        Description: description,
+        privilages: privilageIds,
+      },
+      message: "Designation updated successfully",
+    });
+  } catch (error) {
+    console.error("Error updating designation with privilages:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// delete designation with privilages
+export const deleteDesignationWithPrivilages = async (req, res, next) => {
+  try {
+    const desginationId = req.params.id || req.params.designationId;
+    if (!desginationId) {
+      return next(errorHandler(400, "Designation ID is required"));
+    }
+
+    // Check if designation exists for this company
+    const [existingDesignation] = await pool.query(
+      "SELECT * FROM designation WHERE idDesignation = ? AND Company_idCompany = ?",
+      [desginationId, req.companyId]
+    );
+
+    if (existingDesignation.length === 0) {
+      return next(errorHandler(404, "Designation not found"));
+    }
+
+    // Check if any users are assigned to this designation
+    const [assignedUsers] = await pool.query(
+      "SELECT idUser FROM user WHERE Designation_idDesignation = ? AND Company_idCompany = ?",
+      [desginationId, req.companyId]
+    );
+    if (assignedUsers.length > 0) {
+      return next(
+        errorHandler(
+          400,
+          "Cannot delete designation assigned to one or more users"
+        )
+      );
+    }
+
+    // Delete designation privilages
+    const [deletePrivilages] = await pool.query(
+      "DELETE FROM designation_has_user_privilages WHERE Designation_idDesignation = ?",
+      [desginationId]
+    );
+
+    // Delete the designation
+    const [deleteDesignation] = await pool.query(
+      "DELETE FROM designation WHERE idDesignation = ?",
+      [desginationId]
+    );
+
+    if (deleteDesignation.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to delete designation"));
+    }
+
+    res.status(200).json({
+      success: true,
+      designationId: desginationId,
+      message: "Designation deleted successfully",
+    });
+  } catch (error) {
+    console.error("Error deleting designation with privilages:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};

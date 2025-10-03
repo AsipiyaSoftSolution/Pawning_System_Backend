@@ -31,16 +31,27 @@ import {
   updateUser,
   createTESTUser,
   getAllPrivilages,
+  creteDesignationWithPrivilages,
+  getDesignationsWithPrivilages,
+  updateDesignationWithPrivilages,
+  deleteDesignationWithPrivilages,
 } from "../controllers/company.controller.js";
 const route = express.Router();
 
 route.get("/", protectedRoute, getCompanyDetails); // Get company details
 route.get("/privileges", protectedRoute, getAllPrivilages); // Get all privileges that can be assigned to designations
-route.post("/designation", protectedRoute, creteDesignation); // create new designation
-route.get("/designations", protectedRoute, getDesignations); // Get all designations of the company
-route.get("/designation/privileges", protectedRoute, getDesignationPrivileges); // Get privileges that can be assigned to designations
-route.post("/designation", protectedRoute, creteDesignation); // Create new designation
-route.post("/designation/privileges", protectedRoute, assignPrivileges); // Assign privileges to a designation
+route.post("/designation", protectedRoute, creteDesignationWithPrivilages); // create designation with privileges
+route.get("/designations", protectedRoute, getDesignationsWithPrivilages); // Get all designations of the company with privileges
+route.patch(
+  "/designation/:designationId",
+  protectedRoute,
+  updateDesignationWithPrivilages
+); // Update designation and its privileges by ID
+route.delete(
+  "/designation/:designationId",
+  protectedRoute,
+  deleteDesignationWithPrivilages
+); // Delete designation and its privileges by ID
 route.post("/article-type", protectedRoute, createArticleType); // Create article type
 route.get("/article-types", protectedRoute, getArticleTypes); // Get all article types
 route.patch("/article-type/:id", protectedRoute, updateArticleType); // Update article type by ID

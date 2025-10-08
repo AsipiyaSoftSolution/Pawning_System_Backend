@@ -35,6 +35,7 @@ export const createPawningTicket = async (req, res, next) => {
       "serviceCharge",
       "lateChargePercent",
       "interestApplyOn",
+      "Interest_Rate_Duration",
     ];
     const requiredFieldsForTicketArticles = [
       // data for pawning ticket article table
@@ -144,7 +145,7 @@ export const createPawningTicket = async (req, res, next) => {
 
     // Insert into pawning_ticket table
     const [result] = await pool.query(
-      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_Date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount,Service_Charge_Type,Service_Charge_Rate,Early_Settlement_Charge_Balance,Additiona_Charges_Balance,Service_Charge_Balance,Late_Charge_Balance,Interest_Amount_Balance,Balance_Amount) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_Date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount,Service_Charge_Type,Service_Charge_Rate,Early_Settlement_Charge_Balance,Additiona_Charges_Balance,Service_Charge_Balance,Late_Charge_Balance,Interest_Amount_Balance,Balance_Amount,Interest_Rate_Duration) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [
         data.ticketData.ticketNo,
         data.ticketData.grantSeqNo,
@@ -168,13 +169,13 @@ export const createPawningTicket = async (req, res, next) => {
         data.ticketData.pawningAdvance, // as total amount
         productData[0]?.Service_Charge_Value_Type || "unknown",
         data.ticketData.serviceCharge, // service charge rate
-        ,
         0, // initial early settlement charge balance set to 0
         0, // initial additional charges balance set to 0
         0, // initial service charge balance set to 0
         0, // initial late charge balance set to 0
         0, // initial interest amount balance set to 0
         data.ticketData.pawningAdvance, // initial balance amount set to pawning advance
+        data.ticketData.Interest_Rate_Duration || "N/A",
       ]
     );
 
@@ -590,6 +591,7 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
     let serviceCharge = 0;
     let lateChargePrecentage = 0;
     let interestApplyOn = null;
+    let interestType;
 
     // Convert interestMethod to number for comparison
     const interestMethodNum = Number(interestMethod);
@@ -616,6 +618,8 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
         return periodNum >= min && periodNum <= max;
       });
 
+      console.log(filteredPlan, "filteredPlan");
+
       if (!filteredPlan) {
         return next(errorHandler(404, "No matching product plan found"));
       }
@@ -623,6 +627,7 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
       interestRate = Number(filteredPlan.Interest);
       serviceCharge = Number(filteredPlan.Service_Charge_Value);
       lateChargePrecentage = Number(filteredPlan.Late_Charge);
+      interestType = filteredPlan.Interest_type || "N/A";
 
       // Fixed date calculation - add days to current date
       const currentDate = new Date();
@@ -657,6 +662,7 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
       interestRate = Number(filteredPlan.Interest);
       serviceCharge = Number(filteredPlan.Service_Charge_Value);
       lateChargePrecentage = Number(filteredPlan.Late_Charge);
+      interestType = filteredPlan.Interest_type || "N/A";
 
       // Fixed date calculation - add days to current date
       const currentDate = new Date();
@@ -679,6 +685,7 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
       serviceCharge,
       lateChargePrecentage,
       interestApplyOn: interestApplyOnDate,
+      interestType,
     });
   } catch (error) {
     console.error("Error in getTicketFinancialDetails:", error);

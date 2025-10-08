@@ -420,10 +420,10 @@ export const createPawningProduct = async (req, res, next) => {
           plan.stage3EndDate || null,
           plan.stage4StartDate || null,
           plan.stage4EndDate || null,
-          plan.stage1Interest || 0,
-          plan.stage2Interest || 0,
-          plan.stage3Interest || 0,
-          plan.stage4Interest || 0,
+          parseFloat(plan.stage1Interest) || 0,
+          parseFloat(plan.stage2Interest) || 0,
+          parseFloat(plan.stage3Interest) || 0,
+          parseFloat(plan.stage4Interest) || 0,
           plan.interestApplicableMethod || null,
         ]
       );

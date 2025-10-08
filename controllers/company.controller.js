@@ -1712,7 +1712,7 @@ export const getDesignationsWithPrivilages = async (req, res, next) => {
 export const updateDesignationWithPrivilages = async (req, res, next) => {
   try {
     const desginationId = req.params.id || req.params.designationId;
-    const { description, privilageIds } = req.body;
+    const { description, privilageIds, maxTicketApproveAmount } = req.body;
 
     if (!desginationId) {
       return next(errorHandler(400, "Designation ID is required"));
@@ -1733,6 +1733,21 @@ export const updateDesignationWithPrivilages = async (req, res, next) => {
           "At least one privilage must be assigned to the designation"
         )
       );
+    }
+
+    if (privilageIds.includes(29)) {
+      if (
+        !maxTicketApproveAmount ||
+        isNaN(maxTicketApproveAmount) ||
+        maxTicketApproveAmount <= 0
+      ) {
+        return next(
+          errorHandler(
+            400,
+            "Max Ticket Approve Amount must be a positive number when 'Approve Ticket' privilage is assigned"
+          )
+        );
+      }
     }
 
     // Check if designation exists for this company
@@ -1757,8 +1772,8 @@ export const updateDesignationWithPrivilages = async (req, res, next) => {
 
     // update the designation description
     const [updatedDesignation] = await pool.query(
-      "UPDATE designation SET Description = ? WHERE idDesignation = ?",
-      [description, desginationId]
+      "UPDATE designation SET Description = ?, pawning_ticket_max_approve_amount = ? WHERE idDesignation = ?",
+      [description, maxTicketApproveAmount || null, desginationId]
     );
 
     if (updatedDesignation.affectedRows === 0) {
@@ -1799,29 +1814,71 @@ export const updateDesignationWithPrivilages = async (req, res, next) => {
       (id) => !currentPrivilageIds.includes(id)
     );
 
-    // Add new privilages
+    // Add new privilages or reactivate existing ones
     for (const privilageId of privilagesToAdd) {
-      const [addResult] = await pool.query(
-        "INSERT INTO designation_has_user_privilages (Designation_idDesignation,User_Privilages_idUser_Privilages,Status,Last_Updated_User,Last_Updated_Time) VALUES(?, ?, ?, ?, NOW())",
-        [desginationId, privilageId, 1, req.userId]
+      // First check if a record exists (even if inactive)
+      const [existingRecord] = await pool.query(
+        "SELECT * FROM designation_has_user_privilages WHERE Designation_idDesignation = ? AND User_Privilages_idUser_Privilages = ?",
+        [desginationId, privilageId]
       );
-      if (addResult.affectedRows === 0) {
-        return next(
-          errorHandler(
-            500,
-            "Failed to assign one or more privilages to the designation, please try again"
-          )
+
+      if (existingRecord.length > 0) {
+        // Record exists, update it to active
+        const [updateResult] = await pool.query(
+          "UPDATE designation_has_user_privilages SET Status = 1, Last_Updated_User = ?, Last_Updated_Time = NOW() WHERE Designation_idDesignation = ? AND User_Privilages_idUser_Privilages = ?",
+          [req.userId, desginationId, privilageId]
         );
+        if (updateResult.affectedRows === 0) {
+          return next(
+            errorHandler(
+              500,
+              "Failed to reactivate privilege for the designation, please try again"
+            )
+          );
+        }
+      } else {
+        // Record doesn't exist, insert new one
+        const [addResult] = await pool.query(
+          "INSERT INTO designation_has_user_privilages (Designation_idDesignation,User_Privilages_idUser_Privilages,Status,Last_Updated_User,Last_Updated_Time) VALUES(?, ?, ?, ?, NOW())",
+          [desginationId, privilageId, 1, req.userId]
+        );
+        if (addResult.affectedRows === 0) {
+          return next(
+            errorHandler(
+              500,
+              "Failed to assign privilege to the designation, please try again"
+            )
+          );
+        }
       }
     }
 
+    // Fetch the updated designation data
+    const [designationDetails] = await pool.query(
+      "SELECT idDesignation, Description, pawning_ticket_max_approve_amount FROM designation WHERE idDesignation = ?",
+      [desginationId]
+    );
+
+    // Fetch privileges for the designation (same pattern as getDesignationsWithPrivilages)
+    const [privilages] = await pool.query(
+      `SELECT dp.User_Privilages_idUser_Privilages as idUser_privilages
+       FROM designation_has_user_privilages dp
+       JOIN user_privilages up ON dp.User_Privilages_idUser_Privilages = up.idUser_privilages
+       WHERE dp.Designation_idDesignation = ? AND dp.Status = 1`,
+      [desginationId]
+    );
+
+    const designationData = {
+      idDesignation: designationDetails[0].idDesignation,
+      Description: designationDetails[0].Description,
+      pawning_ticket_max_approve_amount:
+        designationDetails[0].pawning_ticket_max_approve_amount,
+      privilages: privilages,
+    };
+
     res.status(200).json({
       success: true,
-      designation: {
-        idDesignation: desginationId,
-        Description: description,
-        privilages: privilageIds,
-      },
+      designation: designationData,
       message: "Designation updated successfully",
     });
   } catch (error) {

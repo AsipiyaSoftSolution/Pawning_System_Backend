@@ -51,7 +51,7 @@ route.get(
   getDesignationsWithPrivilages
 ); // Get all designations of the company with privileges
 route.patch(
-  "/designation/:designationId",
+  "/designation-with-privileges/:designationId",
   protectedRoute,
   updateDesignationWithPrivilages
 ); // Update designation and its privileges by ID

@@ -1562,7 +1562,8 @@ export const createTESTUser = async (req, res, next) => {
 // create designation with privilages
 export const creteDesignationWithPrivilages = async (req, res, next) => {
   try {
-    const { description, privilageIds } = req.body;
+    const { description, privilageIds, maxTicketApproveAmount } = req.body;
+    console.log(privilageIds, "this is the privilage ids");
     if (!description) {
       return next(errorHandler(400, "Designation description is required"));
     }
@@ -1578,6 +1579,21 @@ export const creteDesignationWithPrivilages = async (req, res, next) => {
           "At least one privilage must be assigned to the designation"
         )
       );
+    }
+
+    if (privilageIds.includes(29)) {
+      if (
+        !maxTicketApproveAmount ||
+        isNaN(maxTicketApproveAmount) ||
+        maxTicketApproveAmount <= 0
+      ) {
+        return next(
+          errorHandler(
+            400,
+            "Max Ticket Approve Amount must be a positive number when 'Approve Ticket' privilage is assigned"
+          )
+        );
+      }
     }
 
     // Check if designation already exists for this company
@@ -1604,8 +1620,8 @@ export const creteDesignationWithPrivilages = async (req, res, next) => {
 
     // create the designation
     const [createdDesignation] = await pool.query(
-      "INSERT INTO designation (Description, Company_idCompany) VALUES (?, ?)",
-      [description, req.companyId]
+      "INSERT INTO designation (Description, Company_idCompany,pawning_ticket_max_approve_amount) VALUES (?, ?,?)",
+      [description, req.companyId, maxTicketApproveAmount || null]
     );
 
     if (createdDesignation.affectedRows === 0) {

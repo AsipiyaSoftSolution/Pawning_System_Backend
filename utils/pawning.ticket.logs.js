@@ -136,8 +136,16 @@ export const addDailyTicketLog = async () => {
             const interestTypeDuration = ticket.Interest_Rate_Duration || "N/A";
             const interestRateType = ticket.Interest_Rate_Type || "FLAT";
             const interestRate = parseFloat(ticket.Interest_Rate) || 0;
+
             const latestAdvanceBalance =
               parseFloat(latestLogResult[0]?.Advance_Balance) || 0;
+            if (interestTypeDuration === "perMonth") {
+              interestRate = interestRate / 30; // convert monthly rate to daily
+            } else if (interestTypeDuration === "perYear") {
+              interestRate = interestRate / 365; // convert yearly rate to daily
+            } else if (interestTypeDuration === "perWeek") {
+              interestRate = interestRate / 7; // convert weekly rate to daily
+            }
             const interestAmount = (latestAdvanceBalance * interestRate) / 100;
 
             const latestInterestBalance =

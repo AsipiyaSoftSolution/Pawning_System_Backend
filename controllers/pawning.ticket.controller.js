@@ -242,9 +242,18 @@ export const createPawningTicket = async (req, res, next) => {
       [productPlanData[0]?.idProduct_Plan]
     );
 
+    if (!productPlanStagesData || productPlanStagesData.length === 0) {
+      return next(
+        errorHandler(
+          400,
+          "Product plan stages data not found for the given product plan ID"
+        )
+      );
+    }
+
     // Insert into pawning_ticket table
     const [result] = await pool.query(
-      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_Date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount,Service_Charge_Type,Service_Charge_Rate,Early_Settlement_Charge_Balance,Additiona_Charges_Balance,Service_Charge_Balance,Late_Charge_Balance,Interest_Amount_Balance,Balance_Amount,Interest_Rate_Duration,stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_Date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount,Service_Charge_Type,Service_Charge_Rate,Early_Settlement_Charge_Balance,Additiona_Charges_Balance,Service_Charge_Balance,Late_Charge_Balance,Interest_Amount_Balance,Balance_Amount,Interest_Rate_Duration,stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [
         data.ticketData.ticketNo,
         data.ticketData.grantSeqNo,
@@ -274,7 +283,7 @@ export const createPawningTicket = async (req, res, next) => {
         0, // initial late charge balance set to 0
         0, // initial interest amount balance set to 0
         data.ticketData.pawningAdvance, // initial balance amount set to pawning advance
-        data.ticketData.Interest_Rate_Duration || "N/A",
+        data.ticketData.Interest_Rate_Duration,
         productPlanStagesData[0]?.stage1StartDate || null,
         productPlanStagesData[0]?.stage1EndDate || null,
         productPlanStagesData[0]?.stage2StartDate || null,
@@ -586,7 +595,7 @@ export const sendCaratageAmountForSelectedProductItem = async (
 
     // Fetch all product items for the product and period type
     const [productItems] = await pool.query(
-      "SELECT idProduct_Plan, Amount_For_22_Caratage, Minimum_Period, Maximum_Period, Minimum_Amount, Maximum_Amount FROM product_plan WHERE Pawning_Product_idPawning_Product = ? AND Period_Type = ?",
+      "SELECT idProduct_Plan, Amount_For_22_Caratage, Minimum_Period, Maximum_Period, Minimum_Amount, Maximum_Amount FROM product_plan WHERE Pawning_Product_idPawning_Product = ? ",
       [productId, periodType]
     );
 
@@ -711,7 +720,7 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
       // interest method is Interest for Period
       // get the matching product plans
       [productPlans] = await pool.query(
-        "SELECT * FROM product_plan WHERE Pawning_Product_idPawning_Product = ? AND Period_Type = ?",
+        "SELECT * FROM product_plan WHERE Pawning_Product_idPawning_Product = ? ",
         [productId, periodType]
       );
 
@@ -735,7 +744,7 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
         return next(errorHandler(404, "No matching product plan found"));
       }
 
-      interestRate = Number(filteredPlan.Interest);
+      interestRate = Number(filteredPlan.Interest) || 0;
       serviceCharge = Number(filteredPlan.Service_Charge_Value);
       lateChargePrecentage = Number(filteredPlan.Late_Charge);
       interestType = filteredPlan.Interest_type || "N/A";
@@ -748,7 +757,7 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
       );
     } else if (interestMethodNum === 0) {
       [productPlans] = await pool.query(
-        "SELECT * FROM product_plan WHERE Pawning_Product_idPawning_Product = ? AND Period_Type = ?",
+        "SELECT * FROM product_plan WHERE Pawning_Product_idPawning_Product = ? ",
         [productId, periodType]
       );
 
@@ -770,7 +779,7 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
         return next(errorHandler(404, "No matching product plan found"));
       }
 
-      interestRate = Number(filteredPlan.Interest);
+      interestRate = Number(filteredPlan.Interest) || 0;
       serviceCharge = Number(filteredPlan.Service_Charge_Value);
       lateChargePrecentage = Number(filteredPlan.Late_Charge);
       interestType = filteredPlan.Interest_type || "N/A";

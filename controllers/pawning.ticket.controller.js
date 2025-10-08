@@ -35,6 +35,7 @@ export const createPawningTicket = async (req, res, next) => {
       "serviceCharge",
       "lateChargePercent",
       "interestApplyOn",
+      "Interest_Rate_Duration",
     ];
     const requiredFieldsForTicketArticles = [
       // data for pawning ticket article table
@@ -128,23 +129,116 @@ export const createPawningTicket = async (req, res, next) => {
 
     // get the ticket's product service charge type
     const [productData] = await pool.query(
-      "SELECT Service_Charge_Value_Type FROM pawning_product WHERE idPawning_Product = ?",
+      "SELECT Service_Charge_Value_Type,Service_Charge_Create_As,Interest_Method FROM pawning_product WHERE idPawning_Product = ?",
       [data.ticketData.productId]
     );
 
-    // calculate service charge rate based on type
+    if (!productData || productData.length === 0) {
+      return next(
+        errorHandler(400, "Product not found for the given product ID")
+      );
+    }
+
+    // Cal the service charge rate
     let serviceChargeRate = 0;
-    if (productData[0]?.Service_Charge_Value_Type === "Percentage") {
-      serviceChargeRate =
-        parseFloat(data.ticketData.pawningAdvance) *
-        (parseFloat(data.ticketData.serviceCharge) / 100);
-    } else if (productData[0]?.Service_Charge_Value_Type === "Fixed Amount") {
-      serviceChargeRate = parseFloat(data.ticketData.serviceCharge);
+    // if service charge create as is "Charge For Product"
+    if (productData[0].Service_Charge_Create_As === "Charge For Product") {
+      if (productData[0]?.Service_Charge_Value_Type === "Percentage") {
+        serviceChargeRate =
+          parseFloat(data.ticketData.pawningAdvance) *
+          (parseFloat(data.ticketData.serviceCharge) / 100);
+      } else if (productData[0]?.Service_Charge_Value_Type === "Fixed Amount") {
+        serviceChargeRate = parseFloat(data.ticketData.serviceCharge);
+      }
+    }
+
+    let productPlanData;
+    // if service charge create as is "Charge For Product Item"
+    if (productData[0].Service_Charge_Create_As === "Charge For Product Item") {
+      if (productData[0].Interest_Method === "Interest For Period") {
+        [productPlanData] = await pool.query(
+          "SELECT Service_Charge_Value_type, Service_Charge_Value FROM product_plan WHERE Pawning_Product_idPawning_Product = ? AND Period_Type = ? AND ? BETWEEN CAST(Minimum_Period AS UNSIGNED) AND CAST(Maximum_Period AS UNSIGNED)",
+          [
+            data.ticketData.productId,
+            data.ticketData.periodType,
+            data.ticketData.period,
+          ]
+        );
+
+        if (productPlanData.length === 0) {
+          return next(
+            errorHandler(
+              400,
+              "No matching product plan found for the given product ID, period type, and period"
+            )
+          );
+        }
+
+        if (productPlanData[0]?.Service_Charge_Value_type === "percentage") {
+          serviceChargeRate =
+            parseFloat(data.ticketData.pawningAdvance) *
+            (parseFloat(productPlanData[0]?.Service_Charge_Value) / 100);
+        }
+
+        if (productPlanData[0]?.Service_Charge_Value_type === "fixed") {
+          serviceChargeRate = parseFloat(
+            productPlanData[0]?.Service_Charge_Value
+          );
+        }
+      }
+
+      if (productData[0].Interest_Method === "Interest For Pawning Amount") {
+        [productPlanData] = await pool.query(
+          "SELECT Service_Charge_Value_type, Service_Charge_Value FROM product_plan WHERE Pawning_Product_idPawning_Product = ? AND ? BETWEEN CAST(Minimum_Amount AS UNSIGNED) AND CAST(Maximum_Amount AS UNSIGNED)",
+          [data.ticketData.productId, data.ticketData.pawningAdvance]
+        );
+
+        if (productPlanData.length === 0) {
+          return next(
+            errorHandler(
+              400,
+              "No matching product plan found for the given product ID and pawning advance amount"
+            )
+          );
+        }
+
+        if (productPlanData[0]?.Service_Charge_Value_type === "percentage") {
+          serviceChargeRate =
+            parseFloat(data.ticketData.pawningAdvance) *
+            (parseFloat(productPlanData[0]?.Service_Charge_Value) / 100);
+        }
+
+        if (productPlanData[0]?.Service_Charge_Value_type === "fixed") {
+          serviceChargeRate = parseFloat(
+            productPlanData[0]?.Service_Charge_Value
+          );
+        }
+      }
+    }
+
+    // service charge type (to insert into pawning_ticket table)
+    let serviceChargeType;
+    if (productData[0].Service_Charge_Create_As === "Charge For Product") {
+      serviceChargeType =
+        productData[0]?.Service_Charge_Value_Type || "unknown";
+    }
+
+    if (productData[0].Service_Charge_Create_As === "Charge For Product Item") {
+      if (!productPlanData || productPlanData.length === 0) {
+        return next(
+          errorHandler(
+            400,
+            "No matching product plan found for the given interest method and parameters"
+          )
+        );
+      }
+      serviceChargeType =
+        productPlanData[0]?.Service_Charge_Value_type || "unknown";
     }
 
     // Insert into pawning_ticket table
     const [result] = await pool.query(
-      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_Date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount,Service_Charge_Type,Service_Charge_Rate,Early_Settlement_Charge_Balance,Additiona_Charges_Balance,Service_Charge_Balance,Late_Charge_Balance,Interest_Amount_Balance,Balance_Amount) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_Date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount,Service_Charge_Type,Service_Charge_Rate,Early_Settlement_Charge_Balance,Additiona_Charges_Balance,Service_Charge_Balance,Late_Charge_Balance,Interest_Amount_Balance,Balance_Amount,Interest_Rate_Duration) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [
         data.ticketData.ticketNo,
         data.ticketData.grantSeqNo,
@@ -166,15 +260,15 @@ export const createPawningTicket = async (req, res, next) => {
         req.branchId, // Fixed: removed extra comma
         data.ticketData.productId,
         data.ticketData.pawningAdvance, // as total amount
-        productData[0]?.Service_Charge_Value_Type || "unknown",
+        serviceChargeType,
         data.ticketData.serviceCharge, // service charge rate
-        ,
         0, // initial early settlement charge balance set to 0
         0, // initial additional charges balance set to 0
         0, // initial service charge balance set to 0
         0, // initial late charge balance set to 0
         0, // initial interest amount balance set to 0
         data.ticketData.pawningAdvance, // initial balance amount set to pawning advance
+        data.ticketData.Interest_Rate_Duration || "N/A",
       ]
     );
 
@@ -590,6 +684,7 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
     let serviceCharge = 0;
     let lateChargePrecentage = 0;
     let interestApplyOn = null;
+    let interestType;
 
     // Convert interestMethod to number for comparison
     const interestMethodNum = Number(interestMethod);
@@ -616,6 +711,8 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
         return periodNum >= min && periodNum <= max;
       });
 
+      console.log(filteredPlan, "filteredPlan");
+
       if (!filteredPlan) {
         return next(errorHandler(404, "No matching product plan found"));
       }
@@ -623,6 +720,7 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
       interestRate = Number(filteredPlan.Interest);
       serviceCharge = Number(filteredPlan.Service_Charge_Value);
       lateChargePrecentage = Number(filteredPlan.Late_Charge);
+      interestType = filteredPlan.Interest_type || "N/A";
 
       // Fixed date calculation - add days to current date
       const currentDate = new Date();
@@ -657,6 +755,7 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
       interestRate = Number(filteredPlan.Interest);
       serviceCharge = Number(filteredPlan.Service_Charge_Value);
       lateChargePrecentage = Number(filteredPlan.Late_Charge);
+      interestType = filteredPlan.Interest_type || "N/A";
 
       // Fixed date calculation - add days to current date
       const currentDate = new Date();
@@ -679,6 +778,7 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
       serviceCharge,
       lateChargePrecentage,
       interestApplyOn: interestApplyOnDate,
+      interestType,
     });
   } catch (error) {
     console.error("Error in getTicketFinancialDetails:", error);

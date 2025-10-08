@@ -133,6 +133,8 @@ export const addDailyTicketLog = async () => {
             );
 
             // Calculate interest
+            const interestTypeDuration = ticket.Interest_Rate_Duration || "N/A";
+            const interestRateType = ticket.Interest_Rate_Type || "FLAT";
             const interestRate = parseFloat(ticket.Interest_Rate) || 0;
             const latestAdvanceBalance =
               parseFloat(latestLogResult[0]?.Advance_Balance) || 0;

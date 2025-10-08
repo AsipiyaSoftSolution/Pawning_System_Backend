@@ -306,8 +306,12 @@ export const createPawningProduct = async (req, res, next) => {
         data.productName || "Unnamed Product",
         serviceCharge,
         serviceChargeCreateAs,
-        serviceChargeValueType,
-        serviceChargeValue,
+        serviceChargeCreateAs === "Charge For Product Item"
+          ? "N/A" // if charge type is "Charge For Product Item", service charge value type should be in product plan table
+          : serviceChargeValueType,
+        serviceChargeCreateAs === "Charge For Product Item"
+          ? "N/A"
+          : serviceChargeValue,
         earlySettlementCharge,
         earlySettlementChargeCreateAs,
         earlySettlementChargeValueType,

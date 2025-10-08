@@ -391,7 +391,7 @@ export const createPawningProduct = async (req, res, next) => {
           ? data.amount22
           : plan.amount22Carat;
       const [productPlanResult] = await pool.query(
-        "INSERT INTO product_plan (Period_Type,Minimum_Period,Maximum_Period,Minimum_Amount,Maximum_Amount,Interest_type,Interest,Interest_Calculate_After,Service_Charge_Value_type,Service_Charge_Value,Early_Settlement_Charge_Value_type,Early_Settlement_Charge_Value,Late_Charge,Amount_For_22_Caratage,Last_Updated_User,Last_Updated_Time,Pawning_Product_idPawning_Product)  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO product_plan (Period_Type,Minimum_Period,Maximum_Period,Minimum_Amount,Maximum_Amount,Interest_type,Interest,Interest_Calculate_After,Service_Charge_Value_type,Service_Charge_Value,Early_Settlement_Charge_Value_type,Early_Settlement_Charge_Value,Late_Charge,Amount_For_22_Caratage,Last_Updated_User,Last_Updated_Time,Pawning_Product_idPawning_Product,stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,interestApplicableMethod)  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [
           plan.periodType,
           plan.minPeriod,
@@ -412,6 +412,19 @@ export const createPawningProduct = async (req, res, next) => {
           req.userId,
           new Date(),
           result.insertId,
+          plan.stage1StartDate || 0, // Use 0 for stage 1 because it is mandatory to start from day 0
+          plan.stage1EndDate || null,
+          plan.stage2StartDate || null,
+          plan.stage2EndDate || null,
+          plan.stage3StartDate || null,
+          plan.stage3EndDate || null,
+          plan.stage4StartDate || null,
+          plan.stage4EndDate || null,
+          plan.stage1Interest || 0,
+          plan.stage2Interest || 0,
+          plan.stage3Interest || 0,
+          plan.stage4Interest || 0,
+          plan.interestApplicableMethod || null,
         ]
       );
 

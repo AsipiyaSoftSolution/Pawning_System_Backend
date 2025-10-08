@@ -1643,13 +1643,32 @@ export const creteDesignationWithPrivilages = async (req, res, next) => {
       }
     }
 
+    // Fetch the complete designation data
+    const [designationDetails] = await pool.query(
+      "SELECT idDesignation, Description, pawning_ticket_max_approve_amount FROM designation WHERE idDesignation = ?",
+      [createdDesignation.insertId]
+    );
+
+    // Fetch privileges for the designation (same pattern as getDesignationsWithPrivilages)
+    const [privilages] = await pool.query(
+      `SELECT dp.User_Privilages_idUser_Privilages as idUser_privilages
+       FROM designation_has_user_privilages dp
+       JOIN user_privilages up ON dp.User_Privilages_idUser_Privilages = up.idUser_privilages
+       WHERE dp.Designation_idDesignation = ? AND dp.Status = 1`,
+      [createdDesignation.insertId]
+    );
+
+    const designationData = {
+      idDesignation: designationDetails[0].idDesignation,
+      Description: designationDetails[0].Description,
+      pawning_ticket_max_approve_amount:
+        designationDetails[0].pawning_ticket_max_approve_amount,
+      privilages: privilages,
+    };
+
     res.status(201).json({
       success: true,
-      designation: {
-        idDesignation: createdDesignation.insertId,
-        Description: description,
-        privilages: privilageIds,
-      },
+      designation: designationData,
       message: "Designation created successfully",
     });
   } catch (error) {
@@ -1663,7 +1682,7 @@ export const getDesignationsWithPrivilages = async (req, res, next) => {
   try {
     // get all designations for the company
     const [designations] = await pool.query(
-      "SELECT idDesignation, Description FROM designation WHERE Company_idCompany = ?",
+      "SELECT idDesignation, Description,pawning_ticket_max_approve_amount FROM designation WHERE Company_idCompany = ?",
       [req.companyId]
     );
 

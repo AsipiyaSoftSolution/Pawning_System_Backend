@@ -277,19 +277,99 @@ export const addDailyTicketLog = async () => {
           }
         }
 
-        // Handle penalty for stage-based system
+        // Handle penalty for stage-based system (daily penalties after maturity)
         const maturityDate = new Date(ticket.Maturity_date);
         maturityDate.setHours(0, 0, 0, 0);
 
         if (today > maturityDate) {
-          const todayString = today.toISOString().split("T")[0];
-          const [existingPenaltyLog] = await pool.query(
-            "SELECT 1 FROM ticket_log WHERE Description = ? AND Type = 'PENALTY' AND Pawning_Ticket_idPawning_Ticket = ?",
-            [todayString, ticketId]
+          // Get the last penalty log to determine where to start
+          const [lastPenaltyLog] = await pool.query(
+            "SELECT Description FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? AND Type = 'PENALTY' ORDER BY idTicket_Log DESC LIMIT 1",
+            [ticketId]
           );
 
-          if (existingPenaltyLog.length === 0) {
-            const [latestLogResult] = await pool.query(
+          let penaltyStartDate = new Date(maturityDate);
+          penaltyStartDate.setDate(penaltyStartDate.getDate() + 1); // Start from day after maturity
+
+          if (lastPenaltyLog.length > 0) {
+            const lastPenaltyDateStr = lastPenaltyLog[0].Description;
+            const lastPenaltyDate = new Date(lastPenaltyDateStr);
+            lastPenaltyDate.setHours(0, 0, 0, 0);
+            penaltyStartDate = new Date(lastPenaltyDate);
+            penaltyStartDate.setDate(penaltyStartDate.getDate() + 1); // Start from next day
+          }
+
+          // Add interest and penalty for each day from penaltyStartDate to today
+          for (
+            let currentDate = new Date(penaltyStartDate);
+            currentDate <= today;
+            currentDate.setDate(currentDate.getDate() + 1)
+          ) {
+            const dateString = currentDate.toISOString().split("T")[0];
+
+            // FIRST: Add interest log for the day
+            const [latestLogForInterest] = await pool.query(
+              "SELECT * FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? ORDER BY idTicket_Log DESC LIMIT 1",
+              [ticketId]
+            );
+
+            const latestAdvanceBalanceForInterest =
+              parseFloat(latestLogForInterest[0]?.Advance_Balance) || 0;
+
+            // Determine which stage we're in for interest calculation
+            const daysSinceCreationForInterest = Math.floor(
+              (currentDate - ticketStartDate) / (1000 * 60 * 60 * 24)
+            );
+            let interestAmount = 0;
+            let interestDescription = "";
+
+            // Check if we're in stage 4 (daily interest)
+            if (daysSinceCreationForInterest >= stage4.startDay) {
+              const dailyInterestRate = stage4.interest / 30;
+              interestAmount =
+                (latestAdvanceBalanceForInterest * dailyInterestRate) / 100;
+              interestDescription = `${dateString} - Stage 4`;
+            }
+
+            if (interestAmount > 0) {
+              const latestInterestBalanceForInterest =
+                parseFloat(latestLogForInterest[0]?.Interest_Balance) || 0;
+              const latestServiceChargeBalanceForInterest =
+                parseFloat(latestLogForInterest[0]?.Service_Charge_Balance) ||
+                0;
+              const latestLateChargesBalanceForInterest =
+                parseFloat(latestLogForInterest[0]?.Late_Charges_Balance) || 0;
+              const latestAdditionalChargeBalanceForInterest =
+                parseFloat(latestLogForInterest[0]?.Aditional_Charge_Balance) ||
+                0;
+
+              const totalBalanceForInterest =
+                latestAdvanceBalanceForInterest +
+                (latestInterestBalanceForInterest + interestAmount) +
+                latestServiceChargeBalanceForInterest +
+                latestLateChargesBalanceForInterest +
+                latestAdditionalChargeBalanceForInterest;
+
+              await pool.query(
+                "INSERT INTO ticket_log (Pawning_Ticket_idPawning_Ticket, Type, Description, Amount, Advance_Balance, Interest_Balance, Service_Charge_Balance, Late_Charges_Balance, Aditional_Charge_Balance, Total_Balance, User_idUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                  ticketId,
+                  "INTEREST",
+                  interestDescription,
+                  interestAmount,
+                  latestAdvanceBalanceForInterest,
+                  latestInterestBalanceForInterest + interestAmount,
+                  latestServiceChargeBalanceForInterest,
+                  latestLateChargesBalanceForInterest,
+                  latestAdditionalChargeBalanceForInterest,
+                  totalBalanceForInterest,
+                  null,
+                ]
+              );
+            }
+
+            // SECOND: Add penalty log for the day (after interest)
+            const [latestLogForPenalty] = await pool.query(
               "SELECT * FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? ORDER BY idTicket_Log DESC LIMIT 1",
               [ticketId]
             );
@@ -297,18 +377,18 @@ export const addDailyTicketLog = async () => {
             const lateChargePercentage =
               parseFloat(ticket.Late_charge_Presentage) || 0;
             const latestAdvanceBalance =
-              parseFloat(latestLogResult[0]?.Advance_Balance) || 0;
+              parseFloat(latestLogForPenalty[0]?.Advance_Balance) || 0;
             const penaltyAmount =
               (latestAdvanceBalance * lateChargePercentage) / 100;
 
             const latestInterestBalance =
-              parseFloat(latestLogResult[0]?.Interest_Balance) || 0;
+              parseFloat(latestLogForPenalty[0]?.Interest_Balance) || 0;
             const latestServiceChargeBalance =
-              parseFloat(latestLogResult[0]?.Service_Charge_Balance) || 0;
+              parseFloat(latestLogForPenalty[0]?.Service_Charge_Balance) || 0;
             const latestLateChargesBalance =
-              parseFloat(latestLogResult[0]?.Late_Charges_Balance) || 0;
+              parseFloat(latestLogForPenalty[0]?.Late_Charges_Balance) || 0;
             const latestAdditionalChargeBalance =
-              parseFloat(latestLogResult[0]?.Aditional_Charge_Balance) || 0;
+              parseFloat(latestLogForPenalty[0]?.Aditional_Charge_Balance) || 0;
 
             const totalBalance =
               latestAdvanceBalance +
@@ -319,7 +399,7 @@ export const addDailyTicketLog = async () => {
 
             await createCustomerLogOnTicketPenality(
               "TICKET PENALTY",
-              `Penalty of ${penaltyAmount} added to ticket ID ${ticketId} on ${todayString}`,
+              `Penalty of ${penaltyAmount} added to ticket ID ${ticketId} on ${dateString}`,
               ticket.Customer_idCustomer,
               null
             );
@@ -329,7 +409,7 @@ export const addDailyTicketLog = async () => {
               [
                 ticketId,
                 "PENALTY",
-                todayString,
+                dateString,
                 penaltyAmount,
                 latestAdvanceBalance,
                 latestInterestBalance,
@@ -340,13 +420,14 @@ export const addDailyTicketLog = async () => {
                 null,
               ]
             );
+          }
 
-            if (ticket.Status !== "3") {
-              await pool.query(
-                "UPDATE pawning_ticket SET Status = '3' WHERE idPawning_Ticket = ?",
-                [ticketId]
-              );
-            }
+          // Update ticket status to '3' (overdue) if not already
+          if (ticket.Status !== "3") {
+            await pool.query(
+              "UPDATE pawning_ticket SET Status = '3' WHERE idPawning_Ticket = ?",
+              [ticketId]
+            );
           }
         }
       } else {
@@ -384,6 +465,7 @@ export const addDailyTicketLog = async () => {
           const shouldAddInterest = currentDate >= interestApplyOn;
           const shouldAddPenalty = currentDate > maturityDate;
 
+          // Add interest log first if needed
           if (shouldAddInterest) {
             const [existingInterestLog] = await pool.query(
               "SELECT 1 FROM ticket_log WHERE Description = ? AND Type = 'INTEREST' AND Pawning_Ticket_idPawning_Ticket = ?",
@@ -456,6 +538,7 @@ export const addDailyTicketLog = async () => {
             }
           }
 
+          // Add penalty log after interest (if needed)
           if (shouldAddPenalty) {
             const [existingPenaltyLog] = await pool.query(
               "SELECT 1 FROM ticket_log WHERE Description = ? AND Type = 'PENALTY' AND Pawning_Ticket_idPawning_Ticket = ?",
@@ -498,7 +581,7 @@ export const addDailyTicketLog = async () => {
                 null
               );
 
-              const [result] = await pool.query(
+              await pool.query(
                 "INSERT INTO ticket_log (Pawning_Ticket_idPawning_Ticket, Type, Description, Amount, Advance_Balance, Interest_Balance, Service_Charge_Balance, Late_Charges_Balance, Aditional_Charge_Balance, Total_Balance, User_idUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                   ticketId,
@@ -515,12 +598,7 @@ export const addDailyTicketLog = async () => {
                 ]
               );
 
-              if (result.affectedRows === 0) {
-                throw new Error(
-                  `Failed to add penalty ticket log for ${dateString}`
-                );
-              }
-
+              // Update ticket status to '3' (overdue) only once
               if (ticket.Status !== "3") {
                 const [updateResult] = await pool.query(
                   "UPDATE pawning_ticket SET Status = '3' WHERE idPawning_Ticket = ?",

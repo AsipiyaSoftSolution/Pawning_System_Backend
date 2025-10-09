@@ -681,7 +681,7 @@ export const createTicketRenewalPayment = async (req, res, next) => {
 
     // check if the ticket exists and belongs to the branch
     const [existingTicket] = await pool.query(
-      "SELECT Interest_apply_on,Maturity_date,Date_Time,Ticket_No FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+      "SELECT Interest_apply_on,Maturity_date,Date_Time,Ticket_No,Period_Type,Period FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
       [ticketId, req.branchId]
     );
     if (existingTicket.length === 0) {
@@ -716,10 +716,35 @@ export const createTicketRenewalPayment = async (req, res, next) => {
       );
     }
 
-    // update the ticket's maturity date to today
+    // update the ticket's maturity date from today to new maturity date based on ticket's Period_Type and Period
+    let newMaturityDate = new Date(); // start from today
+    if (existingTicket[0].Period_Type === "days") {
+      newMaturityDate.setDate(
+        newMaturityDate.getDate() + parseInt(existingTicket[0].Period)
+      );
+    }
+    if (existingTicket[0].Period_Type === "months") {
+      newMaturityDate.setMonth(
+        newMaturityDate.getMonth() + parseInt(existingTicket[0].Period)
+      );
+    }
+
+    if (existingTicket[0].Period_Type === "years") {
+      newMaturityDate.setFullYear(
+        newMaturityDate.getFullYear() + parseInt(existingTicket[0].Period)
+      );
+    }
+
+    if (existingTicket[0].Period_Type === "weeks") {
+      newMaturityDate.setDate(
+        newMaturityDate.getDate() + 7 * parseInt(existingTicket[0].Period)
+      );
+    }
+
+    // update the ticket's maturity date and Status to active (1)
     const [updateMaturityResult] = await pool.query(
-      "UPDATE pawning_ticket SET Maturity_date = ? WHERE idPawning_Ticket = ?",
-      [new Date(), ticketId]
+      "UPDATE pawning_ticket SET Maturity_date = ? , Status = '1' WHERE idPawning_Ticket = ?",
+      [newMaturityDate, ticketId]
     );
 
     if (updateMaturityResult.affectedRows === 0) {

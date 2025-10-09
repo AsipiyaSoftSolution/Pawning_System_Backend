@@ -146,7 +146,7 @@ export const getTicketDataById = async (req, res, next) => {
 
     // get ticket payment history from ticket payment table
     [paymentHistory] = await pool.query(
-      "SELECT p.Date_Time, p.Type, p.Amount, p.Description, u.full_name FROM payment p LEFT JOIN user u ON p.User = u.idUser WHERE p.Ticket_no = ? ORDER BY STR_TO_DATE(p.Date_Time, '%Y-%m-%d %H:%i:%s') DESC",
+      "SELECT p.Date_Time, p.Type, p.Amount, p.Description, p.Advance_Payment, p.Service_Charge_Payment, p.Interest_Payment,p.Other_Charges_Payment, p.Late_Charges_Payment, p.Early_Charge_Payment, u.full_name FROM payment p LEFT JOIN user u ON p.User = u.idUser WHERE p.Ticket_no = ? ORDER BY STR_TO_DATE(p.Date_Time, '%Y-%m-%d %H:%i:%s') DESC",
       [String(ticketData[0].Ticket_No)]
     );
 

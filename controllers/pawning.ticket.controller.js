@@ -16,6 +16,7 @@ export const createPawningTicket = async (req, res, next) => {
     // net weight have to be equal or less than gross weight
     // pawning value have to equal or less than table value
     const { data } = req.body;
+
     console.log(data, "data in createPawningTicket");
     const requiredFields = [
       "ticketNo",
@@ -744,10 +745,16 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
         return next(errorHandler(404, "No matching product plan found"));
       }
 
-      interestRate = Number(filteredPlan.Interest) || 0;
-      serviceCharge = Number(filteredPlan.Service_Charge_Value);
-      lateChargePrecentage = Number(filteredPlan.Late_Charge);
+      if (filteredPlan.interestApplicableMethod === "calculate for stages ") {
+        interestRate = parseFloat(filteredPlan.stage4Interest) || 0;
+      } else {
+        interestRate = parseFloat(filteredPlan.Interest) || 0;
+      }
+      serviceCharge = parseFloat(filteredPlan.Service_Charge_Value);
+      lateChargePrecentage = parseFloat(filteredPlan.Late_Charge);
       interestType = filteredPlan.Interest_type || "N/A";
+
+      console.log("Interest rate:", interestRate);
 
       // Fixed date calculation - add days to current date
       const currentDate = new Date();
@@ -774,15 +781,20 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
         const max = Number(plan.Maximum_Amount);
         return advanceNum >= min && advanceNum <= max;
       });
+      console.log(filteredPlan, "filteredPlan");
 
       if (!filteredPlan) {
         return next(errorHandler(404, "No matching product plan found"));
       }
-
-      interestRate = Number(filteredPlan.Interest) || 0;
+      if (filteredPlan.interestApplicableMethod === "calculate for stages ") {
+        interestRate = Number(filteredPlan.stage4Interest) || 0;
+      } else {
+        interestRate = Number(filteredPlan.Interest) || 0;
+      }
       serviceCharge = Number(filteredPlan.Service_Charge_Value);
       lateChargePrecentage = Number(filteredPlan.Late_Charge);
       interestType = filteredPlan.Interest_type || "N/A";
+      console.log("Interest rate:", interestRate);
 
       // Fixed date calculation - add days to current date
       const currentDate = new Date();

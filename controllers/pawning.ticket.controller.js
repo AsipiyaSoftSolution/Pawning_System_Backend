@@ -713,6 +713,7 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
     let lateChargePrecentage = 0;
     let interestApplyOn = null;
     let interestType;
+    let serviceChargeType;
 
     // Convert interestMethod to number for comparison
     const interestMethodNum = Number(interestMethod);
@@ -753,6 +754,7 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
       serviceCharge = parseFloat(filteredPlan.Service_Charge_Value);
       lateChargePrecentage = parseFloat(filteredPlan.Late_Charge);
       interestType = filteredPlan.Interest_type || "N/A";
+      serviceChargeType = filteredPlan.Service_Charge_Value_type || "N/A";
 
       console.log("Interest rate:", interestRate);
 
@@ -795,6 +797,7 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
       lateChargePrecentage = Number(filteredPlan.Late_Charge);
       interestType = filteredPlan.Interest_type || "N/A";
       console.log("Interest rate:", interestRate);
+      serviceChargeType = filteredPlan.Service_Charge_Value_type || "N/A";
 
       // Fixed date calculation - add days to current date
       const currentDate = new Date();
@@ -818,6 +821,7 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
       lateChargePrecentage,
       interestApplyOn: interestApplyOnDate,
       interestType,
+      serviceChargeType,
     });
   } catch (error) {
     console.error("Error in getTicketFinancialDetails:", error);

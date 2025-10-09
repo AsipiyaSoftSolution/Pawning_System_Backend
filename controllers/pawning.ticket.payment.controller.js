@@ -741,10 +741,10 @@ export const createTicketRenewalPayment = async (req, res, next) => {
       );
     }
 
-    // update the ticket's maturity date and Status to active (1)
+    // update the ticket's maturity date and Status to active (1) with grant date to today
     const [updateMaturityResult] = await pool.query(
-      "UPDATE pawning_ticket SET Maturity_date = ? , Status = '1' WHERE idPawning_Ticket = ?",
-      [newMaturityDate, ticketId]
+      "UPDATE pawning_ticket SET Maturity_date = ? , Status = '1',Date_Time = ? WHERE idPawning_Ticket = ?",
+      [newMaturityDate, new Date(), ticketId]
     );
 
     if (updateMaturityResult.affectedRows === 0) {

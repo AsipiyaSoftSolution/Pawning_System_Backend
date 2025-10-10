@@ -1782,3 +1782,107 @@ export const sendSettledTickets = async (req, res, next) => {
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
+
+// send ticket which status '1' or '-1' for ticket print after ticket approve or ticket renewal (-1 after ticket approve and after renewal ticket goes to 1 which is active state)
+export const sendTicketsForPrinting = async (req, res, next) => {
+  try {
+    const { product, start_date, end_date, nic } = req.query;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+    console.log(req.query, "query params for printing");
+
+    // Build base WHERE conditions for both count and data queries
+    let baseWhereConditions =
+      "pt.Branch_idBranch = ? AND (pt.Status = '1' OR pt.Status = '-1')";
+    let countParams = [req.branchId];
+    let dataParams = [req.branchId];
+
+    // Add filter conditions dynamically
+    if (product) {
+      // Sanitize product name for LIKE query
+      const sanitizedProduct = `%${product.replace(/[%_\\]/g, "\\$&")}%`;
+      baseWhereConditions += " AND pp.Name LIKE ?";
+      countParams.push(sanitizedProduct);
+      dataParams.push(sanitizedProduct);
+    }
+
+    if (start_date) {
+      // Validate date format (YYYY-MM-DD)
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRegex.test(start_date)) {
+        return next(
+          errorHandler(400, "Invalid start_date format. Use YYYY-MM-DD")
+        );
+      }
+      baseWhereConditions +=
+        " AND DATE(STR_TO_DATE(pt.Date_Time, '%Y-%m-%d %H:%i:%s')) >= ?";
+      countParams.push(start_date);
+      dataParams.push(start_date);
+    }
+
+    if (end_date) {
+      // Validate date format (YYYY-MM-DD)
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRegex.test(end_date)) {
+        return next(
+          errorHandler(400, "Invalid end_date format. Use YYYY-MM-DD")
+        );
+      }
+      baseWhereConditions +=
+        " AND DATE(STR_TO_DATE(pt.Date_Time, '%Y-%m-%d %H:%i:%s')) <= ?";
+      countParams.push(end_date);
+      dataParams.push(end_date);
+    }
+
+    // Validate date range if both dates are provided
+    if (start_date && end_date) {
+      if (new Date(start_date) > new Date(end_date)) {
+        return next(errorHandler(400, "start_date cannot be after end_date"));
+      }
+    }
+
+    if (nic) {
+      // Sanitize and format NIC for SQL LIKE query
+      const sanitizedNIC = nic.replace(/[^a-zA-Z0-9]/g, ""); // Remove special characters
+
+      const formattedNIC = formatSearchPattern(sanitizedNIC);
+      baseWhereConditions += " AND c.NIC LIKE ?";
+      countParams.push(formattedNIC);
+      dataParams.push(formattedNIC);
+    }
+
+    // Build count query with same conditions as main query
+    const countQuery = `SELECT COUNT(*) AS total
+                        FROM pawning_ticket pt
+                 LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
+                 LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product 
+                       WHERE ${baseWhereConditions}`;
+    const paginationData = await getPaginationData(
+      countQuery,
+      countParams,
+      page,
+      limit
+    );
+
+    // Build main data query - fetch ticket data with customer NIC and product name
+    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, pt.Pawning_Advance_Amount, pt.Status, c.Full_name, c.NIC, c.Mobile_No, pp.Name AS ProductName
+                  FROM pawning_ticket pt
+            LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
+            LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product
+                  WHERE ${baseWhereConditions}
+               ORDER BY pt.idPawning_Ticket DESC LIMIT ? OFFSET ?`;
+    dataParams.push(limit, offset);
+
+    const [tickets] = await pool.query(query, dataParams);
+
+    res.status(200).json({
+      success: true,
+      tickets: tickets || [],
+      pagination: paginationData,
+    });
+  } catch (error) {
+    console.error("Error in sendTicketsForPrinting:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};

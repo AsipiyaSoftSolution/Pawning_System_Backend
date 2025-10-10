@@ -21,6 +21,7 @@ import {
   activatePawningTicket,
   sendActiveTickets,
   sendSettledTickets,
+  sendTicketsForPrinting,
 } from "../controllers/pawning.ticket.controller.js";
 const router = express.Router();
 
@@ -160,4 +161,11 @@ router.get(
   checkUserBranchAccess,
   sendSettledTickets
 ); // Get all overdue pawning tickets
+
+router.get(
+  "/:branchId/tickets-for-printing",
+  protectedRoute,
+  checkUserBranchAccess,
+  sendTicketsForPrinting
+); // Get all tickets for printing
 export default router;

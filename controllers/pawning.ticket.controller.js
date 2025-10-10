@@ -404,11 +404,11 @@ export const createPawningTicket = async (req, res, next) => {
       req.userId
     );
 
-    if (data.grantDate !== new Date().toISOString().split("T")[0]) {
+    /*if (data.grantDate !== new Date().toISOString().split("T")[0]) {
       // If the grant date is not today, create logs for interest and penalty up to today
       // This happens when old tickets are created on current system
       await addTicketLogsByTicketId(ticketId);
-    }
+    } */
 
     res.status(201).json({
       success: true,

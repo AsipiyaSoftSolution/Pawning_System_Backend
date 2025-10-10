@@ -146,7 +146,7 @@ export const getTicketDataById = async (req, res, next) => {
 
     // get ticket payment history from ticket payment table
     [paymentHistory] = await pool.query(
-      "SELECT p.Date_Time, p.Type, p.Amount, p.Description, u.full_name FROM payment p LEFT JOIN user u ON p.User = u.idUser WHERE p.Ticket_no = ? ORDER BY STR_TO_DATE(p.Date_Time, '%Y-%m-%d %H:%i:%s') DESC",
+      "SELECT p.Date_Time, p.Type, p.Amount, p.Description, p.Advance_Payment, p.Service_Charge_Payment, p.Interest_Payment,p.Other_Charges_Payment, p.Late_Charges_Payment, p.Early_Charge_Payment, u.full_name FROM payment p LEFT JOIN user u ON p.User = u.idUser WHERE p.Ticket_no = ? ORDER BY STR_TO_DATE(p.Date_Time, '%Y-%m-%d %H:%i:%s') DESC",
       [String(ticketData[0].Ticket_No)]
     );
 
@@ -681,7 +681,7 @@ export const createTicketRenewalPayment = async (req, res, next) => {
 
     // check if the ticket exists and belongs to the branch
     const [existingTicket] = await pool.query(
-      "SELECT Interest_apply_on,Maturity_date,Date_Time,Ticket_No FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+      "SELECT Interest_apply_on,Maturity_date,Date_Time,Ticket_No,Period_Type,Period FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
       [ticketId, req.branchId]
     );
     if (existingTicket.length === 0) {
@@ -716,10 +716,35 @@ export const createTicketRenewalPayment = async (req, res, next) => {
       );
     }
 
-    // update the ticket's maturity date to today
+    // update the ticket's maturity date from today to new maturity date based on ticket's Period_Type and Period
+    let newMaturityDate = new Date(); // start from today
+    if (existingTicket[0].Period_Type === "days") {
+      newMaturityDate.setDate(
+        newMaturityDate.getDate() + parseInt(existingTicket[0].Period)
+      );
+    }
+    if (existingTicket[0].Period_Type === "months") {
+      newMaturityDate.setMonth(
+        newMaturityDate.getMonth() + parseInt(existingTicket[0].Period)
+      );
+    }
+
+    if (existingTicket[0].Period_Type === "years") {
+      newMaturityDate.setFullYear(
+        newMaturityDate.getFullYear() + parseInt(existingTicket[0].Period)
+      );
+    }
+
+    if (existingTicket[0].Period_Type === "weeks") {
+      newMaturityDate.setDate(
+        newMaturityDate.getDate() + 7 * parseInt(existingTicket[0].Period)
+      );
+    }
+
+    // update the ticket's maturity date and Status to active (1) with grant date to today
     const [updateMaturityResult] = await pool.query(
-      "UPDATE pawning_ticket SET Maturity_date = ? WHERE idPawning_Ticket = ?",
-      [new Date(), ticketId]
+      "UPDATE pawning_ticket SET Maturity_date = ? , Status = '1',Date_Time = ? WHERE idPawning_Ticket = ?",
+      [newMaturityDate, new Date(), ticketId]
     );
 
     if (updateMaturityResult.affectedRows === 0) {

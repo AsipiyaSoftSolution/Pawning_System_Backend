@@ -557,3 +557,64 @@ export const getCustomerLogsDataById = async (req, res, next) => {
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
+
+// Black list a customer from company
+export const blacklistCustomer = async (req, res, next) => {
+  try {
+    const customerId = req.params.id || req.params.customerId;
+    if (!customerId) {
+      return next(errorHandler(400, "Customer ID is required"));
+    }
+
+    // Check if the customer exists
+    const [isExitingCustomer] = await pool.query(
+      "SELECT Status,NIC,  Branch_idBranch  FROM customer WHERE idCustomer = ? AND Branch_idBranch = ?",
+      [customerId, req.branchId]
+    );
+
+    if (isExitingCustomer.length === 0) {
+      return next(errorHandler(404, "Customer not found"));
+    }
+
+    // check customer is already blacklisted
+    if (isExitingCustomer[0].Status === 0) {
+      return next(errorHandler(400, "Customer is already blacklisted"));
+    }
+
+    // if exist check this customer NIC in all company branches
+    const [companyBranches] = await pool.query(
+      "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
+      [req.companyId]
+    );
+
+    if (companyBranches.length === 0) {
+      return next(errorHandler(404, "No branches found for this company"));
+    }
+
+    // loop through all branches and update the customer status to 0 (blacklist)
+    for (const branch of companyBranches) {
+      // update status to 0 (blacklist) for this customer NIC in this branch
+      await pool.query(
+        "UPDATE customer SET Status = 0 WHERE NIC = ? AND Branch_idBranch = ?",
+        [isExitingCustomer[0].NIC, branch.idBranch]
+      );
+
+      // log the blacklisting for this customer in this branch
+      await customerLog(
+        customerId,
+        new Date(),
+        "BLACKLIST",
+        `Customer blacklisted from company. Branch ID: ${branch.idBranch}`,
+        req.userId
+      );
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Customer blacklisted from company successfully",
+    });
+  } catch (error) {
+    console.error("Error blacklisting customer:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};

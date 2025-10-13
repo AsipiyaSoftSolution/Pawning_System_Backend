@@ -9,6 +9,7 @@ import {
   getCustomerDataByNIC,
   deleteDocuments,
   getCustomerLogsDataById,
+  blacklistCustomer,
 } from "../controllers/customer.controller.js";
 import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
 
@@ -69,6 +70,14 @@ router.get(
   protectedRoute,
   checkUserBranchAccess,
   getCustomerLogsDataById
+);
+
+// blacklist a customer
+router.patch(
+  "/:branchId/blacklist-customer/:customerId",
+  protectedRoute,
+  checkUserBranchAccess,
+  blacklistCustomer
 );
 
 export default router;

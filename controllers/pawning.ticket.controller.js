@@ -2088,3 +2088,25 @@ export const generatePawningTicketNumber = async (req, res, next) => {
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
+
+// check if there is tickets in the company (enable or disable ticket number auto generate start from input)
+export const checkIfTicketsExistInCompany = async (req, res, next) => {
+  try {
+    const [isTicketExistInCompany] = await pool.query(
+      `SELECT pt.idPawning_Ticket
+       FROM pawning_ticket pt
+       JOIN branch b ON pt.Branch_idBranch = b.idBranch
+       WHERE b.Company_idCompany = ?
+       LIMIT 1`,
+      [req.companyId]
+    );
+
+    res.status(200).json({
+      success: true,
+      ticketsExist: isTicketExistInCompany.length > 0,
+    });
+  } catch (error) {
+    console.error("Error in checkIfTicketsExistInCompany:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};

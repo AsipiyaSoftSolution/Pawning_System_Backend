@@ -24,6 +24,7 @@ import {
   sendTicketsForPrinting,
   markTicketAsPrinted,
   generatePawningTicketNumber,
+  checkIfTicketsExistInCompany,
 } from "../controllers/pawning.ticket.controller.js";
 const router = express.Router();
 
@@ -184,4 +185,11 @@ router.get(
   checkUserBranchAccess,
   generatePawningTicketNumber
 ); // Generate pawning ticket number
+
+router.get(
+  "/:branchId/check-if-tickets-exist",
+  protectedRoute,
+  checkUserBranchAccess,
+  checkIfTicketsExistInCompany
+); // Check if tickets exist in the company
 export default router;

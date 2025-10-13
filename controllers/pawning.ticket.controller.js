@@ -1794,7 +1794,7 @@ export const sendTicketsForPrinting = async (req, res, next) => {
 
     // Build base WHERE conditions for both count and data queries
     let baseWhereConditions =
-      "pt.Branch_idBranch = ? AND (pt.Status = '1' OR pt.Status = '-1')";
+      "pt.Branch_idBranch = ? AND (pt.Status = '1' OR pt.Status = '-1') AND pt.Print_Status = '0'";
     let countParams = [req.branchId];
     let dataParams = [req.branchId];
 
@@ -1891,6 +1891,46 @@ export const sendTicketsForPrinting = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Error in sendTicketsForPrinting:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// Mark ticket Print_Status as '1' after printing
+export const markTicketAsPrinted = async (req, res, next) => {
+  try {
+    const ticketId = req.params.id || req.params.ticketId;
+    if (!ticketId) {
+      return next(errorHandler(400, "Ticket ID is required"));
+    }
+
+    const [existingTicketRow] = await pool.query(
+      "SELECT 1 FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+      [ticketId, req.branchId]
+    );
+
+    if (existingTicketRow.length === 0) {
+      return next(errorHandler(404, "No ticket found for the given ID"));
+    }
+
+    // Update the Print_Status to '1'
+    const [result] = await pool.query(
+      "UPDATE pawning_ticket SET Print_Status = '1' WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+      [ticketId, req.branchId]
+    );
+
+    if (result.affectedRows === 0) {
+      return next(
+        errorHandler(500, "Failed to update the ticket print status")
+      );
+    }
+
+    res.status(200).json({
+      success: true,
+      ticketId: ticketId,
+      message: "Ticket marked as printed successfully.",
+    });
+  } catch (error) {
+    console.error("Error in markTicketAsPrinted:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

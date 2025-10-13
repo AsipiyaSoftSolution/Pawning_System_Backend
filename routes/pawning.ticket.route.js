@@ -22,6 +22,7 @@ import {
   sendActiveTickets,
   sendSettledTickets,
   sendTicketsForPrinting,
+  markTicketAsPrinted,
 } from "../controllers/pawning.ticket.controller.js";
 const router = express.Router();
 
@@ -168,4 +169,11 @@ router.get(
   checkUserBranchAccess,
   sendTicketsForPrinting
 ); // Get all tickets for printing
+
+router.patch(
+  "/:branchId/mark-ticket-as-printed/:ticketId",
+  protectedRoute,
+  checkUserBranchAccess,
+  markTicketAsPrinted
+); // Mark a ticket as printed (make Print_Status = '1')
 export default router;

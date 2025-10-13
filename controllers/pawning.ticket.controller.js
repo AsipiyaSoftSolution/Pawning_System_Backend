@@ -1934,3 +1934,179 @@ export const markTicketAsPrinted = async (req, res, next) => {
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
+
+// Generate pawning ticket number
+export const generatePawningTicketNumber = async (req, res, next) => {
+  try {
+    const { customerId, productId } = req.query;
+    const formatComponents = [
+      "Branch Number",
+      "Branch's Customer Count",
+      "Product Code",
+      "Customer Number",
+      "Auto Create Number",
+    ];
+    let ticketNo = "";
+
+    const [ticketFormat] = await pool.query(
+      "SELECT * FROM pawning_ticket_format WHERE company_id = ?",
+      [req.companyId]
+    );
+
+    if (ticketFormat.length === 0) {
+      return next(
+        errorHandler(404, "Pawning ticket number format not configured")
+      );
+    }
+
+    // check if the ticket format type is custom format
+
+    if (ticketFormat[0].format_type === "Format") {
+      const formatString = ticketFormat[0].format; // get the format string (eg : branch-customer-product-customer-autonumber)
+
+      // Split the format string but preserve separators
+      const formatPartsWithSeparators = formatString.split(/([-.\/])/);
+
+      for (let i = 0; i < formatPartsWithSeparators.length; i++) {
+        const part = formatPartsWithSeparators[i].trim();
+
+        // If it's a separator, add it to ticketNo
+        if (["-", ".", "/"].includes(part)) {
+          ticketNo += part;
+          continue;
+        }
+
+        // If it's a format component, process it
+        if (part === "Branch Number") {
+          // get the branch number
+          const [branch] = await pool.query(
+            "SELECT Branch_Code FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
+            [req.branchId, req.companyId]
+          );
+
+          if (branch.length === 0) {
+            return next(errorHandler(404, "Branch not found"));
+          }
+
+          ticketNo += branch[0].Branch_Code || "00";
+        }
+
+        if (part === "Branch's Customer Count") {
+          const [customerCount] = await pool.query(
+            "SELECT COUNT(*) AS count FROM customer WHERE Branch_idBranch = ?",
+            [req.branchId]
+          );
+
+          if (customerCount.length === 0) {
+            return next(errorHandler(404, "No customers found for the branch"));
+          }
+
+          ticketNo += customerCount[0].count.toString().padStart(4, "0");
+        }
+
+        if (part === "Product Code") {
+          if (productId) {
+            ticketNo += productId.toString().padStart(3, "0");
+          } else {
+            ticketNo += "000"; // default if productId not provided
+          }
+        }
+
+        if (part === "Customer Number") {
+          if (customerId) {
+            ticketNo += customerId.toString().padStart(4, "0");
+          } else {
+            ticketNo += "0000"; // default if customerId not provided
+          }
+        }
+
+        if (part === "Auto Create Number") {
+          let autoNumber = ticketFormat[0].auto_generate_start_from;
+          if (autoNumber !== undefined && autoNumber !== null) {
+            // calculate the total tickets in the company
+            let ticketCount = 0;
+            // find all the branches for this specific company
+            const [branches] = await pool.query(
+              "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
+              [req.companyId]
+            );
+
+            if (branches.length === 0) {
+              return next(
+                errorHandler(404, "No branches found for the company")
+              );
+            }
+
+            // loop through each branch and count ticket's
+            for (const branch of branches) {
+              const [branchTicketCount] = await pool.query(
+                "SELECT COUNT(*) AS count FROM pawning_ticket WHERE Branch_idBranch = ?",
+                [branch.idBranch]
+              );
+              ticketCount += branchTicketCount[0].count;
+            }
+
+            autoNumber += ticketCount;
+
+            ticketNo += autoNumber.toString();
+          } else {
+            ticketNo += "1"; // default auto number
+          }
+        }
+      }
+    } else {
+      let ticketCount = 0;
+      // find all the branches for this specific company
+      const [branches] = await pool.query(
+        "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
+        [req.companyId]
+      );
+
+      if (branches.length === 0) {
+        return next(errorHandler(404, "No branches found for the company"));
+      }
+
+      // loop through each branch and count ticket's
+      for (const branch of branches) {
+        const [branchTicketCount] = await pool.query(
+          "SELECT COUNT(*) AS count FROM pawning_ticket WHERE Branch_idBranch = ?",
+          [branch.idBranch]
+        );
+        ticketCount += branchTicketCount[0].count;
+      }
+
+      ticketNo = ticketCount;
+    }
+
+    res.status(200).json({
+      success: true,
+      ticketNumber: ticketNo,
+      message: "Pawning ticket number generated successfully.",
+    });
+  } catch (error) {
+    console.error("Error in generatePawningTicketNumber:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// check if there is tickets in the company (enable or disable ticket number auto generate start from input)
+export const checkIfTicketsExistInCompany = async (req, res, next) => {
+  try {
+    const [isTicketExistInCompany] = await pool.query(
+      `SELECT pt.idPawning_Ticket
+       FROM pawning_ticket pt
+       JOIN branch b ON pt.Branch_idBranch = b.idBranch
+       WHERE b.Company_idCompany = ?
+       LIMIT 1`,
+      [req.companyId]
+    );
+
+    res.status(200).json({
+      success: true,
+      ticketsExist: isTicketExistInCompany.length > 0,
+    });
+  } catch (error) {
+    console.error("Error in checkIfTicketsExistInCompany:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};

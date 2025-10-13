@@ -1239,6 +1239,7 @@ export const updatePawningTicketNumberFormat = async (req, res, next) => {
       pawningTicketNumberFormat,
       pawningTicketNumberFormatType,
       pawningTicketNumberAutoGenerateStartFrom,
+      selectedOption,
     } = req.body;
 
     if (!pawningTicketNumberFormatType) {
@@ -1296,6 +1297,102 @@ export const updatePawningTicketNumberFormat = async (req, res, next) => {
 
     if (result.affectedRows === 0) {
       return next(errorHandler(500, "Failed to update pawning ticket format"));
+    }
+
+    if (selectedOption === "updateAll") {
+      // Update all existing pawning tickets to match the new format
+      try {
+        // Get all existing pawning tickets for this company
+        const [existingTickets] = await pool.query(
+          `SELECT pt.idPawning_Ticket, pt.Customer_idCustomer, pt.Pawning_Product_idPawning_Product, pt.Branch_idBranch
+           FROM pawning_ticket pt
+           JOIN branch b ON pt.Branch_idBranch = b.idBranch
+           WHERE b.Company_idCompany = ?
+           ORDER BY pt.idPawning_Ticket ASC`,
+          [req.companyId]
+        );
+
+        if (existingTickets.length > 0) {
+          let autoNumberCounter = pawningTicketNumberAutoGenerateStartFrom || 1;
+
+          for (const ticket of existingTickets) {
+            let newTicketNo = "";
+
+            if (pawningTicketNumberFormatType === "Format") {
+              const formatPartsWithSeparators =
+                pawningTicketNumberFormat.split(/([-.\/])/);
+
+              for (let i = 0; i < formatPartsWithSeparators.length; i++) {
+                const part = formatPartsWithSeparators[i].trim();
+
+                // If it's a separator, add it to newTicketNo
+                if (["-", ".", "/"].includes(part)) {
+                  newTicketNo += part;
+                  continue;
+                }
+
+                // Process format components
+                if (part === "Branch Number") {
+                  const [branch] = await pool.query(
+                    "SELECT Branch_Code FROM branch WHERE idBranch = ?",
+                    [ticket.Branch_idBranch]
+                  );
+                  newTicketNo += branch[0]?.Branch_Code || "00";
+                }
+
+                if (part === "Branch's Customer Count") {
+                  const [customerCount] = await pool.query(
+                    "SELECT COUNT(*) AS count FROM customer WHERE Branch_idBranch = ?",
+                    [ticket.Branch_idBranch]
+                  );
+                  newTicketNo += customerCount[0].count
+                    .toString()
+                    .padStart(4, "0");
+                }
+
+                if (part === "Product Code") {
+                  const productId = ticket.Pawning_Product_idPawning_Product;
+                  if (productId) {
+                    newTicketNo += productId.toString().padStart(3, "0");
+                  } else {
+                    newTicketNo += "000";
+                  }
+                }
+
+                if (part === "Customer Number") {
+                  const customerId = ticket.Customer_idCustomer;
+                  if (customerId) {
+                    newTicketNo += customerId.toString().padStart(4, "0");
+                  } else {
+                    newTicketNo += "0000";
+                  }
+                }
+
+                if (part === "Auto Create Number") {
+                  newTicketNo += autoNumberCounter.toString();
+                  autoNumberCounter++;
+                }
+              }
+            } else {
+              // For "Custom Format" type, use simple auto-increment
+              newTicketNo = autoNumberCounter.toString();
+              autoNumberCounter++;
+            }
+
+            // Update the ticket with the new ticket number
+            await pool.query(
+              "UPDATE pawning_ticket SET Ticket_No = ? WHERE idPawning_Ticket = ?",
+              [newTicketNo, ticket.idPawning_Ticket]
+            );
+          }
+
+          console.log(
+            `Updated ${existingTickets.length} existing tickets with new format`
+          );
+        }
+      } catch (updateError) {
+        console.error("Error updating existing tickets:", updateError);
+      }
     }
 
     res.status(200).json({

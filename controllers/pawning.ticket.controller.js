@@ -2021,8 +2021,33 @@ export const generatePawningTicketNumber = async (req, res, next) => {
         }
 
         if (part === "Auto Create Number") {
-          const autoNumber = ticketFormat[0].auto_generate_start_from;
+          let autoNumber = ticketFormat[0].auto_generate_start_from;
           if (autoNumber !== undefined && autoNumber !== null) {
+            // calculate the total tickets in the company
+            let ticketCount = 0;
+            // find all the branches for this specific company
+            const [branches] = await pool.query(
+              "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
+              [req.companyId]
+            );
+
+            if (branches.length === 0) {
+              return next(
+                errorHandler(404, "No branches found for the company")
+              );
+            }
+
+            // loop through each branch and count ticket's
+            for (const branch of branches) {
+              const [branchTicketCount] = await pool.query(
+                "SELECT COUNT(*) AS count FROM pawning_ticket WHERE Branch_idBranch = ?",
+                [branch.idBranch]
+              );
+              ticketCount += branchTicketCount[0].count;
+            }
+
+            autoNumber += ticketCount;
+
             ticketNo += autoNumber.toString();
           } else {
             ticketNo += "1"; // default auto number

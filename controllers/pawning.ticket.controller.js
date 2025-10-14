@@ -596,12 +596,14 @@ export const sendCaratageAmountForSelectedProductItem = async (
 
     // Fetch all product items for the product and period type
     const [productItems] = await pool.query(
-      "SELECT idProduct_Plan, Amount_For_22_Caratage, Minimum_Period, Maximum_Period, Minimum_Amount, Maximum_Amount FROM product_plan WHERE Pawning_Product_idPawning_Product = ? ",
-      [productId, periodType]
+      "SELECT idProduct_Plan, Amount_For_22_Caratage, Minimum_Period, Maximum_Period, Minimum_Amount, Maximum_Amount,Week_Precentage_Amount_22_Caratage,Month1_Precentage_Amount_22_Caratage,Month3_Precentage_Amount_22_Caratage,Month6_Precentage_Amount_22_Caratage,Month9_Precentage_Amount_22_Caratage,Month12_Precentage_Amount_22_Caratage FROM product_plan WHERE Pawning_Product_idPawning_Product = ? ",
+      [productId]
     );
 
     let filteredItem = null;
+    let caratAmountPrecentage = 0;
     if (Number(interestMethod) === 0) {
+      // for interest method Interest for Pawning Amount
       // All records have the same Amount_For_22_Caratage, use the first one
       if (!productItems.length) {
         return res.status(404).json({
@@ -609,18 +611,162 @@ export const sendCaratageAmountForSelectedProductItem = async (
           message: "No product plan found for the given criteria",
         });
       }
-      const baseAmount = Number(productItems[0].Amount_For_22_Caratage);
-      const caratNum = Number(caratage);
+
+      // if the period type is days , weeks , months or years have to get the caratage precentage amount based on period
+      if (periodType === "days") {
+        // period is in days
+        if (Number(period) <= 7) {
+          caratAmountPrecentage = Number(
+            productItems[0].Week_Precentage_Amount_22_Caratage
+          );
+        }
+
+        if (Number(period) > 7 && Number(period) <= 30) {
+          caratAmountPrecentage = Number(
+            productItems[0].Month1_Precentage_Amount_22_Caratage
+          );
+        }
+
+        if (Number(period) > 30 && Number(period) <= 90) {
+          caratAmountPrecentage = Number(
+            productItems[0].Month3_Precentage_Amount_22_Caratage
+          );
+        }
+
+        if (Number(period) > 90 && Number(period) <= 180) {
+          caratAmountPrecentage = Number(
+            productItems[0].Month6_Precentage_Amount_22_Caratage
+          );
+        }
+        if (Number(period) > 180 && Number(period) <= 270) {
+          caratAmountPrecentage = Number(
+            productItems[0].Month9_Precentage_Amount_22_Caratage
+          );
+        }
+
+        if (Number(period) > 270 && Number(period) <= 365) {
+          caratAmountPrecentage = Number(
+            productItems[0].Month12_Precentage_Amount_22_Caratage
+          );
+        }
+
+        if (Number(period) > 365) {
+          caratAmountPrecentage = 100; // assign 100% if more than a year
+        }
+      }
+
+      if (periodType === "weeks") {
+        // period is in weeks
+        if (Number(period) === 1) {
+          caratAmountPrecentage = Number(
+            productItems[0].Week_Precentage_Amount_22_Caratage
+          );
+        }
+
+        if (Number(period) > 1 && Number(period) <= 4) {
+          caratAmountPrecentage = Number(
+            productItems[0].Month1_Precentage_Amount_22_Caratage
+          );
+        }
+
+        if (Number(period) > 4 && Number(period) <= 13) {
+          caratAmountPrecentage = Number(
+            productItems[0].Month3_Precentage_Amount_22_Caratage
+          );
+        }
+
+        if (Number(period) > 13 && Number(period) <= 26) {
+          caratAmountPrecentage = Number(
+            productItems[0].Month6_Precentage_Amount_22_Caratage
+          );
+        }
+
+        if (Number(period) > 26 && Number(period) <= 39) {
+          caratAmountPrecentage = Number(
+            productItems[0].Month9_Precentage_Amount_22_Caratage
+          );
+        }
+
+        if (Number(period) > 39 && Number(period) <= 52) {
+          caratAmountPrecentage = Number(
+            productItems[0].Month12_Precentage_Amount_22_Caratage
+          );
+        }
+
+        if (Number(period) > 52) {
+          caratAmountPrecentage = 100; // assign 100% if more than a year
+        }
+      }
+
+      if (periodType === "months") {
+        if (Number(period) === 1) {
+          caratAmountPrecentage = Number(
+            productItems[0].Month1_Precentage_Amount_22_Caratage
+          );
+        }
+
+        if (Number(period) > 1 && Number(period) <= 3) {
+          caratAmountPrecentage = Number(
+            productItems[0].Month3_Precentage_Amount_22_Caratage
+          );
+        }
+
+        if (Number(period) > 3 && Number(period) <= 6) {
+          caratAmountPrecentage = Number(
+            productItems[0].Month6_Precentage_Amount_22_Caratage
+          );
+        }
+
+        if (Number(period) > 6 && Number(period) <= 9) {
+          caratAmountPrecentage = Number(
+            productItems[0].Month9_Precentage_Amount_22_Caratage
+          );
+        }
+
+        if (Number(period) > 9 && Number(period) <= 12) {
+          caratAmountPrecentage = Number(
+            productItems[0].Month12_Precentage_Amount_22_Caratage
+          );
+        }
+
+        if (Number(period) > 12) {
+          caratAmountPrecentage = 100; // assign 100% if more than a year
+        }
+      }
+
+      if (periodType === "years") {
+        // period is in years
+        if (Number(period) === 1) {
+          caratAmountPrecentage = Number(
+            productItems[0].Month12_Precentage_Amount_22_Caratage
+          );
+        }
+
+        if (Number(period) > 1) {
+          caratAmountPrecentage = 100; // assign 100% if more than a year
+        }
+      }
+
+      const baseAmount = Number(productItems[0].Amount_For_22_Caratage); // base amount for 22 caratage
+      const caratNum = Number(caratage); // selected caratage
       if (isNaN(baseAmount) || isNaN(caratNum)) {
         return next(errorHandler(400, "Invalid caratage or base amount"));
       }
-      const amount = parseFloat((baseAmount * (caratNum / 22)).toFixed(2));
+      const amountForSelectedCaratage = parseFloat(
+        (baseAmount * (caratNum / 22)).toFixed(2)
+      ); // amount for selected caratage
+
+      const amount = parseFloat(
+        amountForSelectedCaratage * (caratAmountPrecentage / 100)
+      ).toFixed(2); // calculated amount based on caratage precentage
+
       return res.status(200).json({
         success: true,
         caratage: caratNum,
         amount,
       });
     } else if (Number(interestMethod) === 1) {
+      // for interest method Interest for Period
       // Filter by period between min and max period
       const periodNum = Number(period);
       filteredItem = productItems.find((item) => {

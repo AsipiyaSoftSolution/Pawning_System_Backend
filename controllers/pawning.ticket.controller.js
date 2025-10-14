@@ -756,16 +756,19 @@ export const sendCaratageAmountForSelectedProductItem = async (
         (baseAmount * (caratNum / 22)).toFixed(2)
       ); // amount for selected caratage
 
-      const amount = parseFloat(
+      let amount = parseFloat(
         amountForSelectedCaratage * (caratAmountPrecentage / 100)
-      ).toFixed(2); // calculated amount based on caratage precentage
+      ); // calculated amount based on caratage precentage
+
+      // Round amount to nearest 1000
+      amount = Math.ceil(amount / 1000) * 1000;
 
       const perPoundAmount = parseFloat(amount / 8).toFixed(2); // calculated amount per pound
 
       return res.status(200).json({
         success: true,
-        caratage: perPoundAmount,
-        amount,
+        caratage: caratNum,
+        amount: perPoundAmount,
       });
     } else if (Number(interestMethod) === 1) {
       // for interest method Interest for Period

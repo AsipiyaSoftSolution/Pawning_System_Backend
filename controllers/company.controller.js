@@ -2042,3 +2042,170 @@ export const deleteDesignationWithPrivilages = async (req, res, next) => {
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
+
+// SMS template save and update
+export const SMSTemplateSaveOrUpdate = async (req, res, next) => {
+  try {
+    const { templateContent } = req.body;
+
+    // Basic validation
+    if (!templateContent) {
+      return next(errorHandler(400, "Template content is required"));
+    }
+
+    if (
+      templateContent.smsType === null ||
+      templateContent.smsType === undefined
+    ) {
+      return next(errorHandler(400, "SMS type is required"));
+    }
+
+    if (
+      templateContent.templateText === null ||
+      templateContent.templateText === undefined
+    ) {
+      return next(errorHandler(400, "Template text is required"));
+    }
+
+    if (
+      templateContent.smsType === "Maturity Date Reminder" ||
+      templateContent.smsType === "Auction Reminder 01" ||
+      templateContent.smsType === "Auction Reminder 02" ||
+      templateContent.smsType === "Auction Reminder 03"
+    ) {
+      if (
+        templateContent.periodDays === null ||
+        templateContent.periodDays === undefined
+      ) {
+        return next(
+          errorHandler(400, "Period days is required for the selected SMS type")
+        );
+      }
+    }
+
+    const [existingTemplate] = await pool.query(
+      "SELECT idsms_Template FROM sms_template WHERE Company_idCompany = ? AND SMS_Type = ?",
+      [req.companyId, templateContent.smsType]
+    );
+
+    let createdOrUpdatedTemplate = null;
+    if (existingTemplate.length > 0) {
+      // update existing template
+      const [updateResult] = await pool.query(
+        `UPDATE sms_template 
+         SET Template = ?, Period = ?
+         WHERE idsms_Template = ?`,
+        [
+          templateContent.templateText,
+          templateContent.periodDays || null,
+          existingTemplate[0].idsms_Template,
+        ]
+      );
+
+      if (updateResult.affectedRows === 0) {
+        return next(errorHandler(500, "Failed to update SMS template"));
+      }
+
+      const [updatedTemplate] = await pool.query(
+        "SELECT idsms_Template, SMS_Type, Template, Period, Status FROM sms_template WHERE idsms_Template = ?",
+        [existingTemplate[0].idsms_Template]
+      );
+      createdOrUpdatedTemplate = updatedTemplate[0];
+
+      res.status(200).json({
+        createdOrUpdatedTemplate,
+        message: "SMS template updated successfully",
+        success: true,
+      });
+    }
+
+    // create new template
+    else {
+      const [insertResult] = await pool.query(
+        `INSERT INTO sms_template (Company_idCompany, SMS_Type, Template, Period,Status) 
+         VALUES (?, ?, ?, ?, ?)`,
+        [
+          req.companyId,
+          templateContent.smsType,
+          templateContent.templateText,
+          templateContent.periodDays || null,
+          1, // default status to active (1)
+        ]
+      );
+
+      if (insertResult.affectedRows === 0) {
+        return next(errorHandler(500, "Failed to create SMS template"));
+      }
+
+      const [newTemplate] = await pool.query(
+        "SELECT idsms_Template, SMS_Type, Template, Period, Status FROM sms_template WHERE idsms_Template = ?",
+        [insertResult.insertId]
+      );
+      createdOrUpdatedTemplate = newTemplate[0];
+
+      res.status(201).json({
+        createdOrUpdatedTemplate,
+        message: "SMS template created successfully",
+        success: true,
+      });
+    }
+  } catch (error) {
+    console.error("Error saving or updating SMS template:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// Update SMS template status (active/inactive)
+export const updateSMSTemplateStatus = async (req, res, next) => {
+  try {
+    const templateId = req.params.id || req.params.templateId;
+
+    if (!templateId) {
+      return next(errorHandler(400, "Template ID is required"));
+    }
+
+    const [updateResult] = await pool.query(
+      `UPDATE sms_template 
+       SET Status = CASE WHEN Status = 1 THEN 0 ELSE 1 END 
+       WHERE idsms_Template = ? AND Company_idCompany = ?`,
+      [templateId, req.companyId]
+    );
+
+    if (updateResult.affectedRows === 0) {
+      return next(errorHandler(404, "SMS template not found or not updated"));
+    }
+
+    res.status(200).json({
+      message: "SMS template status updated successfully",
+      success: true,
+    });
+  } catch (error) {
+    console.error("Error updating SMS template status:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// Get all SMS templates for the company
+export const getAllSMSTemplates = async (req, res, next) => {
+  try {
+    const type = req.query.type || null;
+
+    if (!type) {
+      return next(errorHandler(400, "SMS type is required"));
+    }
+
+    const [template] = await pool.query(
+      "SELECT idsms_Template, SMS_Type, Template, Period, Status FROM sms_template WHERE Company_idCompany = ? AND SMS_Type = ?",
+      [req.companyId, type]
+    );
+
+    res.status(200).json({
+      message: "SMS templates fetched successfully",
+      success: true,
+      template: template[0] || null,
+    });
+  } catch (error) {
+    console.error("Error fetching SMS templates:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};

@@ -35,6 +35,9 @@ import {
   getDesignationsWithPrivilages,
   updateDesignationWithPrivilages,
   deleteDesignationWithPrivilages,
+  SMSTemplateSaveOrUpdate,
+  updateSMSTemplateStatus,
+  getAllSMSTemplates,
 } from "../controllers/company.controller.js";
 const route = express.Router();
 
@@ -95,6 +98,14 @@ route.post("/article-condition", protectedRoute, createArticleCondition); // Cre
 route.get("/article-conditions", protectedRoute, getArticlesConditions); // Get all article conditions
 route.patch("/article-condition/:id", protectedRoute, updateArticleCondition); // Update article condition by ID
 route.delete("/article-condition/:id", protectedRoute, deleteArticleCondition); // Delete article condition by ID
+
+route.post("/sms-template", protectedRoute, SMSTemplateSaveOrUpdate); // Save or update SMS template
+route.patch(
+  "/sms-template/:templateId/status",
+  protectedRoute,
+  updateSMSTemplateStatus
+); // Update SMS template status (active/inactive)
+route.get("/sms-template", protectedRoute, getAllSMSTemplates); // Get all SMS templates
 
 // TEST USER - to be removed in production
 route.post("/create-test-user", createTESTUser); // Create a test user

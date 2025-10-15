@@ -59,7 +59,7 @@ export const createChartAccount = async (req, res, next) => {
 
     // Get the created account
     const [accountData] = await pool.query(
-      "SELECT * FROM accounting_accounts WHERE idAccounting_Accounts = ?",
+      "SELECT ac.* , u.full_name AS Created_by, (SELECT Account_Name FROM accounting_accounts WHERE idAccounting_Accounts = ac.Parent_Account) AS Parent_Account_Name FROM accounting_accounts ac LEFT JOIN user u ON ac.User_idUser = u.idUser WHERE ac.idAccounting_Accounts = ?",
       [result.insertId]
     );
 
@@ -129,7 +129,7 @@ export const getAllChartAccounts = async (req, res, next) => {
     // Build the main query with filters
     let query = `SELECT a.*, 
       (SELECT Account_Name FROM accounting_accounts WHERE idAccounting_Accounts = a.Parent_Account) AS Parent_Account_Name,
-      (SELECT full_name FROM user WHERE idUser = a.User_idUser) AS Created_As 
+      (SELECT full_name FROM user WHERE idUser = a.User_idUser) AS Created_by 
       FROM accounting_accounts a 
       WHERE a.Branch_idBranch = ? AND a.Status = '1'`;
 

@@ -18,7 +18,12 @@ route.post(
 );
 
 // Get all chart of accounts
-route.get("/", protectedRoute, getAllChartAccounts);
+route.get(
+  "/:branchId",
+  protectedRoute,
+  checkUserBranchAccess,
+  getAllChartAccounts
+);
 
 // Get chart of account by ID
 route.get("/:id", protectedRoute, getChartAccountById);

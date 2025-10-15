@@ -82,28 +82,57 @@ export const createChartAccount = async (req, res, next) => {
 // Get all chart of accounts
 export const getAllChartAccounts = async (req, res, next) => {
   try {
-    // Get branch ID - either from request or use the first branch from user's branches
-    let branchId;
-    if (req.branchId) {
-      branchId = req.branchId;
-    } else if (req.branches && req.branches.length > 0) {
-      branchId = req.branches[0];
-    } else {
-      return next(errorHandler(400, "No branch associated with user"));
+    // Extract query parameters for filtering
+    const { code, name, type } = req.query;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+
+    const offset = (page - 1) * limit;
+    console.log(req.query, "query");
+
+    // Build the count query with filters
+    let countQuery = `SELECT COUNT(*) as count FROM accounting_accounts WHERE Branch_idBranch = ? AND Status = '1'`;
+    const countParams = [req.branchId];
+
+    // Add the same filters to count query
+    if (code) {
+      countQuery += " AND Account_Code LIKE ?";
+      countParams.push(`%${code}%`);
     }
 
-    // Extract query parameters for filtering
-    const { page = 1, limit = 10, code, name, type } = req.query;
-    const offset = (page - 1) * limit;
+    if (name) {
+      countQuery += " AND Account_Name LIKE ?";
+      countParams.push(`%${name}%`);
+    }
 
-    // Build the query with filters - join with user table to get creator's name
+    if (type) {
+      countQuery += " AND Account_Type = ?";
+      countParams.push(type);
+    }
+
+    // Execute count query to get total records
+    const [countResult] = await pool.query(countQuery, countParams);
+    const totalRecords = countResult[0].count;
+
+    // Calculate pagination data
+    const totalPages = Math.ceil(totalRecords / limit);
+    const paginationData = {
+      currentPage: page,
+      totalPages: totalPages,
+      totalRecords: totalRecords,
+      limit: limit,
+      hasNextPage: page < totalPages,
+      hasPrevPage: page > 1,
+    };
+
+    // Build the main query with filters
     let query = `SELECT a.*, 
       (SELECT Account_Name FROM accounting_accounts WHERE idAccounting_Accounts = a.Parent_Account) AS Parent_Account_Name,
       (SELECT full_name FROM user WHERE idUser = a.User_idUser) AS Created_As 
       FROM accounting_accounts a 
-      WHERE a.Branch_idBranch = ? AND a.Status = 1`;
+      WHERE a.Branch_idBranch = ? AND a.Status = '1'`;
 
-    const queryParams = [branchId];
+    const queryParams = [req.branchId];
 
     // Add filters if provided
     if (code) {
@@ -123,55 +152,15 @@ export const getAllChartAccounts = async (req, res, next) => {
 
     // Add pagination
     query += " LIMIT ? OFFSET ?";
-    queryParams.push(parseInt(limit), parseInt(offset));
+    queryParams.push(limit, offset);
 
-    // Get total count for pagination
-    let countQuery = `SELECT COUNT(*) as total FROM accounting_accounts WHERE Branch_idBranch = ? AND Status = 1`;
-    const countParams = [branchId];
-
-    // Add the same filters to count query
-    if (code) {
-      countQuery += " AND Account_Code LIKE ?";
-      countParams.push(`%${code}%`);
-    }
-
-    if (name) {
-      countQuery += " AND Account_Name LIKE ?";
-      countParams.push(`%${name}%`);
-    }
-
-    if (type) {
-      countQuery += " AND Account_Type = ?";
-      countParams.push(type);
-    }
-
-    // Execute the queries
+    // Execute the query
     const [accounts] = await pool.query(query, queryParams);
-    const [countResult] = await pool.query(countQuery, countParams);
-
-    // Calculate pagination data
-    const total = countResult[0].total;
-    const totalPages = Math.ceil(total / limit);
-
-    const pagination = {
-      page: parseInt(page),
-      limit: parseInt(limit),
-      total,
-      totalPages,
-    };
-
-    if (accounts.length === 0) {
-      return res.status(200).json({
-        message: "No chart of accounts found",
-        accounts: [],
-        pagination,
-      });
-    }
 
     res.status(200).json({
       message: "Chart of accounts fetched successfully",
       accounts,
-      pagination,
+      pagination: paginationData,
     });
   } catch (error) {
     console.error("Error fetching chart of accounts:", error);

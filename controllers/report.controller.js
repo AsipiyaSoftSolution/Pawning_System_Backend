@@ -8,7 +8,6 @@ const getAllBranchesForTheCompany = async (companyId) => {
     "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
     [companyId]
   );
-
   return branches;
 };
 
@@ -16,12 +15,8 @@ export const loanToMarketValueReport = async (req, res, next) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
-    const offset = (page - 1) * limit;
 
-    // variable to hold fetched data
-    let ticketsData;
-
-    // get all branches for the company
+    // Get all branches for the company
     const branches = await getAllBranchesForTheCompany(req.companyId);
 
     if (branches.length === 0) {
@@ -35,7 +30,10 @@ export const loanToMarketValueReport = async (req, res, next) => {
 
     const branchIds = branches.map((branch) => branch.idBranch);
 
-    // get pagination data
+    // Calculate offset
+    const offset = (page - 1) * limit;
+
+    // Get pagination data using your existing function
     const paginationData = await getReportPaginationData(
       "SELECT COUNT(*) as count FROM pawning_ticket WHERE Branch_idBranch IN (?)",
       [branchIds],
@@ -43,9 +41,35 @@ export const loanToMarketValueReport = async (req, res, next) => {
       limit
     );
 
-    // fetch ticket data with pagination
-    [ticketsData] = await pool.query(
-      "SELECT t.idPawning_Ticket, t.Ticket_No, t.Date_Time, t.Pawning_Advance_Amount, t.Period, t.Period_Type, t.Maturity_date, c.NIC, c.Full_name, b.Name as Branch_Name FROM pawning_ticket t JOIN customer c ON t.Customer_idCustomer = c.idCustomer JOIN branch b ON t.Branch_idBranch = b.idBranch WHERE t.Branch_idBranch IN (?) ORDER BY STR_TO_DATE(t.Date_Time,'%Y-%m-%d %H:%i:%s') DESC LIMIT ? OFFSET ?",
+    // If no records, return early
+    if (paginationData.totalCount === 0) {
+      return res.status(200).json({
+        success: true,
+        reports: [],
+        pagination: paginationData,
+      });
+    }
+
+    // Fetch ticket data with pagination using calculated offset
+    const [ticketsData] = await pool.query(
+      `SELECT 
+        t.idPawning_Ticket, 
+        t.Ticket_No, 
+        t.Date_Time, 
+        t.Pawning_Advance_Amount, 
+        t.Period, 
+        t.Period_Type, 
+        t.Maturity_date, 
+        t.Status,
+        c.NIC, 
+        c.Full_name, 
+        b.Name as Branch_Name 
+      FROM pawning_ticket t 
+      JOIN customer c ON t.Customer_idCustomer = c.idCustomer 
+      JOIN branch b ON t.Branch_idBranch = b.idBranch 
+      WHERE t.Branch_idBranch IN (?) 
+      ORDER BY t.Date_Time DESC 
+      LIMIT ? OFFSET ?`,
       [branchIds, limit, offset]
     );
 
@@ -61,7 +85,12 @@ export const loanToMarketValueReport = async (req, res, next) => {
 
     // Batch fetch approved users for all tickets
     const [approvedUsers] = await pool.query(
-      "SELECT pta.Pawning_Ticket_idPawning_Ticket, u.full_name FROM user u JOIN ticket_has_approval pta ON u.idUser = pta.User WHERE pta.Pawning_Ticket_idPawning_Ticket IN (?)",
+      `SELECT 
+        pta.Pawning_Ticket_idPawning_Ticket, 
+        u.full_name 
+      FROM user u 
+      JOIN ticket_has_approval pta ON u.idUser = pta.User 
+      WHERE pta.Pawning_Ticket_idPawning_Ticket IN (?)`,
       [ticketIds]
     );
 
@@ -76,28 +105,65 @@ export const loanToMarketValueReport = async (req, res, next) => {
       ticket.Approved_By = approvedUserMap[ticket.idPawning_Ticket] || "";
     });
 
+    // fetch capital outstanding for each ticket from ticket log
+    const [ticketLogs] = await pool.query(
+      `SELECT 
+        Pawning_Ticket_idPawning_Ticket,
+        Total_Balance as Total_Capital_Outstanding
+      FROM ticket_log
+      WHERE Pawning_Ticket_idPawning_Ticket IN (?)
+      `,
+      [ticketIds]
+    );
+
+    const ticketLogMap = {};
+    ticketLogs.forEach((log) => {
+      ticketLogMap[log.Pawning_Ticket_idPawning_Ticket] =
+        log.Total_Capital_Outstanding;
+    });
+
+    // Assign capital outstanding to tickets
+    ticketsData.forEach((ticket) => {
+      ticket.Capital_Outstanding =
+        parseFloat(ticketLogMap[ticket.idPawning_Ticket]) || 0;
+    });
+
     // Batch fetch articles for all tickets
     const [articles] = await pool.query(
-      "SELECT ta.idTicket_Articles, ta.Caratage, ta.Gross_Weight, ta.Net_Weight, ta.Assessed_Value, ta.Advanced_Value, ta.Pawning_Ticket_idPawning_Ticket, at.Description as Article_Type FROM ticket_articles ta JOIN article_types at ON ta.Article_type = at.idArticle_Types WHERE ta.Pawning_Ticket_idPawning_Ticket IN (?)",
+      `SELECT 
+        ta.idTicket_Articles, 
+        ta.Caratage, 
+        ta.Gross_Weight, 
+        ta.Net_Weight, 
+        ta.Assessed_Value, 
+        ta.Advanced_Value, 
+        ta.Pawning_Ticket_idPawning_Ticket, 
+        at.Description as Article_Type 
+      FROM ticket_articles ta 
+      JOIN article_types at ON ta.Article_type = at.idArticle_Types 
+      WHERE ta.Pawning_Ticket_idPawning_Ticket IN (?)`,
       [ticketIds]
     );
 
     // Get unique caratages
     const uniqueCaratages = [
-      ...new Set(articles.map((a) => parseInt(a.Caratage))),
+      ...new Set(
+        articles.map((a) => parseInt(a.Caratage)).filter((c) => !isNaN(c))
+      ),
     ];
 
     // Batch fetch assessed values for all caratages
-    const [assessedValues] = await pool.query(
-      "SELECT Carat, Amount FROM assessed_value WHERE Carat IN (?)",
-      [uniqueCaratages]
-    );
+    let assessedValueMap = {};
+    if (uniqueCaratages.length > 0) {
+      const [assessedValues] = await pool.query(
+        "SELECT Carat, Amount FROM assessed_value WHERE Carat IN (?)",
+        [uniqueCaratages]
+      );
 
-    // Create a map for assessed values
-    const assessedValueMap = {};
-    assessedValues.forEach((av) => {
-      assessedValueMap[av.Carat] = av.Amount;
-    });
+      assessedValues.forEach((av) => {
+        assessedValueMap[av.Carat] = av.Amount;
+      });
+    }
 
     // Process articles and group by ticket
     const articlesByTicket = {};
@@ -141,18 +207,72 @@ export const loanToMarketValueReport = async (req, res, next) => {
       articlesByTicket[ticketId].push(article);
     });
 
-    // Assign articles to tickets
+    // Variables to track totals
+    let totalContractsWithXS = 0;
+    let totalXSValue = 0;
+    let totalContractsWithShortfall = 0;
+    let totalShortfallValue = 0;
+
+    // Assign articles to tickets and calculate XS/Shortfall
     ticketsData.forEach((ticket) => {
       ticket.articles = articlesByTicket[ticket.idPawning_Ticket] || [];
+
+      // Calculate total market value and total advanced value for this ticket
+      let totalMarketValue = 0;
+      let totalAdvancedValue = 0;
+
+      ticket.articles.forEach((article) => {
+        totalMarketValue += parseFloat(article.Current_Market_Value) || 0;
+        totalAdvancedValue += parseFloat(article.Advanced_Value) || 0;
+      });
+
+      // Calculate the difference (Market Value - Advanced Amount)
+      const difference = totalMarketValue - totalAdvancedValue;
+
+      if (difference > 0) {
+        // Excess (XS) - Market value is higher than loan amount
+        ticket.Contract_Type = "XS";
+        ticket.XS_Value = parseFloat(difference.toFixed(2));
+        ticket.Shortfall_Value = 0;
+
+        totalContractsWithXS++;
+        totalXSValue += difference;
+      } else if (difference < 0) {
+        // Shortfall - Loan amount is higher than market value
+        ticket.Contract_Type = "Shortfall";
+        ticket.Shortfall_Value = parseFloat(Math.abs(difference).toFixed(2));
+        ticket.XS_Value = 0;
+
+        totalContractsWithShortfall++;
+        totalShortfallValue += Math.abs(difference);
+      } else {
+        // Equal - rare case
+        ticket.Contract_Type = "Equal";
+        ticket.XS_Value = 0;
+        ticket.Shortfall_Value = 0;
+      }
+
+      // Add total values to ticket for reference
+      ticket.Total_Market_Value = parseFloat(totalMarketValue.toFixed(2));
+      ticket.Total_Advanced_Value = parseFloat(totalAdvancedValue.toFixed(2));
     });
 
     return res.status(200).json({
       success: true,
       reports: ticketsData,
       pagination: paginationData,
+      summary: {
+        total_contracts_with_xs: totalContractsWithXS,
+        total_xs_value: parseFloat(totalXSValue.toFixed(2)),
+        total_contracts_with_shortfall: totalContractsWithShortfall,
+        total_shortfall_value: parseFloat(totalShortfallValue.toFixed(2)),
+        net_position: parseFloat(
+          (totalXSValue - totalShortfallValue).toFixed(2)
+        ),
+      },
     });
   } catch (error) {
-    console.log("error in loan to market value report", error);
+    console.error("Error in loan to market value report:", error);
     return next(errorHandler(500, "Internal server error"));
   }
 };

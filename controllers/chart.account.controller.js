@@ -6,35 +6,30 @@ import { createAccountingAccountLog } from "../utils/accounting.account.logs.js"
 // Create a new chart of account
 export const createChartAccount = async (req, res, next) => {
   try {
-    const { 
-      code, 
-      name, 
-      type, 
-      cashFlowType, 
-      description,
-      parentAccountId
-    } = req.body;
+    const { code, name, type, cashFlowType, description, parentAccountId } =
+      req.body;
 
     // Validate required fields
     if (!code || !name || !type) {
-      return next(errorHandler(400, "Account code, name and type are required"));
+      return next(
+        errorHandler(400, "Account code, name and type are required")
+      );
     }
 
-    // Default values
-    const balance = 0;
-    const status = 1;
-    
-    // Get branch ID - either from request or use the first branch from user's branches
-    let branchId;
-    if (req.branchId) {
-      branchId = req.branchId;
-    } else if (req.branches && req.branches.length > 0) {
-      branchId = req.branches[0];
-    } else {
-      return next(errorHandler(400, "No branch associated with user"));
+    // check if there is already an account with the same code in the branch
+    const [existingAccount] = await pool.query(
+      "SELECT * FROM accounting_accounts WHERE Account_Code = ? AND Branch_idBranch = ? AND Status = 1",
+      [code, req.branchId]
+    );
+
+    if (existingAccount[0]) {
+      return next(
+        errorHandler(
+          400,
+          "An account with the same code already exists in this branch, please use a different code"
+        )
+      );
     }
-    
-    const userId = req.userId; // From auth middleware
 
     // Insert into database
     const [result] = await pool.query(
@@ -42,7 +37,19 @@ export const createChartAccount = async (req, res, next) => {
       (Account_Code, Account_Name, Account_Type, Cashflow_Type, Description, 
       Account_Balance, Status, Group_Of_Type, Branch_idBranch, User_idUser, Parent_Account) 
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [code, name, type, cashFlowType, description, balance, status, type, branchId, userId, parentAccountId || null]
+      [
+        code,
+        name,
+        type,
+        cashFlowType,
+        description,
+        0,
+        1,
+        type,
+        req.branchId,
+        req.userId,
+        parentAccountId || null,
+      ]
     );
 
     if (result.affectedRows === 0) {
@@ -58,20 +65,9 @@ export const createChartAccount = async (req, res, next) => {
     if (!accountData[0]) {
       return next(errorHandler(404, "Created account not found"));
     }
-    
+
     // Create a log entry for the new account
-    try {
-      await createAccountingAccountLog(
-        result.insertId,
-        "Account created",
-        0,
-        0,
-        0
-      );
-    } catch (logError) {
-      console.error("Error creating account log:", logError);
-      // Continue with the response even if log creation fails
-    }
+    await createAccountingAccountLog(accountData[0], req.userId);
 
     res.status(201).json({
       message: "Chart of account created successfully",
@@ -95,68 +91,68 @@ export const getAllChartAccounts = async (req, res, next) => {
     } else {
       return next(errorHandler(400, "No branch associated with user"));
     }
-    
+
     // Extract query parameters for filtering
     const { page = 1, limit = 10, code, name, type } = req.query;
     const offset = (page - 1) * limit;
-    
+
     // Build the query with filters - join with user table to get creator's name
     let query = `SELECT a.*, 
       (SELECT Account_Name FROM accounting_accounts WHERE idAccounting_Accounts = a.Parent_Account) AS Parent_Account_Name,
       (SELECT full_name FROM user WHERE idUser = a.User_idUser) AS Created_As 
       FROM accounting_accounts a 
       WHERE a.Branch_idBranch = ? AND a.Status = 1`;
-    
+
     const queryParams = [branchId];
-    
+
     // Add filters if provided
     if (code) {
       query += " AND a.Account_Code LIKE ?";
       queryParams.push(`%${code}%`);
     }
-    
+
     if (name) {
       query += " AND a.Account_Name LIKE ?";
       queryParams.push(`%${name}%`);
     }
-    
+
     if (type) {
       query += " AND a.Account_Type = ?";
       queryParams.push(type);
     }
-    
+
     // Add pagination
     query += " LIMIT ? OFFSET ?";
     queryParams.push(parseInt(limit), parseInt(offset));
-    
+
     // Get total count for pagination
     let countQuery = `SELECT COUNT(*) as total FROM accounting_accounts WHERE Branch_idBranch = ? AND Status = 1`;
     const countParams = [branchId];
-    
+
     // Add the same filters to count query
     if (code) {
       countQuery += " AND Account_Code LIKE ?";
       countParams.push(`%${code}%`);
     }
-    
+
     if (name) {
       countQuery += " AND Account_Name LIKE ?";
       countParams.push(`%${name}%`);
     }
-    
+
     if (type) {
       countQuery += " AND Account_Type = ?";
       countParams.push(type);
     }
-    
+
     // Execute the queries
     const [accounts] = await pool.query(query, queryParams);
     const [countResult] = await pool.query(countQuery, countParams);
-    
+
     // Calculate pagination data
     const total = countResult[0].total;
     const totalPages = Math.ceil(total / limit);
-    
+
     const pagination = {
       page: parseInt(page),
       limit: parseInt(limit),
@@ -187,7 +183,7 @@ export const getAllChartAccounts = async (req, res, next) => {
 export const getChartAccountById = async (req, res, next) => {
   try {
     const { id } = req.params;
-    
+
     // Get branch ID - either from request or use the first branch from user's branches
     let branchId;
     if (req.branchId) {
@@ -226,13 +222,13 @@ export const getChartAccountById = async (req, res, next) => {
 // export const updateChartAccount = async (req, res, next) => {
 //   try {
 //     const { id } = req.params;
-//     const { 
-//       code, 
-//       name, 
-//       type, 
-//       cashFlowType, 
+//     const {
+//       code,
+//       name,
+//       type,
+//       cashFlowType,
 //       description,
-//       parentAccountId 
+//       parentAccountId
 //     } = req.body;
 
 //     // Validate required fields
@@ -262,9 +258,9 @@ export const getChartAccountById = async (req, res, next) => {
 
 //     // Update account
 //     const [result] = await pool.query(
-//       `UPDATE accounting_accounts 
-//        SET Account_Code = ?, Account_Name = ?, Account_Type = ?, 
-//        Cashflow_Type = ?, Description = ?, Group_Of_Type = ?, Parent_Account = ? 
+//       `UPDATE accounting_accounts
+//        SET Account_Code = ?, Account_Name = ?, Account_Type = ?,
+//        Cashflow_Type = ?, Description = ?, Group_Of_Type = ?, Parent_Account = ?
 //        WHERE idAccounting_Accounts = ? AND Branch_idBranch = ?`,
 //       [code, name, type, cashFlowType, description, type, parentAccountId || null, id, branchId]
 //     );
@@ -275,9 +271,9 @@ export const getChartAccountById = async (req, res, next) => {
 
 //     // Get the updated account
 //     const [accountData] = await pool.query(
-//       `SELECT a.*, 
-//        (SELECT Account_Name FROM accounting_accounts WHERE idAccounting_Accounts = a.Parent_Account) AS Parent_Account_Name 
-//        FROM accounting_accounts a 
+//       `SELECT a.*,
+//        (SELECT Account_Name FROM accounting_accounts WHERE idAccounting_Accounts = a.Parent_Account) AS Parent_Account_Name
+//        FROM accounting_accounts a
 //        WHERE a.idAccounting_Accounts = ? AND a.Branch_idBranch = ? AND a.Status = 1`,
 //       [id, branchId]
 //     );

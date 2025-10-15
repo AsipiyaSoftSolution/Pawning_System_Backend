@@ -6,13 +6,14 @@ import { createAccountingAccountLog } from "../utils/accounting.account.logs.js"
 // Create a new chart of account
 export const createChartAccount = async (req, res, next) => {
   try {
-    const { code, name, type, cashFlowType, description, parentAccountId } =
+    const { code, name, group, cashFlowType, description, parentAccountId } =
       req.body;
+    console.log(req.body, "body");
 
     // Validate required fields
-    if (!code || !name || !type) {
+    if (!code || !name || !group) {
       return next(
-        errorHandler(400, "Account code, name and type are required")
+        errorHandler(400, "Account code, name and group are required")
       );
     }
 
@@ -40,12 +41,12 @@ export const createChartAccount = async (req, res, next) => {
       [
         code,
         name,
-        type,
+        "Charted Account",
         cashFlowType,
         description,
         0,
         1,
-        type,
+        group,
         req.branchId,
         req.userId,
         parentAccountId || null,
@@ -83,7 +84,7 @@ export const createChartAccount = async (req, res, next) => {
 export const getAllChartAccounts = async (req, res, next) => {
   try {
     // Extract query parameters for filtering
-    const { code, name, type } = req.query;
+    const { code, name, group } = req.query;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
 
@@ -105,9 +106,9 @@ export const getAllChartAccounts = async (req, res, next) => {
       countParams.push(`%${name}%`);
     }
 
-    if (type) {
+    if (group) {
       countQuery += " AND Account_Type = ?";
-      countParams.push(type);
+      countParams.push(group);
     }
 
     // Execute count query to get total records
@@ -145,9 +146,9 @@ export const getAllChartAccounts = async (req, res, next) => {
       queryParams.push(`%${name}%`);
     }
 
-    if (type) {
+    if (group) {
       query += " AND a.Account_Type = ?";
-      queryParams.push(type);
+      queryParams.push(group);
     }
 
     // Add pagination
@@ -214,15 +215,15 @@ export const getChartAccountById = async (req, res, next) => {
 //     const {
 //       code,
 //       name,
-//       type,
-//       cashFlowType,
+//       group,
+//       cashFlowgroup,
 //       description,
 //       parentAccountId
 //     } = req.body;
 
 //     // Validate required fields
-//     if (!code || !name || !type) {
-//       return next(errorHandler(400, "Account code, name and type are required"));
+//     if (!code || !name || !group) {
+//       return next(errorHandler(400, "Account code, name and group are required"));
 //     }
 
 //     // Get branch ID - either from request or use the first branch from user's branches
@@ -248,10 +249,10 @@ export const getChartAccountById = async (req, res, next) => {
 //     // Update account
 //     const [result] = await pool.query(
 //       `UPDATE accounting_accounts
-//        SET Account_Code = ?, Account_Name = ?, Account_Type = ?,
-//        Cashflow_Type = ?, Description = ?, Group_Of_Type = ?, Parent_Account = ?
+//        SET Account_Code = ?, Account_Name = ?, Account_group = ?,
+//        Cashflow_group = ?, Description = ?, Group_Of_group = ?, Parent_Account = ?
 //        WHERE idAccounting_Accounts = ? AND Branch_idBranch = ?`,
-//       [code, name, type, cashFlowType, description, type, parentAccountId || null, id, branchId]
+//       [code, name, group, cashFlowgroup, description, group, parentAccountId || null, id, branchId]
 //     );
 
 //     if (result.affectedRows === 0) {

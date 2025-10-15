@@ -2209,3 +2209,163 @@ export const getAllSMSTemplates = async (req, res, next) => {
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
+
+// Assessed Values
+export const getAssessedValues = async (req, res, next) => {
+  try {
+
+    const [rows] = await pool.query(
+      `SELECT 
+         av.idAssessed_Value   AS id,
+         av.Carat              AS carat,
+         av.Amount             AS amount,
+         av.Last_Updated_Time  AS lastUpdated,
+         u.full_name           AS lastUpdatedUser
+       FROM assessed_value av
+       LEFT JOIN user u ON u.idUser = av.Last_Updated_User
+       WHERE av.Company_idCompany = ?
+       ORDER BY av.Carat ASC`,
+      [req.companyId]
+    );
+
+    const values = rows.map((r) => ({
+      id: r.id,
+      carat: r.carat,
+      amount: r.amount ?? 0,
+      lastUpdated: r.lastUpdated || null,
+      lastUpdatedUser: r.lastUpdatedUser || "System",
+    }));
+
+    res.status(200).json({
+      message: "Assessed values fetched successfully",
+      values,
+    });
+  } catch (error) {
+    console.error("Error fetching assessed values:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// Assessed Values - update single by id or carat
+export const updateAssessedValue = async (req, res, next) => {
+  try {
+    const idOrCarat = req.params.id;
+    const { amount } = req.body;
+
+    if (amount === undefined || amount === null || isNaN(Number(amount))) {
+      return next(errorHandler(400, "Valid amount is required"));
+    }
+
+    let recordId = null;
+    const [byId] = await pool.query(
+      `SELECT idAssessed_Value FROM assessed_value WHERE idAssessed_Value = ? AND Company_idCompany = ?`,
+      [idOrCarat, req.companyId]
+    );
+    if (byId.length > 0) {
+      recordId = byId[0].idAssessed_Value;
+    } else {
+      const carat = parseInt(idOrCarat, 10);
+      if (isNaN(carat)) {
+        return next(errorHandler(400, "Invalid id or carat parameter"));
+      }
+      const [byCarat] = await pool.query(
+        `SELECT idAssessed_Value FROM assessed_value WHERE Carat = ? AND Company_idCompany = ?`,
+        [carat, req.companyId]
+      );
+      if (byCarat.length > 0) {
+        recordId = byCarat[0].idAssessed_Value;
+      } else {
+        const [insertRes] = await pool.query(
+          `INSERT INTO assessed_value (Carat, Amount, Company_idCompany, Last_Updated_Time, Last_Updated_User) VALUES (?, ?, ?, NOW(), ?)`
+          , [carat, amount, req.companyId, req.userId]
+        );
+        recordId = insertRes.insertId;
+      }
+    }
+
+    const [updateRes] = await pool.query(
+      `UPDATE assessed_value 
+       SET Amount = ?, Last_Updated_Time = NOW(), Last_Updated_User = ?
+       WHERE idAssessed_Value = ? AND Company_idCompany = ?`,
+      [amount, req.userId, recordId, req.companyId]
+    );
+
+    if (updateRes.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to update assessed value"));
+    }
+
+    const [row] = await pool.query(
+      `SELECT 
+         av.idAssessed_Value   AS id,
+         av.Carat              AS carat,
+         av.Amount             AS amount,
+         av.Last_Updated_Time  AS lastUpdated,
+         u.full_name           AS lastUpdatedUser
+       FROM assessed_value av
+       LEFT JOIN user u ON u.idUser = av.Last_Updated_User
+       WHERE av.idAssessed_Value = ?`,
+      [recordId]
+    );
+
+    res.status(200).json({
+      message: "Assessed value updated successfully",
+      value: row[0] || null,
+    });
+  } catch (error) {
+    console.error("Error updating assessed value:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+export const bulkUpdateAssessedValues = async (req, res, next) => {
+  try {
+    const values = Array.isArray(req.body.values) ? req.body.values : [];
+    if (values.length === 0) {
+      return next(errorHandler(400, "Values array is required"));
+    }
+
+    for (const item of values) {
+      const carat = parseInt(item.carat, 10);
+      const amount = Number(item.amount || 0);
+      if (isNaN(carat)) continue;
+
+      const [existing] = await pool.query(
+        `SELECT idAssessed_Value FROM assessed_value WHERE Carat = ? AND Company_idCompany = ?`,
+        [carat, req.companyId]
+      );
+      if (existing.length > 0) {
+        await pool.query(
+          `UPDATE assessed_value SET Amount = ?, Last_Updated_Time = NOW(), Last_Updated_User = ? WHERE idAssessed_Value = ?`,
+          [amount, req.userId, existing[0].idAssessed_Value]
+        );
+      } else {
+        await pool.query(
+          `INSERT INTO assessed_value (Carat, Amount, Company_idCompany, Last_Updated_Time, Last_Updated_User) VALUES (?, ?, ?, NOW(), ?)`,
+          [carat, amount, req.companyId, req.userId]
+        );
+      }
+    }
+
+    const [rows] = await pool.query(
+      `SELECT 
+         av.idAssessed_Value   AS id,
+         av.Carat              AS carat,
+         av.Amount             AS amount,
+         av.Last_Updated_Time  AS lastUpdated,
+         u.full_name           AS lastUpdatedUser
+       FROM assessed_value av
+       LEFT JOIN user u ON u.idUser = av.Last_Updated_User
+       WHERE av.Company_idCompany = ?
+       ORDER BY av.Carat ASC`,
+      [req.companyId]
+    );
+
+    res.status(200).json({
+      message: "Assessed values updated successfully",
+      values: rows,
+    });
+  } catch (error) {
+    console.error("Error bulk updating assessed values:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};

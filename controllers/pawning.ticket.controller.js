@@ -130,7 +130,7 @@ export const createPawningTicket = async (req, res, next) => {
 
     // get the ticket's product service charge type and other data
     const [productData] = await pool.query(
-      "SELECT Service_Charge_Value_Type,Service_Charge_Create_As,Interest_Method FROM pawning_product WHERE idPawning_Product = ?",
+      "SELECT Service_Charge_Create_As,Interest_Method,Service_Charge_Value,Service_Charge_Value_Type FROM pawning_product WHERE idPawning_Product = ?",
       [data.ticketData.productId]
     );
 
@@ -144,12 +144,21 @@ export const createPawningTicket = async (req, res, next) => {
     let serviceChargeRate = 0;
     // if service charge create as is "Charge For Product"
     if (productData[0].Service_Charge_Create_As === "Charge For Product") {
-      if (productData[0]?.Service_Charge_Value_Type === "Percentage") {
+      // Check if service charge is inactive
+      if (productData[0]?.Service_Charge_Value_Type === "inactive") {
+        serviceChargeRate = 0; // No service charge when inactive
+      } else if (productData[0]?.Service_Charge_Value_Type === "Percentage") {
         serviceChargeRate =
           parseFloat(data.ticketData.pawningAdvance) *
-          (parseFloat(data.ticketData.serviceCharge) / 100);
+          (parseFloat(
+            productData[0]?.Service_Charge_Value ||
+              data.ticketData.serviceCharge
+          ) /
+            100);
       } else if (productData[0]?.Service_Charge_Value_Type === "Fixed Amount") {
-        serviceChargeRate = parseFloat(data.ticketData.serviceCharge);
+        serviceChargeRate = parseFloat(
+          productData[0]?.Service_Charge_Value || data.ticketData.serviceCharge
+        );
       }
     }
 
@@ -221,7 +230,9 @@ export const createPawningTicket = async (req, res, next) => {
     let serviceChargeType;
     if (productData[0].Service_Charge_Create_As === "Charge For Product") {
       serviceChargeType =
-        productData[0]?.Service_Charge_Value_Type || "unknown";
+        productData[0]?.Service_Charge_Value_Type === "inactive"
+          ? "inactive"
+          : productData[0]?.Service_Charge_Value_Type || "unknown";
     }
 
     if (productData[0].Service_Charge_Create_As === "Charge For Product Item") {
@@ -237,19 +248,18 @@ export const createPawningTicket = async (req, res, next) => {
         productPlanData[0]?.Service_Charge_Value_type || "unknown";
     }
 
-    // get the product plan's stage data with interest values based on product plan data
-    const [productPlanStagesData] = await pool.query(
-      "SELECT stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,interestApplicableMethod FROM product_plan WHERE idProduct_Plan = ?",
-      [productPlanData[0]?.idProduct_Plan]
-    );
-
-    if (!productPlanStagesData || productPlanStagesData.length === 0) {
-      return next(
-        errorHandler(
-          400,
-          "Product plan stages data not found for the given product plan ID"
-        )
+    // Fetch product plan stages data only if productPlanData exists
+    let productPlanStagesData = [];
+    if (
+      productPlanData &&
+      productPlanData.length > 0 &&
+      productPlanData[0]?.idProduct_Plan
+    ) {
+      const [stagesData] = await pool.query(
+        "SELECT stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,interestApplicableMethod FROM product_plan WHERE idProduct_Plan = ?",
+        [productPlanData[0].idProduct_Plan]
       );
+      productPlanStagesData = stagesData || [];
     }
 
     // Insert into pawning_ticket table

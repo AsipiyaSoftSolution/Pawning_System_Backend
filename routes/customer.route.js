@@ -11,6 +11,7 @@ import {
   getCustomerLogsDataById,
   blacklistCustomer,
   getCustomerPaymentHistory,
+  getCustomerTickets,
 } from "../controllers/customer.controller.js";
 import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
 
@@ -80,6 +81,14 @@ router.get(
   checkUserBranchAccess,
   getCustomerPaymentHistory
 );
+
+router.get(
+  "/:branchId/customer-tickets/:customerId",
+  protectedRoute,
+  checkUserBranchAccess,
+  getCustomerTickets
+);
+
 // blacklist a customer
 router.patch(
   "/:branchId/blacklist-customer/:customerId",

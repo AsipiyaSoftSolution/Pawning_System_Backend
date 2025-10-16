@@ -38,6 +38,8 @@ import {
   SMSTemplateSaveOrUpdate,
   updateSMSTemplateStatus,
   getAllSMSTemplates,
+  getAssessedValues,
+  updateAssessedValue,
 } from "../controllers/company.controller.js";
 const route = express.Router();
 
@@ -106,6 +108,20 @@ route.patch(
   updateSMSTemplateStatus
 ); // Update SMS template status (active/inactive)
 route.get("/sms-template", protectedRoute, getAllSMSTemplates); // Get all SMS templates
+
+// Assessed Values
+route.get(
+  "/:branchId/assessed-values",
+  protectedRoute,
+  checkUserBranchAccess,
+  getAssessedValues
+);
+route.post(
+  "/:branchId/assessed-values/:id",
+  protectedRoute,
+  checkUserBranchAccess,
+  updateAssessedValue
+);
 
 // TEST USER - to be removed in production
 route.post("/create-test-user", createTESTUser); // Create a test user

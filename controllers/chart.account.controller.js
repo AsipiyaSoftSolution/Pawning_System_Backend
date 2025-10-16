@@ -169,6 +169,26 @@ export const getAllChartAccounts = async (req, res, next) => {
   }
 };
 
+// Get all chart of accounts for parent account dropdown
+export const getParentChartAccounts = async (req, res, next) => {
+  try {
+    const [accounts] = await pool.query(
+      `SELECT idAccounting_Accounts, Account_Name,Account_Code,Type
+       FROM accounting_accounts 
+       WHERE Branch_idBranch = ? AND Status = 1`,
+      [req.branchId]
+    );
+
+    res.status(200).json({
+      message: "Parent chart of accounts fetched successfully",
+      accounts,
+    });
+  } catch (error) {
+    console.error("Error fetching parent chart of accounts:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
 // Get chart of account by ID
 export const getChartAccountById = async (req, res, next) => {
   try {

@@ -5,6 +5,7 @@ import {
   createChartAccount,
   getAllChartAccounts,
   getChartAccountById,
+  getParentChartAccounts,
 } from "../controllers/chart.account.controller.js";
 
 const route = express.Router();
@@ -23,6 +24,14 @@ route.get(
   protectedRoute,
   checkUserBranchAccess,
   getAllChartAccounts
+);
+
+// get all chart of accounts for parent account dropdown
+route.get(
+  "/parent-accounts/:branchId",
+  protectedRoute,
+  checkUserBranchAccess,
+  getParentChartAccounts
 );
 
 // Get chart of account by ID

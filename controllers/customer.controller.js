@@ -2,6 +2,7 @@ import { errorHandler } from "../utils/errorHandler.js";
 import { pool } from "../utils/db.js";
 import { uploadImage } from "../utils/cloudinary.js";
 import { getPaginationData } from "../utils/helper.js";
+import { parse } from "path";
 
 const customerLog = async (idCustomer, date, type, Description, userId) => {
   try {
@@ -554,6 +555,116 @@ export const getCustomerLogsDataById = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Error fetching customer logs by ID:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// Get the customer payment history for their tickets
+export const getCustomerPaymentHistory = async (req, res, next) => {
+  try {
+    const customerId = req.params.id || req.params.customerId;
+    const { start_date, end_date } = req.query;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    // validate date range
+    if (
+      (start_date && isNaN(Date.parse(start_date))) ||
+      (end_date && isNaN(Date.parse(end_date)))
+    ) {
+      return next(errorHandler(400, "Invalid date format. Use YYYY-MM-DD."));
+    }
+
+    // validate start date is before end date
+    if (start_date && end_date && new Date(start_date) > new Date(end_date)) {
+      return next(
+        errorHandler(400, "Start date must be before or equal to end date.")
+      );
+    }
+
+    if (!customerId) {
+      return next(errorHandler(400, "Customer ID is required"));
+    }
+
+    const [ticketNumbers] = await pool.query(
+      "SELECT Ticket_No FROM pawning_ticket WHERE Customer_idCustomer = ?",
+      [customerId]
+    );
+    if (ticketNumbers.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: "No tickets payment found for this customer",
+        payments: [],
+        pagination: {},
+      });
+    }
+
+    const ticketNos = ticketNumbers.map((t) => parseInt(t.Ticket_No));
+
+    let countQuery = `SELECT COUNT(*) as count 
+      FROM payment p 
+      WHERE CAST(p.Ticket_No AS UNSIGNED) IN (?)`;
+
+    let queryParams = [ticketNos];
+
+    let dataQuery = `SELECT p.*, u.full_name AS officer 
+      FROM payment p 
+      LEFT JOIN user u ON p.User = u.idUser 
+      WHERE CAST(p.Ticket_No AS UNSIGNED) IN (?)`;
+
+    let dataQueryParams = [ticketNos];
+
+    if (start_date) {
+      countQuery +=
+        " AND DATE(STR_TO_DATE(p.Date_Time, '%Y-%m-%d %H:%i:%s')) >= ?";
+      queryParams.push(start_date);
+      dataQuery +=
+        " AND DATE(STR_TO_DATE(p.Date_Time, '%Y-%m-%d %H:%i:%s')) >= ?";
+      dataQueryParams.push(start_date);
+    }
+
+    if (end_date) {
+      countQuery +=
+        " AND DATE(STR_TO_DATE(p.Date_Time, '%Y-%m-%d %H:%i:%s')) <= ?";
+      queryParams.push(end_date);
+      dataQuery +=
+        " AND DATE(STR_TO_DATE(p.Date_Time, '%Y-%m-%d %H:%i:%s')) <= ?";
+      dataQueryParams.push(end_date);
+    }
+
+    if (start_date && end_date) {
+      countQuery +=
+        " AND DATE(STR_TO_DATE(p.Date_Time, '%Y-%m-%d %H:%i:%s')) BETWEEN ? AND ?";
+      queryParams.push(start_date, end_date);
+      dataQuery +=
+        " AND DATE(STR_TO_DATE(p.Date_Time, '%Y-%m-%d %H:%i:%s')) BETWEEN ? AND ?";
+      dataQueryParams.push(start_date, end_date);
+    }
+
+    dataQuery += " ORDER BY STR_TO_DATE(p.Date_Time, '%Y-%m-%d %H:%i:%s') DESC"; // if there is no date filter, just get all payments for the tickets
+
+    const paginationData = await getPaginationData(
+      countQuery,
+      queryParams,
+      page,
+      limit
+    );
+
+    const [payments] = await pool.query(dataQuery + " LIMIT ? OFFSET ?", [
+      ...dataQueryParams,
+      limit,
+      offset,
+    ]);
+
+    res.status(200).json({
+      success: true,
+      message: "Customer payment history fetched successfully",
+      payments: payments || [],
+      pagination: paginationData,
+    });
+  } catch (error) {
+    console.error("Error fetching customer payment history:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

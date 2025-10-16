@@ -45,9 +45,14 @@ export const getPaginationData = async (
 ) => {
   try {
     const [countResult] = await pool.query(query, queryParams);
+    console.log("Count Result:", countResult);
 
     const totalCount =
-      countResult[0]?.total || countResult[0]?.["COUNT(*)"] || 0;
+      countResult[0]?.count ||
+      countResult[0]?.total ||
+      countResult[0]?.["COUNT(*)"] ||
+      countResult[0]?.["count(*)"] ||
+      0;
     const totalPages = Math.ceil(totalCount / limit);
     const hasNextPage = page < totalPages;
     const hasPreviousPage = page > 1;

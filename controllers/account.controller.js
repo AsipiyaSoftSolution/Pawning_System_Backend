@@ -40,8 +40,8 @@ export const createAccount = async (req, res, next) => {
         accountName,
         accountCode,
         accountType === "Bank Account" ? accountNo : accountCode,
-        accountType === "Bank Account" ? "Bank" : "Cash",
-        accountType === "Bank Account" ? "Bank" : "Cash",
+        "Assets", // default to Assets
+        "Cash and Bank", // default to Cash and Bank
         note || null,
         req.userId,
         "1",
@@ -229,7 +229,7 @@ export const getAccountsForBranch = async (req, res, next) => {
 
     // Get pagination data
     const paginationData = await getPaginationData(
-      "SELECT COUNT(*) as total FROM accounting_accounts WHERE Branch_idBranch = ?",
+      "SELECT COUNT(*) as total FROM accounting_accounts WHERE Branch_idBranch = ? AND Group_Of_Type = 'Assets' AND Type = 'Cash and Bank'",
       [req.branchId],
       page,
       limit
@@ -240,7 +240,7 @@ export const getAccountsForBranch = async (req, res, next) => {
       `SELECT  aa.idAccounting_Accounts,aa.Account_Type,aa.Account_Number, aa.Account_Name, aa.Account_Code, aa.Account_Balance, aa.Note , u.full_name AS Created_By 
              FROM accounting_accounts aa 
              JOIN user u ON aa.User_idUser = u.idUser 
-             WHERE aa.Branch_idBranch = ? 
+             WHERE aa.Branch_idBranch = ?  AND aa.Group_Of_Type = 'Assets' AND aa.Type = 'Cash and Bank'
              ORDER BY aa.Account_Name ASC 
              LIMIT ? OFFSET ?`,
       [req.branchId, limit, offset]

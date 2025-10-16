@@ -665,8 +665,8 @@ export const createUser = async (req, res, next) => {
         [
           "Cashier Account - " + full_name,
           "Cashier Account",
-          "Cashier",
-          "Cashier",
+          "Cash and Bank", // default to Cash and Bank
+          "Assets", // default to Assets
           req.userId, // created userId
           result.insertId,
           branchData[0].idBranch, // cashier must have exactly one branch

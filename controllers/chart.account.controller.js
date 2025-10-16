@@ -118,13 +118,13 @@ export const getAllChartAccounts = async (req, res, next) => {
     }
 
     if (group) {
-      if (!type) {
-        return next(
-          errorHandler(400, "Type is required when filtering by Group of Type")
-        );
+      if (type) {
+        countQuery += " AND Group_Of_Type = ? AND Type = ?";
+        countParams.push(group, type);
       }
-      countQuery += " AND Group_Of_Type = ? AND Type = ?";
-      countParams.push(group, type);
+
+      countQuery += " AND Group_Of_Type = ?";
+      countParams.push(group);
     }
 
     // Execute count query to get total records
@@ -163,8 +163,12 @@ export const getAllChartAccounts = async (req, res, next) => {
     }
 
     if (group) {
-      query += " AND a.Group_Of_Type = ? AND a.Type = ?";
-      queryParams.push(group, type);
+      if (type) {
+        query += " AND a.Group_Of_Type = ? AND a.Type = ?";
+        queryParams.push(group, type);
+      }
+      query += " AND a.Group_Of_Type = ?";
+      queryParams.push(group);
     }
 
     // Add pagination

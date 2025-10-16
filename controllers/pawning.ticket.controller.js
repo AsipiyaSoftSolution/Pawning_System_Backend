@@ -557,10 +557,56 @@ export const searchCustomerByNIC = async (req, res, next) => {
       return next(errorHandler(400, "NIC is required"));
     }
     const formatedNIC = formatSearchPattern(NIC); // Format NIC for SQL LIKE query
+
+    // Fetch customer data with their documents
     const [customers] = await pool.query(
-      "SELECT idCustomer,NIC, Full_name,Address1,Address2,Address3,Mobile_No,Status,Risk_Level FROM customer WHERE NIC LIKE ? AND Branch_idBranch = ?",
+      `SELECT 
+        c.idCustomer, 
+        c.NIC, 
+        c.Full_name,
+        c.Address1,
+        c.Address2,
+        c.Address3,
+        c.Mobile_No,
+        c.Status,
+        c.Risk_Level,
+        JSON_ARRAYAGG(
+          JSON_OBJECT(
+            'Document_Name', cd.Document_Name,
+            'Path', cd.Path
+          )
+        ) as documents
+      FROM customer c
+      LEFT JOIN customer_documents cd ON c.idCustomer = cd.Customer_idCustomer
+      WHERE c.NIC LIKE ? AND c.Branch_idBranch = ?
+      GROUP BY c.idCustomer, c.NIC, c.Full_name, c.Address1, c.Address2, c.Address3, c.Mobile_No, c.Status, c.Risk_Level`,
       [formatedNIC, req.branchId]
     );
+
+    // Parse the documents JSON for each customer
+    if (customers && customers.length > 0) {
+      customers.forEach((customer) => {
+        // Check if documents is already an object/array or needs parsing
+        if (typeof customer.documents === "string") {
+          try {
+            customer.documents = JSON.parse(customer.documents);
+          } catch (e) {
+            customer.documents = [];
+          }
+        } else if (!customer.documents) {
+          customer.documents = [];
+        }
+
+        // Filter out null documents (when LEFT JOIN returns no matches)
+        if (Array.isArray(customer.documents)) {
+          customer.documents = customer.documents.filter(
+            (doc) => doc && doc.Document_Name !== null
+          );
+        } else {
+          customer.documents = [];
+        }
+      });
+    }
 
     res.status(200).json({
       success: true,

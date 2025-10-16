@@ -81,3 +81,43 @@ export const generatePasswordResetToken = () => {
   const token = crypto.randomBytes(32).toString("hex");
   return token;
 };
+
+// Generic pagination utility for reports
+export const getReportPaginationData = async (
+  countQuery,
+  queryParams = [],
+  page = 1,
+  limit = 10
+) => {
+  try {
+    const [countResult] = await pool.query(countQuery, queryParams);
+
+    // Handle different count query formats
+    const totalCount =
+      countResult[0]?.count ||
+      countResult[0]?.total ||
+      countResult[0]?.["COUNT(*)"] ||
+      countResult[0]?.["count(*)"] ||
+      0;
+
+    const totalPages = Math.ceil(totalCount / limit);
+    const hasNextPage = page < totalPages;
+    const hasPreviousPage = page > 1;
+    const offset = (page - 1) * limit;
+
+    return {
+      totalCount,
+      totalPages,
+      hasNextPage,
+      hasPreviousPage,
+      currentPage: page,
+      limit,
+      offset,
+      nextPage: hasNextPage ? page + 1 : null,
+      prevPage: hasPreviousPage ? page - 1 : null,
+    };
+  } catch (error) {
+    console.error("Error in getReportPaginationData:", error);
+    throw new Error("Failed to get pagination data");
+  }
+};

@@ -1,20 +1,38 @@
 import express from "express";
 import { protectedRoute } from "../middlewares/auth.middleware.js";
+import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
 import {
   createChartAccount,
   getAllChartAccounts,
   getChartAccountById,
-  // updateChartAccount,
-  // deleteChartAccount
+  getParentChartAccounts,
 } from "../controllers/chart.account.controller.js";
 
 const route = express.Router();
 
 // Create a new chart of account
-route.post("/", protectedRoute, createChartAccount);
+route.post(
+  "/:branchId",
+  protectedRoute,
+  checkUserBranchAccess,
+  createChartAccount
+);
 
 // Get all chart of accounts
-route.get("/", protectedRoute, getAllChartAccounts);
+route.get(
+  "/:branchId",
+  protectedRoute,
+  checkUserBranchAccess,
+  getAllChartAccounts
+);
+
+// get all chart of accounts for parent account dropdown
+route.get(
+  "/parent-accounts/:branchId",
+  protectedRoute,
+  checkUserBranchAccess,
+  getParentChartAccounts
+);
 
 // Get chart of account by ID
 route.get("/:id", protectedRoute, getChartAccountById);

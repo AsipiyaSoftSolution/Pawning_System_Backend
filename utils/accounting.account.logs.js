@@ -1,31 +1,49 @@
 import { pool } from "./db.js";
 
-export const createAccountingAccountLog = async (
-  accountId,
-  description,
-  debit = 0,
-  credit = 0,
-  balance = 0,
-  date_time = new Date()
-) => {
+// Create a new accounting account log when create a chart account
+export const createAccountingAccountLog = async (createdAccount, userId) => {
   try {
-    // Get the account name for reference
-    const [accountResult] = await pool.query(
-      `SELECT Account_Name FROM accounting_accounts WHERE idAccounting_Accounts = ?`,
-      [accountId]
-    );
+    let description = `Charted Account created. Group of Account: ${createdAccount.Group_Of_Type}, Account Name: ${createdAccount.Account_Name}, Cash Flow Type: ${createdAccount.Cashflow_Type}`;
 
-    const accountName = accountResult[0]?.Account_Name || null;
+    // If there's a parent account, fetch its name and type and add to description
+    if (
+      createdAccount.Parent_Account !== null &&
+      createdAccount.Parent_Account !== undefined
+    ) {
+      const parentAccountId = parseInt(createdAccount.Parent_Account);
+      // Fetch parent account name and type
+      const [parentAccountRows] = await pool.query(
+        "SELECT Account_Name, Account_Type FROM accounting_accounts WHERE idAccounting_Accounts = ?",
+        [parentAccountId]
+      );
+
+      description += `, Parent Account: ${
+        parentAccountRows[0]?.Account_Name || "N/A"
+      } (${parentAccountRows[0]?.Account_Type || "N/A"})`;
+    }
+
+    const type = "Charted Account Creation"; // type of log entry
 
     // Insert the log entry
     const [result] = await pool.query(
       `INSERT INTO accounting_accounts_log 
-      (Accounting_Accounts_idAccounting_Accounts, Description, Debit, Credit, Balance, Date_Time) 
-      VALUES (?, ?, ?, ?, ?, ?)`,
-      [accountId, description, debit, credit, balance, date_time]
+      (Accounting_Accounts_idAccounting_Accounts, Description, Debit, Credit, Balance, Date_Time, User_idUser, Type) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        createdAccount.idAccounting_Accounts,
+        description,
+        0,
+        0,
+        0,
+        new Date(),
+        userId,
+        type,
+      ]
     );
 
-    return result.insertId;
+    if (result.affectedRows === 0) {
+      throw new Error("Failed to create accounting account log");
+    }
   } catch (error) {
     console.error("Error creating accounting account log:", error);
     throw error;

@@ -562,8 +562,13 @@ export const getCustomerLogsDataById = async (req, res, next) => {
 export const blacklistCustomer = async (req, res, next) => {
   try {
     const customerId = req.params.id || req.params.customerId;
+    const { reason } = req.body;
+
     if (!customerId) {
       return next(errorHandler(400, "Customer ID is required"));
+    }
+    if (!reason) {
+      return next(errorHandler(400, "Reason for blacklisting is required"));
     }
 
     // Check if the customer exists
@@ -595,8 +600,8 @@ export const blacklistCustomer = async (req, res, next) => {
     for (const branch of companyBranches) {
       // update status to 0 (blacklist) for this customer NIC in this branch
       await pool.query(
-        "UPDATE customer SET Status = 0 WHERE NIC = ? AND Branch_idBranch = ?",
-        [isExitingCustomer[0].NIC, branch.idBranch]
+        "UPDATE customer SET Status = 0, Blacklist_Reason = ?, Blacklist_Date = ? WHERE NIC = ? AND Branch_idBranch = ?",
+        [reason, new Date(), isExitingCustomer[0].NIC, branch.idBranch]
       );
 
       // log the blacklisting for this customer in this branch
@@ -604,12 +609,15 @@ export const blacklistCustomer = async (req, res, next) => {
         customerId,
         new Date(),
         "BLACKLIST",
-        `Customer blacklisted from company. Branch ID: ${branch.idBranch}`,
+        `Customer blacklisted from company. Branch ID: ${branch.idBranch} Reason: ${reason}`,
         req.userId
       );
     }
 
     res.status(200).json({
+      status: 0,
+      reason: reason,
+      blacklistDate: new Date(),
       success: true,
       message: "Customer blacklisted from company successfully",
     });

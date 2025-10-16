@@ -193,7 +193,7 @@ export const getAllChartAccounts = async (req, res, next) => {
 export const getParentChartAccounts = async (req, res, next) => {
   try {
     const [accounts] = await pool.query(
-      `SELECT idAccounting_Accounts, Account_Name,Account_Code,Type
+      `SELECT idAccounting_Accounts, Account_Name,Account_Code,Type,Account_Type
        FROM accounting_accounts 
        WHERE Branch_idBranch = ? AND Status = 1`,
       [req.branchId]

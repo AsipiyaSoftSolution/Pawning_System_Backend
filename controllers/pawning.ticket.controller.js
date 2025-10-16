@@ -184,13 +184,16 @@ export const createPawningTicket = async (req, res, next) => {
           );
         }
 
-        if (productPlanData[0]?.Service_Charge_Value_type === "percentage") {
+        // Check if service charge is inactive
+        if (productPlanData[0]?.Service_Charge_Value_type === "inactive") {
+          serviceChargeRate = 0; // No service charge when inactive
+        } else if (
+          productPlanData[0]?.Service_Charge_Value_type === "percentage"
+        ) {
           serviceChargeRate =
             parseFloat(data.ticketData.pawningAdvance) *
             (parseFloat(productPlanData[0]?.Service_Charge_Value) / 100);
-        }
-
-        if (productPlanData[0]?.Service_Charge_Value_type === "fixed") {
+        } else if (productPlanData[0]?.Service_Charge_Value_type === "fixed") {
           serviceChargeRate = parseFloat(
             productPlanData[0]?.Service_Charge_Value
           );
@@ -212,13 +215,16 @@ export const createPawningTicket = async (req, res, next) => {
           );
         }
 
-        if (productPlanData[0]?.Service_Charge_Value_type === "percentage") {
+        // Check if service charge is inactive
+        if (productPlanData[0]?.Service_Charge_Value_type === "inactive") {
+          serviceChargeRate = 0; // No service charge when inactive
+        } else if (
+          productPlanData[0]?.Service_Charge_Value_type === "percentage"
+        ) {
           serviceChargeRate =
             parseFloat(data.ticketData.pawningAdvance) *
             (parseFloat(productPlanData[0]?.Service_Charge_Value) / 100);
-        }
-
-        if (productPlanData[0]?.Service_Charge_Value_type === "fixed") {
+        } else if (productPlanData[0]?.Service_Charge_Value_type === "fixed") {
           serviceChargeRate = parseFloat(
             productPlanData[0]?.Service_Charge_Value
           );
@@ -245,7 +251,9 @@ export const createPawningTicket = async (req, res, next) => {
         );
       }
       serviceChargeType =
-        productPlanData[0]?.Service_Charge_Value_type || "unknown";
+        productPlanData[0]?.Service_Charge_Value_type === "inactive"
+          ? "inactive"
+          : productPlanData[0]?.Service_Charge_Value_type || "unknown";
     }
 
     // Fetch product plan stages data only if productPlanData exists

@@ -544,7 +544,7 @@ export const getCustomerLogsDataById = async (req, res, next) => {
        FROM customer_log cl
        LEFT JOIN user u ON cl.User_idUser = u.idUser
        WHERE cl.Customer_idCustomer = ?
-       ORDER BY STR_TO_DATE(cl.Date_Time, '%Y-%m-%d %H:%i:%s') DESC `,
+       ORDER BY STR_TO_DATE(cl.Date_Time, '%Y-%m-%d %H:%i:%s') ASC `,
       [customerId]
     );
     res.status(200).json({

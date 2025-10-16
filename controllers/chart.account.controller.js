@@ -107,7 +107,7 @@ export const getAllChartAccounts = async (req, res, next) => {
     }
 
     if (group) {
-      countQuery += " AND Account_Type = ?";
+      countQuery += " AND Group_Of_Type = ?";
       countParams.push(group);
     }
 
@@ -147,7 +147,7 @@ export const getAllChartAccounts = async (req, res, next) => {
     }
 
     if (group) {
-      query += " AND a.Account_Type = ?";
+      query += " AND a.Group_Of_Type = ?";
       queryParams.push(group);
     }
 

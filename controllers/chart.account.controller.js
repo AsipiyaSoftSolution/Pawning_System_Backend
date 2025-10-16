@@ -6,14 +6,24 @@ import { createAccountingAccountLog } from "../utils/accounting.account.logs.js"
 // Create a new chart of account
 export const createChartAccount = async (req, res, next) => {
   try {
-    const { code, name, group, cashFlowType, description, parentAccountId } =
-      req.body;
+    const {
+      code,
+      name,
+      group,
+      type,
+      cashFlowType,
+      description,
+      parentAccountId,
+    } = req.body;
     console.log(req.body, "body");
 
     // Validate required fields
-    if (!code || !name || !group) {
+    if (!code || !name || !group || !type) {
       return next(
-        errorHandler(400, "Account code, name and group are required")
+        errorHandler(
+          400,
+          "Account Code, Account Name, Group of Type and Type are required"
+        )
       );
     }
 
@@ -36,8 +46,8 @@ export const createChartAccount = async (req, res, next) => {
     const [result] = await pool.query(
       `INSERT INTO accounting_accounts 
       (Account_Code, Account_Name, Account_Type, Cashflow_Type, Description, 
-      Account_Balance, Status, Group_Of_Type, Branch_idBranch, User_idUser, Parent_Account) 
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      Account_Balance, Status, Group_Of_Type,Type, Branch_idBranch, User_idUser, Parent_Account) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?)`,
       [
         code,
         name,
@@ -47,6 +57,7 @@ export const createChartAccount = async (req, res, next) => {
         0,
         1,
         group,
+        type,
         req.branchId,
         req.userId,
         parentAccountId || null,

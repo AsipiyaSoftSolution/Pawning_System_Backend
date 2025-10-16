@@ -73,7 +73,11 @@ export const createPawningTicket = async (req, res, next) => {
     // Check for missing required fields in each ticket article
     for (const article of data.ticketArticles) {
       for (const field of requiredFieldsForTicketArticles) {
-        if (article[field] === undefined || article[field] === null) {
+        if (
+          article[field] === undefined ||
+          article[field] === null ||
+          article[field] === ""
+        ) {
           return next(
             errorHandler(
               400,
@@ -342,6 +346,16 @@ export const createPawningTicket = async (req, res, next) => {
     const ticketArticles = data.ticketArticles;
     let noOfTicketArticles = ticketArticles.length;
     for (const article of ticketArticles) {
+      /* Log the article data for debugging
+      console.log("Inserting article:", {
+        type: article.type,
+        category: article.category,
+        condition: article.condition,
+        caratage: article.caratage,
+        noOfItems: article.noOfItems,
+      });
+      */
+
       // Check net weight vs gross weight before processing
       if (parseFloat(article.netWeight) > parseFloat(article.grossWeight)) {
         return next(

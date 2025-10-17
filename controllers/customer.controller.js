@@ -669,6 +669,120 @@ export const getCustomerPaymentHistory = async (req, res, next) => {
   }
 };
 
+// Get the tickets of the customer
+export const getCustomerTickets = async (req, res, next) => {
+  try {
+    const customerId = req.params.id || req.params.customerId;
+    if (!customerId) {
+      return next(errorHandler(400, "Customer ID is required"));
+    }
+
+    const { start_date, end_date, status } = req.query;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    // validate date range
+    if (
+      (start_date && isNaN(Date.parse(start_date))) ||
+      (end_date && isNaN(Date.parse(end_date)))
+    ) {
+      return next(errorHandler(400, "Invalid date format. Use YYYY-MM-DD."));
+    }
+
+    // validate start date is before end date
+    if (start_date && end_date && new Date(start_date) > new Date(end_date)) {
+      return next(
+        errorHandler(400, "Start date must be before or equal to end date.")
+      );
+    }
+
+    // validate status
+    const validStatuses = [0, -1, 1, 2, 3, 4];
+    // o is null which mean suddeny after create ticket (before approval)
+    // -1 after approval but before disbursement
+    // 1 disbursed
+    // 2 settled
+    // 3 overdue
+    // 4 rejected
+    if (status && !validStatuses.includes(parseInt(status))) {
+      return next(
+        errorHandler(
+          400,
+          `Invalid status. Valid statuses are: ${validStatuses.join(", ")}`
+        )
+      );
+    }
+
+    let countQuery = `SELECT COUNT(*) as count FROM pawning_ticket WHERE Customer_idCustomer = ?`;
+    let queryParams = [customerId];
+
+    let dataQuery = `SELECT idPawning_Ticket,Pawning_Advance_Amount,Ticket_No,SEQ_No,Maturity_date,Status,Period_Type,Period FROM pawning_ticket WHERE Customer_idCustomer = ?`;
+    let dataQueryParams = [customerId];
+
+    if (start_date) {
+      countQuery += " AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d')) >= ?";
+      queryParams.push(start_date);
+      dataQuery += " AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d')) >= ?";
+      dataQueryParams.push(start_date);
+    }
+
+    if (end_date) {
+      countQuery += " AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d')) <= ?";
+      queryParams.push(end_date);
+      dataQuery += " AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d')) <= ?";
+      dataQueryParams.push(end_date);
+    }
+
+    if (start_date && end_date) {
+      countQuery +=
+        " AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d')) BETWEEN ? AND ?";
+      queryParams.push(start_date, end_date);
+      dataQuery +=
+        " AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d')) BETWEEN ? AND ?";
+      dataQueryParams.push(start_date, end_date);
+    }
+
+    if (status !== undefined && status !== null) {
+      // If status is 0 (or '0'), match NULL status tickets
+      if (parseInt(status) === 0) {
+        countQuery += " AND (Status IS NULL OR Status = '0')";
+        dataQuery += " AND (Status IS NULL OR Status = '0')";
+      } else {
+        countQuery += " AND Status = ?";
+        queryParams.push(status);
+        dataQuery += " AND Status = ?";
+        dataQueryParams.push(status);
+      }
+    }
+
+    dataQuery += " ORDER BY STR_TO_DATE(Date_Time, '%Y-%m-%d') DESC";
+
+    const paginationData = await getPaginationData(
+      countQuery,
+      queryParams,
+      page,
+      limit
+    );
+
+    const [tickets] = await pool.query(dataQuery + " LIMIT ? OFFSET ?", [
+      ...dataQueryParams,
+      limit,
+      offset,
+    ]);
+
+    res.status(200).json({
+      success: true,
+      message: "Customer tickets fetched successfully",
+      tickets: tickets || [],
+      pagination: paginationData,
+    });
+  } catch (error) {
+    console.error("Error fetching customer tickets:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
 // Black list a customer from company
 export const blacklistCustomer = async (req, res, next) => {
   try {

@@ -282,8 +282,14 @@ export const createPawningProduct = async (req, res, next) => {
         : 0;
     const earlySettlementChargeCreateAs =
       data.earlysettlementsData?.newEarlySettlement?.chargeType || "inactive";
+
     let earlySettlementChargeValueType = null;
     let earlySettlementChargeValue = null;
+    // Handle inactive early settlement charge
+    if (earlySettlementChargeCreateAs === "inactive") {
+      earlySettlementChargeValueType = "inactive";
+      earlySettlementChargeValue = 0;
+    }
 
     // Handle different early settlement charge types
     if (earlySettlementChargeCreateAs === "Charge For Product") {

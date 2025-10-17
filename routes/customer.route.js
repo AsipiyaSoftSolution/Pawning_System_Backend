@@ -12,6 +12,7 @@ import {
   blacklistCustomer,
   getCustomerPaymentHistory,
   getCustomerTickets,
+  getCustomerCompleteDataById,
 } from "../controllers/customer.controller.js";
 import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
 
@@ -82,6 +83,7 @@ router.get(
   getCustomerPaymentHistory
 );
 
+// get customer tickets
 router.get(
   "/:branchId/customer-tickets/:customerId",
   protectedRoute,
@@ -89,6 +91,13 @@ router.get(
   getCustomerTickets
 );
 
+// get customer all KYC data by ID
+router.get(
+  "/:branchId/customer-kyc/:customerId",
+  protectedRoute,
+  checkUserBranchAccess,
+  getCustomerCompleteDataById
+);
 // blacklist a customer
 router.patch(
   "/:branchId/blacklist-customer/:customerId",

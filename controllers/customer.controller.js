@@ -798,7 +798,7 @@ export const blacklistCustomer = async (req, res, next) => {
 
     // Check if the customer exists
     const [isExitingCustomer] = await pool.query(
-      "SELECT Status,NIC,  Branch_idBranch  FROM customer WHERE idCustomer = ? AND Branch_idBranch = ?",
+      "SELECT Status, NIC, Branch_idBranch FROM customer WHERE idCustomer = ? AND Branch_idBranch = ?",
       [customerId, req.branchId]
     );
 
@@ -813,7 +813,7 @@ export const blacklistCustomer = async (req, res, next) => {
 
     // if exist check this customer NIC in all company branches
     const [companyBranches] = await pool.query(
-      "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
+      "SELECT DISTINCT idBranch FROM branch WHERE Company_idCompany = ?",
       [req.companyId]
     );
 
@@ -821,33 +821,139 @@ export const blacklistCustomer = async (req, res, next) => {
       return next(errorHandler(404, "No branches found for this company"));
     }
 
+    // get the branch code of the branch where the customer is being blacklisted
+    const [branchData] = await pool.query(
+      "SELECT Branch_Code, Name FROM branch WHERE idBranch = ?",
+      [req.branchId]
+    );
+
+    const blacklistDate = new Date();
+    let logsCreated = 0;
+
     // loop through all branches and update the customer status to 0 (blacklist)
     for (const branch of companyBranches) {
-      // update status to 0 (blacklist) for this customer NIC in this branch
-      await pool.query(
-        "UPDATE customer SET Status = 0, Blacklist_Reason = ?, Blacklist_Date = ? WHERE NIC = ? AND Branch_idBranch = ?",
-        [reason, new Date(), isExitingCustomer[0].NIC, branch.idBranch]
+      // Check if this branch has customers with this NIC - get ALL of them
+      const [customersInBranch] = await pool.query(
+        "SELECT idCustomer FROM customer WHERE NIC = ? AND Branch_idBranch = ?",
+        [isExitingCustomer[0].NIC, branch.idBranch]
       );
 
-      // log the blacklisting for this customer in this branch
-      await customerLog(
-        customerId,
-        new Date(),
-        "BLACKLIST",
-        `Customer blacklisted from company. Branch ID: ${branch.idBranch} Reason: ${reason}`,
-        req.userId
-      );
+      // Only update and log if customers exist in this branch
+      if (customersInBranch.length > 0) {
+        // update status to 0 (blacklist) for ALL customers with this NIC in this branch
+        await pool.query(
+          "UPDATE customer SET Status = 0, Blacklist_Reason = ?, Blacklist_Date = ? WHERE NIC = ? AND Branch_idBranch = ?",
+          [reason, blacklistDate, isExitingCustomer[0].NIC, branch.idBranch]
+        );
+
+        // Log ONCE per branch, using the first customer ID found in that branch
+        await customerLog(
+          customersInBranch[0].idCustomer,
+          blacklistDate,
+          "BLACKLIST",
+          `Customer blacklisted from Company. By Branch: ${branchData[0].Name} | Branch Code: ${branchData[0].Branch_Code} | Reason: ${reason}`,
+          req.userId
+        );
+
+        logsCreated++;
+      }
     }
 
     res.status(200).json({
       status: 0,
       reason: reason,
-      blacklistDate: new Date(),
+      blacklistDate: blacklistDate,
       success: true,
       message: "Customer blacklisted from company successfully",
     });
   } catch (error) {
     console.error("Error blacklisting customer:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// Get all data of the customer by ID (personal data, ticket data, payment history, logs)
+export const getCustomerCompleteDataById = async (req, res, next) => {
+  try {
+    const customerId = req.params.id || req.params.customerId;
+    const branchId = req.branchId;
+
+    // Validate customer ID
+    if (!customerId) {
+      return next(errorHandler(400, "Customer ID is required"));
+    }
+
+    //Fetch Customer Basic Data
+    const [customerResult] = await pool.query(
+      "SELECT * FROM customer WHERE idCustomer = ? AND Branch_idBranch = ?",
+      [customerId, branchId]
+    );
+
+    if (customerResult.length === 0) {
+      return next(errorHandler(404, "Customer not found"));
+    }
+
+    const customer = customerResult[0];
+
+    //Fetch Customer Documents
+    const [documents] = await pool.query(
+      "SELECT * FROM customer_documents WHERE Customer_idCustomer = ?",
+      [customerId]
+    );
+
+    //Fetch Customer Logs
+    const [logs] = await pool.query(
+      `SELECT cl.*, u.full_name 
+       FROM customer_log cl
+       LEFT JOIN user u ON cl.User_idUser = u.idUser
+       WHERE cl.Customer_idCustomer = ?
+       ORDER BY STR_TO_DATE(cl.Date_Time, '%Y-%m-%d %H:%i:%s') ASC`,
+      [customerId]
+    );
+
+    // Fetch All Customer Tickets
+    const [tickets] = await pool.query(
+      `SELECT idPawning_Ticket, Pawning_Advance_Amount, Ticket_No, SEQ_No, 
+              Maturity_date, Status, Period_Type, Period, Date_Time
+       FROM pawning_ticket 
+       WHERE Customer_idCustomer = ?
+       ORDER BY STR_TO_DATE(Date_Time, '%Y-%m-%d') DESC`,
+      [customerId]
+    );
+
+    //  Fetch All Payment History
+    let payments = [];
+
+    if (tickets.length > 0) {
+      const ticketNos = tickets.map((t) => parseInt(t.Ticket_No));
+
+      const [paymentResults] = await pool.query(
+        `SELECT p.*, u.full_name AS officer 
+         FROM payment p 
+         LEFT JOIN user u ON p.User = u.idUser 
+         WHERE CAST(p.Ticket_No AS UNSIGNED) IN (?)
+         ORDER BY STR_TO_DATE(p.Date_Time, '%Y-%m-%d %H:%i:%s') DESC`,
+        [ticketNos]
+      );
+
+      payments = paymentResults;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Customer complete data fetched successfully",
+      kycData: {
+        customer: {
+          ...customer,
+          documents: documents || [],
+        },
+        logs: logs || [],
+        tickets: tickets || [],
+        payments: payments || [],
+      },
+    });
+  } catch (error) {
+    console.error("Error fetching customer complete data:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

@@ -2246,73 +2246,102 @@ export const getAssessedValues = async (req, res, next) => {
   }
 };
 
-// Assessed Values - update single by id or carat
-export const updateAssessedValue = async (req, res, next) => {
+
+export const bulkUpdateAssessedValues = async (req, res, next) => {
   try {
-    const idOrCarat = req.params.id;
-    const { amount } = req.body;
+    const { updates } = req.body || {};
 
-    if (amount === undefined || amount === null || isNaN(Number(amount))) {
-      return next(errorHandler(400, "Valid amount is required"));
+    if (!Array.isArray(updates) || updates.length === 0) {
+      return next(errorHandler(400, "Updates array is required"));
     }
 
-    let recordId = null;
-    const [byId] = await pool.query(
-      `SELECT idAssessed_Value FROM assessed_value WHERE idAssessed_Value = ? AND Company_idCompany = ?`,
-      [idOrCarat, req.companyId]
-    );
-    if (byId.length > 0) {
-      recordId = byId[0].idAssessed_Value;
-    } else {
-      const carat = parseInt(idOrCarat, 10);
-      if (isNaN(carat)) {
-        return next(errorHandler(400, "Invalid id or carat parameter"));
-      }
-      const [byCarat] = await pool.query(
-        `SELECT idAssessed_Value FROM assessed_value WHERE Carat = ? AND Company_idCompany = ?`,
-        [carat, req.companyId]
-      );
-      if (byCarat.length > 0) {
-        recordId = byCarat[0].idAssessed_Value;
-      } else {
-        const [insertRes] = await pool.query(
-          `INSERT INTO assessed_value (Carat, Amount, Company_idCompany, Last_Updated_Time, Last_Updated_User) VALUES (?, ?, ?, NOW(), ?)`
-          , [carat, amount, req.companyId, req.userId]
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+
+      const updatedRecords = [];
+
+      for (const item of updates) {
+        if (!item || typeof item.amount === "undefined") {
+          continue; 
+        }
+
+        const idOrCarat = item.id ?? item.carat;
+        const amount = Number(item.amount);
+
+        if (idOrCarat === undefined || idOrCarat === null || isNaN(amount)) {
+          continue; 
+        }
+
+        let recordId = null;
+
+        const [byId] = await connection.query(
+          `SELECT idAssessed_Value FROM assessed_value WHERE idAssessed_Value = ? AND Company_idCompany = ?`,
+          [idOrCarat, req.companyId]
         );
-        recordId = insertRes.insertId;
+        if (byId.length > 0) {
+          recordId = byId[0].idAssessed_Value;
+        } else {
+          const carat = parseInt(idOrCarat, 10);
+          if (isNaN(carat)) {
+            continue; 
+          }
+          const [byCarat] = await connection.query(
+            `SELECT idAssessed_Value FROM assessed_value WHERE Carat = ? AND Company_idCompany = ?`,
+            [carat, req.companyId]
+          );
+          if (byCarat.length > 0) {
+            recordId = byCarat[0].idAssessed_Value;
+          } else {
+            const [insertRes] = await connection.query(
+              `INSERT INTO assessed_value (Carat, Amount, Company_idCompany, Last_Updated_Time, Last_Updated_User) VALUES (?, ?, ?, NOW(), ?)`,
+              [carat, amount, req.companyId, req.userId]
+            );
+            recordId = insertRes.insertId;
+          }
+        }
+
+        const [updateRes] = await connection.query(
+          `UPDATE assessed_value 
+           SET Amount = ?, Last_Updated_Time = NOW(), Last_Updated_User = ?
+           WHERE idAssessed_Value = ? AND Company_idCompany = ?`,
+          [amount, req.userId, recordId, req.companyId]
+        );
+
+        if (updateRes.affectedRows === 0) {
+          continue;
+        }
+
+        const [row] = await connection.query(
+          `SELECT 
+             av.idAssessed_Value   AS id,
+             av.Carat              AS carat,
+             av.Amount             AS amount,
+             av.Last_Updated_Time  AS lastUpdated,
+             u.full_name           AS lastUpdatedUser
+           FROM assessed_value av
+           LEFT JOIN user u ON u.idUser = av.Last_Updated_User
+           WHERE av.idAssessed_Value = ?`,
+          [recordId]
+        );
+        if (row && row[0]) updatedRecords.push(row[0]);
       }
+
+      await connection.commit();
+
+      res.status(200).json({
+        message: "Assessed values updated successfully",
+        values: updatedRecords,
+      });
+    } catch (err) {
+      await connection.rollback();
+      console.error("Error bulk updating assessed values (tx):", err);
+      return next(errorHandler(500, "Failed to bulk update assessed values"));
+    } finally {
+      connection.release();
     }
-
-    const [updateRes] = await pool.query(
-      `UPDATE assessed_value 
-       SET Amount = ?, Last_Updated_Time = NOW(), Last_Updated_User = ?
-       WHERE idAssessed_Value = ? AND Company_idCompany = ?`,
-      [amount, req.userId, recordId, req.companyId]
-    );
-
-    if (updateRes.affectedRows === 0) {
-      return next(errorHandler(500, "Failed to update assessed value"));
-    }
-
-    const [row] = await pool.query(
-      `SELECT 
-         av.idAssessed_Value   AS id,
-         av.Carat              AS carat,
-         av.Amount             AS amount,
-         av.Last_Updated_Time  AS lastUpdated,
-         u.full_name           AS lastUpdatedUser
-       FROM assessed_value av
-       LEFT JOIN user u ON u.idUser = av.Last_Updated_User
-       WHERE av.idAssessed_Value = ?`,
-      [recordId]
-    );
-
-    res.status(200).json({
-      message: "Assessed value updated successfully",
-      value: row[0] || null,
-    });
   } catch (error) {
-    console.error("Error updating assessed value:", error);
+    console.error("Error bulk updating assessed values:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

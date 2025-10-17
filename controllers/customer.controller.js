@@ -798,7 +798,7 @@ export const blacklistCustomer = async (req, res, next) => {
 
     // Check if the customer exists
     const [isExitingCustomer] = await pool.query(
-      "SELECT Status,NIC,  Branch_idBranch  FROM customer WHERE idCustomer = ? AND Branch_idBranch = ?",
+      "SELECT Status, NIC, Branch_idBranch FROM customer WHERE idCustomer = ? AND Branch_idBranch = ?",
       [customerId, req.branchId]
     );
 
@@ -813,7 +813,7 @@ export const blacklistCustomer = async (req, res, next) => {
 
     // if exist check this customer NIC in all company branches
     const [companyBranches] = await pool.query(
-      "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
+      "SELECT DISTINCT idBranch FROM branch WHERE Company_idCompany = ?",
       [req.companyId]
     );
 
@@ -821,33 +821,190 @@ export const blacklistCustomer = async (req, res, next) => {
       return next(errorHandler(404, "No branches found for this company"));
     }
 
+    // get the branch code of the branch where the customer is being blacklisted
+    const [branchData] = await pool.query(
+      "SELECT Branch_Code, Name FROM branch WHERE idBranch = ?",
+      [req.branchId]
+    );
+
+    const blacklistDate = new Date();
+    let logsCreated = 0;
+
     // loop through all branches and update the customer status to 0 (blacklist)
     for (const branch of companyBranches) {
-      // update status to 0 (blacklist) for this customer NIC in this branch
-      await pool.query(
-        "UPDATE customer SET Status = 0, Blacklist_Reason = ?, Blacklist_Date = ? WHERE NIC = ? AND Branch_idBranch = ?",
-        [reason, new Date(), isExitingCustomer[0].NIC, branch.idBranch]
+      // Check if this branch has customers with this NIC - get ALL of them
+      const [customersInBranch] = await pool.query(
+        "SELECT idCustomer FROM customer WHERE NIC = ? AND Branch_idBranch = ?",
+        [isExitingCustomer[0].NIC, branch.idBranch]
       );
 
-      // log the blacklisting for this customer in this branch
-      await customerLog(
-        customerId,
-        new Date(),
-        "BLACKLIST",
-        `Customer blacklisted from company. Branch ID: ${branch.idBranch} Reason: ${reason}`,
-        req.userId
-      );
+      // Only update and log if customers exist in this branch
+      if (customersInBranch.length > 0) {
+        // update status to 0 (blacklist) for ALL customers with this NIC in this branch
+        await pool.query(
+          "UPDATE customer SET Status = 0, Blacklist_Reason = ?, Blacklist_Date = ? WHERE NIC = ? AND Branch_idBranch = ?",
+          [reason, blacklistDate, isExitingCustomer[0].NIC, branch.idBranch]
+        );
+
+        // Log ONCE per branch, using the first customer ID found in that branch
+        await customerLog(
+          customersInBranch[0].idCustomer,
+          blacklistDate,
+          "BLACKLIST",
+          `Customer blacklisted from Company. By Branch: ${branchData[0].Name} | Branch Code: ${branchData[0].Branch_Code} | Reason: ${reason}`,
+          req.userId
+        );
+
+        logsCreated++;
+      }
     }
 
     res.status(200).json({
       status: 0,
       reason: reason,
-      blacklistDate: new Date(),
+      blacklistDate: blacklistDate,
       success: true,
       message: "Customer blacklisted from company successfully",
     });
   } catch (error) {
     console.error("Error blacklisting customer:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// Get all data of the customer by ID (personal data, ticket data, payment history, logs)
+export const getCustomerCompleteDataById = async (req, res, next) => {
+  try {
+    const customerId = req.params.id || req.params.customerId;
+    const branchId = req.branchId;
+
+    // Validate customer ID
+    if (!customerId) {
+      return next(errorHandler(400, "Customer ID is required"));
+    }
+
+    //Fetch Customer Basic Data
+    const [customerResult] = await pool.query(
+      "SELECT * FROM customer WHERE idCustomer = ? AND Branch_idBranch = ?",
+      [customerId, branchId]
+    );
+
+    if (customerResult.length === 0) {
+      return next(errorHandler(404, "Customer not found"));
+    }
+
+    const customer = customerResult[0];
+
+    //Fetch Customer Documents
+    const [documents] = await pool.query(
+      "SELECT * FROM customer_documents WHERE Customer_idCustomer = ?",
+      [customerId]
+    );
+
+    // Fetch All Customer Tickets including product name and latest comment
+    const [tickets] = await pool.query(
+      `SELECT 
+            pt.idPawning_Ticket,
+            pt.Pawning_Advance_Amount,
+            pt.Ticket_No,
+            pt.SEQ_No,
+            pt.Note,
+            pt.Maturity_date,
+            pt.Status,
+            pt.Period_Type,
+            pt.Period,
+            pt.Date_Time,
+            pp.Name AS Product_Name,
+            tcl.Comment AS Last_Comment,
+            tcl.Date_Time AS Last_Comment_DateTime,
+            tcc.Comment_Count
+         FROM pawning_ticket pt
+         LEFT JOIN pawning_product pp 
+                ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product
+         LEFT JOIN (
+              SELECT tc1.*
+              FROM ticket_comment tc1
+              INNER JOIN (
+                  SELECT Pawning_Ticket_idPawning_Ticket, MAX(idTicket_Comment) AS max_id
+                  FROM ticket_comment
+                  GROUP BY Pawning_Ticket_idPawning_Ticket
+              ) tmax
+              ON tc1.Pawning_Ticket_idPawning_Ticket = tmax.Pawning_Ticket_idPawning_Ticket
+             AND tc1.idTicket_Comment = tmax.max_id
+         ) tcl ON tcl.Pawning_Ticket_idPawning_Ticket = pt.idPawning_Ticket
+         LEFT JOIN (
+              SELECT Pawning_Ticket_idPawning_Ticket, COUNT(*) AS Comment_Count
+              FROM ticket_comment
+              GROUP BY Pawning_Ticket_idPawning_Ticket
+         ) tcc ON tcc.Pawning_Ticket_idPawning_Ticket = pt.idPawning_Ticket
+         WHERE pt.Customer_idCustomer = ?
+         ORDER BY STR_TO_DATE(pt.Date_Time, '%Y-%m-%d') DESC`,
+      [customerId]
+    );
+
+    //  Fetch All Payment History
+    let payments = [];
+
+    if (tickets.length > 0) {
+      const ticketNos = tickets.map((t) => parseInt(t.Ticket_No));
+      const ticketIds = tickets.map((t) => t.idPawning_Ticket);
+
+      const [paymentResults] = await pool.query(
+        `SELECT p.*, u.full_name AS officer 
+         FROM payment p 
+         LEFT JOIN user u ON p.User = u.idUser 
+         WHERE CAST(p.Ticket_No AS UNSIGNED) IN (?)
+         ORDER BY STR_TO_DATE(p.Date_Time, '%Y-%m-%d %H:%i:%s') DESC`,
+        [ticketNos]
+      );
+
+      payments = paymentResults;
+
+      // Fetch all comments for these tickets and attach to each ticket
+      const [commentsRows] = await pool.query(
+        `SELECT tc.*, u.full_name AS userName
+           FROM ticket_comment tc
+      LEFT JOIN user u ON tc.User_idUser = u.idUser
+          WHERE tc.Pawning_Ticket_idPawning_Ticket IN (?)
+       ORDER BY tc.idTicket_Comment ASC`,
+        [ticketIds]
+      );
+
+      // Group comments by ticket id
+      const commentsByTicket = new Map();
+      for (const row of commentsRows) {
+        const tId = row.Pawning_Ticket_idPawning_Ticket;
+        if (!commentsByTicket.has(tId)) commentsByTicket.set(tId, []);
+        commentsByTicket.get(tId).push({
+          idTicket_Comment: row.idTicket_Comment,
+          Date_Time: row.Date_Time,
+          Comment: row.Comment,
+          User_idUser: row.User_idUser,
+          userName: row.userName || null,
+        });
+      }
+
+      // Attach to tickets array
+      for (const t of tickets) {
+        t.comments = commentsByTicket.get(t.idPawning_Ticket) || [];
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Customer complete data fetched successfully",
+      kycData: {
+        customer: {
+          ...customer,
+          documents: documents || [],
+        },
+
+        tickets: tickets || [],
+        payments: payments || [],
+      },
+    });
+  } catch (error) {
+    console.error("Error fetching customer complete data:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

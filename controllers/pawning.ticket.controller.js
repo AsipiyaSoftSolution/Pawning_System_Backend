@@ -17,7 +17,7 @@ export const createPawningTicket = async (req, res, next) => {
     // pawning value have to equal or less than table value
     const { data } = req.body;
 
-    console.log(data, "data in createPawningTicket");
+    // console.log(data, "data in createPawningTicket");
     const requiredFields = [
       "ticketNo",
       "grantSeqNo",
@@ -168,7 +168,10 @@ export const createPawningTicket = async (req, res, next) => {
 
     let productPlanData;
     // if service charge create as is "Charge For Product Item"
-    if (productData[0].Service_Charge_Create_As === "Charge For Product Item") {
+    if (
+      productData[0].Service_Charge_Create_As === "Charge For Product Item" ||
+      productData[0].Service_Charge_Create_As === "inactive"
+    ) {
       if (productData[0].Interest_Method === "Interest For Period") {
         [productPlanData] = await pool.query(
           "SELECT idProduct_Plan,Service_Charge_Value_type, Service_Charge_Value FROM product_plan WHERE Pawning_Product_idPawning_Product = ? AND Period_Type = ? AND ? BETWEEN CAST(Minimum_Period AS UNSIGNED) AND CAST(Maximum_Period AS UNSIGNED)",
@@ -271,7 +274,21 @@ export const createPawningTicket = async (req, res, next) => {
         "SELECT stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,interestApplicableMethod FROM product_plan WHERE idProduct_Plan = ?",
         [productPlanData[0].idProduct_Plan]
       );
-      productPlanStagesData = stagesData || [];
+      // Defensive assignment and logging
+      if (Array.isArray(stagesData) && stagesData.length > 0) {
+        productPlanStagesData = stagesData;
+        console.log(
+          "\x1b[42m\x1b[30m Product Plan Stages Data Found \x1b[0m",
+          JSON.stringify(productPlanStagesData[0], null, 2)
+        );
+      } else {
+        productPlanStagesData = [{}];
+        console.warn(
+          "\x1b[41m\x1b[37m No Product Plan Stages Data Found for idProduct_Plan:",
+          productPlanData[0].idProduct_Plan,
+          "\x1b[0m"
+        );
+      }
     }
 
     // Insert into pawning_ticket table

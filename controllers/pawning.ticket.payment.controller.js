@@ -96,22 +96,54 @@ export const getTicketDataById = async (req, res, next) => {
     delete ticketData[0].User_idUser; // remove User_idUser from ticket data
 
     // fetch customer data for the ticket
+    /*
     [customerData] = await pool.query(
       "SELECT idCustomer,Full_name,Risk_Level,Mobile_No FROM customer WHERE idCustomer = ? ",
       [ticketData[0].Customer_idCustomer]
+    );*/
+
+    [customerData] = await pool.query(
+      "SELECT c.idCustomer, c.Full_name, c.Risk_Level, c.Mobile_No, cd.Document_Name, cd.Path FROM customer c LEFT JOIN customer_documents cd ON c.idCustomer = cd.Customer_idCustomer WHERE c.idCustomer = ? AND c.Branch_idBranch = ?",
+      [ticketData[0].Customer_idCustomer, req.branchId]
     );
 
+    if (!customerData || customerData.length === 0) {
+      return next(
+        errorHandler(
+          404,
+          "No customer found for the ticket's customer ID: " +
+            ticketData[0].Customer_idCustomer
+        )
+      );
+    }
+
+    // Collapse potential multiple rows (due to LEFT JOIN) into a single customer object with documents array
+    const baseCustomerRow = customerData[0];
+    const customer = {
+      idCustomer: baseCustomerRow.idCustomer,
+      Full_name: baseCustomerRow.Full_name,
+      Risk_Level: baseCustomerRow.Risk_Level,
+      Mobile_No: baseCustomerRow.Mobile_No,
+      documents: customerData
+        .filter(
+          (r) => r.Document_Name !== null && r.Document_Name !== undefined
+        )
+        .map((r) => ({
+          Document_Name: r.Document_Name,
+          Path: r.Path,
+        })),
+    };
     // fetch customer ative,inactive and overdue ticket counts and attach them to customer data
     const [ticketCounts] = await pool.query(
       "SELECT Status, COUNT(*) AS count FROM pawning_ticket WHERE Customer_idCustomer = ? AND Branch_idBranch = ? GROUP BY Status",
       [ticketData[0].Customer_idCustomer, req.branchId]
     );
 
-    customerData[0].activeTickets =
+    customer.activeTickets =
       ticketCounts.find((t) => parseInt(t.Status) === 1)?.count || 0;
-    customerData[0].settledTickets =
+    customer.settledTickets =
       ticketCounts.find((t) => parseInt(t.Status) === 2)?.count || 0;
-    customerData[0].overdueTickets =
+    customer.overdueTickets =
       ticketCounts.find((t) => parseInt(t.Status) === 3)?.count || 0;
 
     // article items for the ticket
@@ -295,7 +327,7 @@ export const getTicketDataById = async (req, res, next) => {
       success: true,
       ticketDetails: {
         ticketData: ticketData[0],
-        customerData: customerData[0],
+        customerData: customer,
         articleItems,
         ticketCharges: ticketCharges[0] || {},
         paymentHistory,

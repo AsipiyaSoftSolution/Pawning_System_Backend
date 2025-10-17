@@ -455,10 +455,13 @@ export const sendTransferRecords = async (req, res, next) => {
     }
 
     // Build dynamic WHERE conditions for date filtering
-    let whereCondition = "aal.Type = 'Internal Account Transfer Out'";
-    let countWhereCondition = "Type = 'Internal Account Transfer Out'";
-    let queryParams = [];
-    let countParams = [];
+    // Only select logs for accounts belonging to the current branch
+    let whereCondition =
+      "aal.Type = 'Internal Account Transfer Out' AND fromAccount.Branch_idBranch = ?";
+    let countWhereCondition =
+      "Type = 'Internal Account Transfer Out' AND Accounting_Accounts_idAccounting_Accounts IN (SELECT idAccounting_Accounts FROM accounting_accounts WHERE Branch_idBranch = ?)";
+    let queryParams = [req.branchId];
+    let countParams = [req.branchId];
 
     // Handle date filtering
     if (start_date && end_date) {

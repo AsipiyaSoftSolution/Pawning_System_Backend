@@ -901,23 +901,44 @@ export const getCustomerCompleteDataById = async (req, res, next) => {
       [customerId]
     );
 
-    //Fetch Customer Logs
-    const [logs] = await pool.query(
-      `SELECT cl.*, u.full_name 
-       FROM customer_log cl
-       LEFT JOIN user u ON cl.User_idUser = u.idUser
-       WHERE cl.Customer_idCustomer = ?
-       ORDER BY STR_TO_DATE(cl.Date_Time, '%Y-%m-%d %H:%i:%s') ASC`,
-      [customerId]
-    );
-
-    // Fetch All Customer Tickets
+    // Fetch All Customer Tickets including product name and latest comment
     const [tickets] = await pool.query(
-      `SELECT idPawning_Ticket, Pawning_Advance_Amount, Ticket_No, SEQ_No, 
-              Maturity_date, Status, Period_Type, Period, Date_Time
-       FROM pawning_ticket 
-       WHERE Customer_idCustomer = ?
-       ORDER BY STR_TO_DATE(Date_Time, '%Y-%m-%d') DESC`,
+      `SELECT 
+            pt.idPawning_Ticket,
+            pt.Pawning_Advance_Amount,
+            pt.Ticket_No,
+            pt.SEQ_No,
+            pt.Note,
+            pt.Maturity_date,
+            pt.Status,
+            pt.Period_Type,
+            pt.Period,
+            pt.Date_Time,
+            pp.Name AS Product_Name,
+            tcl.Comment AS Last_Comment,
+            tcl.Date_Time AS Last_Comment_DateTime,
+            tcc.Comment_Count
+         FROM pawning_ticket pt
+         LEFT JOIN pawning_product pp 
+                ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product
+         LEFT JOIN (
+              SELECT tc1.*
+              FROM ticket_comment tc1
+              INNER JOIN (
+                  SELECT Pawning_Ticket_idPawning_Ticket, MAX(idTicket_Comment) AS max_id
+                  FROM ticket_comment
+                  GROUP BY Pawning_Ticket_idPawning_Ticket
+              ) tmax
+              ON tc1.Pawning_Ticket_idPawning_Ticket = tmax.Pawning_Ticket_idPawning_Ticket
+             AND tc1.idTicket_Comment = tmax.max_id
+         ) tcl ON tcl.Pawning_Ticket_idPawning_Ticket = pt.idPawning_Ticket
+         LEFT JOIN (
+              SELECT Pawning_Ticket_idPawning_Ticket, COUNT(*) AS Comment_Count
+              FROM ticket_comment
+              GROUP BY Pawning_Ticket_idPawning_Ticket
+         ) tcc ON tcc.Pawning_Ticket_idPawning_Ticket = pt.idPawning_Ticket
+         WHERE pt.Customer_idCustomer = ?
+         ORDER BY STR_TO_DATE(pt.Date_Time, '%Y-%m-%d') DESC`,
       [customerId]
     );
 
@@ -926,6 +947,7 @@ export const getCustomerCompleteDataById = async (req, res, next) => {
 
     if (tickets.length > 0) {
       const ticketNos = tickets.map((t) => parseInt(t.Ticket_No));
+      const ticketIds = tickets.map((t) => t.idPawning_Ticket);
 
       const [paymentResults] = await pool.query(
         `SELECT p.*, u.full_name AS officer 
@@ -937,6 +959,35 @@ export const getCustomerCompleteDataById = async (req, res, next) => {
       );
 
       payments = paymentResults;
+
+      // Fetch all comments for these tickets and attach to each ticket
+      const [commentsRows] = await pool.query(
+        `SELECT tc.*, u.full_name AS userName
+           FROM ticket_comment tc
+      LEFT JOIN user u ON tc.User_idUser = u.idUser
+          WHERE tc.Pawning_Ticket_idPawning_Ticket IN (?)
+       ORDER BY tc.idTicket_Comment ASC`,
+        [ticketIds]
+      );
+
+      // Group comments by ticket id
+      const commentsByTicket = new Map();
+      for (const row of commentsRows) {
+        const tId = row.Pawning_Ticket_idPawning_Ticket;
+        if (!commentsByTicket.has(tId)) commentsByTicket.set(tId, []);
+        commentsByTicket.get(tId).push({
+          idTicket_Comment: row.idTicket_Comment,
+          Date_Time: row.Date_Time,
+          Comment: row.Comment,
+          User_idUser: row.User_idUser,
+          userName: row.userName || null,
+        });
+      }
+
+      // Attach to tickets array
+      for (const t of tickets) {
+        t.comments = commentsByTicket.get(t.idPawning_Ticket) || [];
+      }
     }
 
     res.status(200).json({
@@ -947,7 +998,7 @@ export const getCustomerCompleteDataById = async (req, res, next) => {
           ...customer,
           documents: documents || [],
         },
-        logs: logs || [],
+
         tickets: tickets || [],
         payments: payments || [],
       },

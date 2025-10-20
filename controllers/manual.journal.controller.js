@@ -59,7 +59,7 @@ export const createManualJournal = async (req, res, next) => {
       for (const entry of entries) {
         // check account data exists
         const [accountData] = await connection.query(
-          `SELECT idAccounting_Accounts,Group_Of_Type, Type,Account_Balance,Account_Name FROM accounting_accounts WHERE idAccounting_Accounts = ? AND Branch_idBranch = ?`,
+          `SELECT idAccounting_Accounts,Group_Of_Type, Type,Account_Balance,Account_Name,Account_Code FROM accounting_accounts WHERE idAccounting_Accounts = ? AND Branch_idBranch = ?`,
           [entry.account, req.branchId]
         );
 
@@ -141,7 +141,7 @@ export const createManualJournal = async (req, res, next) => {
               return next(
                 errorHandler(
                   400,
-                  `Insufficient balance in account ID ${entry.account} for credit amount ${entry.creditAmount}`
+                  `Insufficient balance in account ${accountData[0].Account_Name} (${accountData[0].Account_Code}) for credit amount ${creditVal}`
                 )
               );
             }
@@ -203,7 +203,7 @@ export const createManualJournal = async (req, res, next) => {
               return next(
                 errorHandler(
                   400,
-                  `Insufficient balance in account ID ${entry.account} for debit amount ${entry.debitAmount}`
+                  `Insufficient balance in account ${accountData[0].Account_Name} (${accountData[0].Account_Code}) for debit amount ${debitVal}`
                 )
               );
             }

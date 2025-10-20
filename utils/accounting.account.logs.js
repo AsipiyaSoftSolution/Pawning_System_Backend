@@ -234,12 +234,25 @@ export const addManualJournalCreditDebitLog = async (
   type,
   description,
   userId,
-  balance
+  balance,
+  contra_account,
+  connection = null
 ) => {
   try {
-    const [result] = await pool.query(
-      "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts,Date_Time,Type,Description,Debit,Credit,Balance,User_idUser) VALUES(?,?,?,?,?,?,?,?)",
-      [accountId, new Date(), type, description, debit, credit, balance, userId]
+    const dbConnection = connection || pool;
+    const [result] = await dbConnection.query(
+      "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts,Date_Time,Type,Description,Debit,Credit,Balance,User_idUser,Contra_Account) VALUES(?,?,?,?,?,?,?,?,?)",
+      [
+        accountId,
+        new Date(),
+        type,
+        description,
+        debit,
+        credit,
+        balance,
+        userId,
+        contra_account,
+      ]
     );
     if (result.affectedRows === 0) {
       throw new Error("Failed to create manual journal credit debit log");

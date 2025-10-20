@@ -619,6 +619,8 @@ export const searchCustomerByNIC = async (req, res, next) => {
         c.Mobile_No,
         c.Status,
         c.Risk_Level,
+        CASE WHEN c.Status = '0' THEN c.Blacklist_Reason ELSE NULL END AS Blacklist_Reason,
+        CASE WHEN c.Status = '0' THEN c.Blacklist_Date ELSE NULL END AS Blacklist_Date,
         JSON_ARRAYAGG(
           JSON_OBJECT(
             'Document_Name', cd.Document_Name,
@@ -628,7 +630,7 @@ export const searchCustomerByNIC = async (req, res, next) => {
       FROM customer c
       LEFT JOIN customer_documents cd ON c.idCustomer = cd.Customer_idCustomer
       WHERE c.NIC LIKE ? AND c.Branch_idBranch = ?
-      GROUP BY c.idCustomer, c.NIC, c.Full_name, c.Address1, c.Address2, c.Address3, c.Mobile_No, c.Status, c.Risk_Level`,
+      GROUP BY c.idCustomer, c.NIC, c.Full_name, c.Address1, c.Address2, c.Address3, c.Mobile_No, c.Status, c.Risk_Level, c.Blacklist_Reason, c.Blacklist_Date`,
       [formatedNIC, req.branchId]
     );
 

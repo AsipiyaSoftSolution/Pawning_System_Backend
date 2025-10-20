@@ -2,19 +2,21 @@ import { errorHandler } from "../utils/errorHandler.js";
 import { pool } from "../utils/db.js";
 import { getPaginationData } from "../utils/helper.js";
 import { createManualJournalLog } from "../utils/manual.journal.logs.js";
+import { addManualJournalCreditDebitLog } from "../utils/accounting.account.logs.js";
 
 // Create a new manual journal entry
 export const createManualJournal = async (req, res, next) => {
   try {
-    const { 
-      narration, 
-      journalDate, 
-      entries 
-    } = req.body;
+    const { narration, journalDate, entries } = req.body;
 
     // Validate required fields
     if (!narration || !journalDate || !entries || entries.length === 0) {
-      return next(errorHandler(400, "Narration, journal date, and at least one entry are required"));
+      return next(
+        errorHandler(
+          400,
+          "Narration, journal date, and at least one entry are required"
+        )
+      );
     }
 
     // Validate journal date (cannot be earlier than current date)
@@ -24,29 +26,29 @@ export const createManualJournal = async (req, res, next) => {
     selectedDate.setHours(0, 0, 0, 0);
 
     if (selectedDate < currentDate) {
-      return next(errorHandler(400, "Journal date cannot be earlier than the current date"));
+      return next(
+        errorHandler(
+          400,
+          "Journal date cannot be earlier than the current date"
+        )
+      );
     }
 
     // Validate entries
     for (const entry of entries) {
-      if (!entry.description || !entry.idAccounting_Accounts) {
-        return next(errorHandler(400, "Description and account are required for each entry"));
+      if (!entry.account) {
+        return next(errorHandler(400, "Account is required for each entry"));
       }
-      if (!entry.debitAmount && !entry.creditAmount) {
-        return next(errorHandler(400, "At least one of debit amount or credit amount must be provided for each entry"));
-      }
-    }
 
-    // Get branch ID - either from request or use the first branch from user's branches
-    let branchId;
-    if (req.branchId) {
-      branchId = req.branchId;
-    } else if (req.branches && req.branches.length > 0) {
-      branchId = req.branches[0];
-    } else {
-      return next(errorHandler(400, "No branch associated with user"));
+      if (!entry.creditAmount && !entry.debitAmount) {
+        return next(
+          errorHandler(
+            400,
+            "Either credit amount or debit amount must be provided for each entry"
+          )
+        );
+      }
     }
-    const userId = req.userId; // From auth middleware
 
     // Start a transaction
     const connection = await pool.getConnection();
@@ -54,30 +56,182 @@ export const createManualJournal = async (req, res, next) => {
 
     try {
       // Insert a row for each entry in manual_journal
-      const insertedIds = [];
       for (const entry of entries) {
-        const amount = parseFloat(entry.debitAmount || 0) || parseFloat(entry.creditAmount || 0) || 0;
+        // check account data exists
+        const [accountData] = await connection.query(
+          `SELECT idAccounting_Accounts,Group_Of_Type, Type,Account_Balance,Account_Name,Account_Code FROM accounting_accounts WHERE idAccounting_Accounts = ? AND Branch_idBranch = ?`,
+          [entry.account, req.branchId]
+        );
+
+        if (accountData.length === 0) {
+          await connection.rollback();
+          return next(
+            errorHandler(
+              400,
+              `Account with ID ${entry.account} does not exist in this branch`
+            )
+          );
+        }
+
+        const amount =
+          parseFloat(entry.debitAmount || 0) ||
+          parseFloat(entry.creditAmount || 0) ||
+          0;
         const [journalResult] = await connection.query(
           `INSERT INTO manual_journal 
           (Narration, Date, Branch_idBranch, User_idUser, idAccounting_Accounts, Description, Amount) 
           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [narration, journalDate, branchId, userId, entry.idAccounting_Accounts, entry.description, amount]
+          [
+            narration,
+            journalDate,
+            req.branchId,
+            req.userId,
+            entry.account,
+            entry.description,
+            amount,
+          ]
         );
-        insertedIds.push(journalResult.insertId);
+
+        // add a manual journal log now
+        await createManualJournalLog(
+          journalResult.insertId,
+          entry.account,
+          entry.debitAmount,
+          entry.creditAmount
+        );
+
+        let typeForLog = `Manual Journal Entry - ${narration}`; // define type for accounting log
+        let descriptionForLog;
+
+        // then update the balance in accounting accounts table
+        if (
+          accountData[0].Group_Of_Type === "Assets" ||
+          accountData[0].Group_Of_Type === "Expenses"
+        ) {
+          // if debit increase, credit decrease
+          // check if this is debit or credit
+          if (entry.debitAmount) {
+            const currentBalance =
+              parseFloat(accountData[0].Account_Balance) || 0;
+            const debitVal = parseFloat(entry.debitAmount) || 0;
+            const newBalance = currentBalance + debitVal;
+            await connection.query(
+              `UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ? AND Branch_idBranch = ?`,
+              [newBalance, entry.account, req.branchId]
+            );
+            descriptionForLog = `Amount Debited via Manual Journal - ${narration} | Amount: ${debitVal} | Group of Type: ${accountData[0].Group_Of_Type} | Account Type: ${accountData[0].Type}`;
+
+            // add accounting account log
+            await addManualJournalCreditDebitLog(
+              entry.account,
+              entry.creditAmount || 0,
+              entry.debitAmount || 0,
+              typeForLog,
+              descriptionForLog,
+              req.userId,
+              newBalance
+            );
+          } else if (entry.creditAmount) {
+            // check if this account has sufficient balance for credit
+            const currentBalance =
+              parseFloat(accountData[0].Account_Balance) || 0;
+            const creditVal = parseFloat(entry.creditAmount) || 0;
+            if (currentBalance < creditVal) {
+              await connection.rollback();
+              return next(
+                errorHandler(
+                  400,
+                  `Insufficient balance in account ${accountData[0].Account_Name} (${accountData[0].Account_Code}) for credit amount ${creditVal}`
+                )
+              );
+            }
+
+            const newBalance = currentBalance - creditVal;
+            await connection.query(
+              `UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ? AND Branch_idBranch = ?`,
+              [newBalance, entry.account, req.branchId]
+            );
+
+            descriptionForLog = `Amount Credited via Manual Journal - ${narration} | Amount: ${creditVal} | Group of Type: ${accountData[0].Group_Of_Type} | Account Type: ${accountData[0].Type}`;
+            // add accounting account log
+            await addManualJournalCreditDebitLog(
+              entry.account,
+              entry.creditAmount || 0,
+              entry.debitAmount || 0,
+              typeForLog,
+              descriptionForLog,
+              req.userId,
+              newBalance
+            );
+          }
+        }
+
+        if (
+          accountData[0].Group_Of_Type === "Liabilities" ||
+          accountData[0].Group_Of_Type === "Revenue" ||
+          accountData[0].Group_Of_Type === "Equity"
+        ) {
+          // if credit increase, debit decrease
+          if (entry.creditAmount) {
+            const currentBalance =
+              parseFloat(accountData[0].Account_Balance) || 0;
+            const creditVal = parseFloat(entry.creditAmount) || 0;
+            const newBalance = currentBalance + creditVal;
+            await connection.query(
+              `UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ? AND Branch_idBranch = ?`,
+              [newBalance, entry.account, req.branchId]
+            );
+
+            descriptionForLog = `Amount Credited via Manual Journal - ${narration} | Amount: ${creditVal} | Group of Type: ${accountData[0].Group_Of_Type} | Account Type: ${accountData[0].Type}`;
+            // add accounting account log
+            await addManualJournalCreditDebitLog(
+              entry.account,
+              entry.creditAmount || 0,
+              entry.debitAmount || 0,
+              typeForLog,
+              descriptionForLog,
+              req.userId,
+              newBalance
+            );
+          } else if (entry.debitAmount) {
+            // check if this account has sufficient balance for debit
+            const currentBalance =
+              parseFloat(accountData[0].Account_Balance) || 0;
+            const debitVal = parseFloat(entry.debitAmount) || 0;
+            if (currentBalance < debitVal) {
+              await connection.rollback();
+              return next(
+                errorHandler(
+                  400,
+                  `Insufficient balance in account ${accountData[0].Account_Name} (${accountData[0].Account_Code}) for debit amount ${debitVal}`
+                )
+              );
+            }
+
+            const newBalance = currentBalance - debitVal;
+            await connection.query(
+              `UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ? AND Branch_idBranch = ?`,
+              [newBalance, entry.account, req.branchId]
+            );
+
+            descriptionForLog = `Amount Debited via Manual Journal - ${narration} | Amount: ${debitVal} | Group of Type: ${accountData[0].Group_Of_Type} | Account Type: ${accountData[0].Type}`;
+            // add accounting account log
+            await addManualJournalCreditDebitLog(
+              entry.account,
+              entry.creditAmount || 0,
+              entry.debitAmount || 0,
+              typeForLog,
+              descriptionForLog,
+              req.userId,
+              newBalance
+            );
+          }
+        }
       }
-      // Create log entries for each journal entry
-      for (let i = 0; i < insertedIds.length; i++) {
-        const journalId = insertedIds[i];
-        const accountId = entries[i].idAccounting_Accounts;
-        const debitAmount = entries[i].debitAmount || null;
-        const creditAmount = entries[i].creditAmount || null;
-        await createManualJournalLog(journalId, accountId, debitAmount, creditAmount);
-      }
-      
+
       await connection.commit();
       res.status(201).json({
         message: "Manual journal entries created successfully",
-        journalIds: insertedIds
       });
     } catch (error) {
       await connection.rollback();
@@ -94,19 +248,11 @@ export const createManualJournal = async (req, res, next) => {
 // Get all manual journal entries
 export const getAllManualJournals = async (req, res, next) => {
   try {
-    // Get branch ID - either from request or use the first branch from user's branches
-    let branchId;
-    if (req.branchId) {
-      branchId = req.branchId;
-    } else if (req.branches && req.branches.length > 0) {
-      branchId = req.branches[0];
-    } else {
-      return next(errorHandler(400, "No branch associated with user"));
-    }
-    
     // Extract query parameters for filtering
-    const { page = 1, limit = 10, narration, fromDate, toDate, fromAmount, toAmount } = req.query;
-    
+    const { narration, fromDate, toDate, fromAmount, toAmount } = req.query;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
     // Build the query with filters
     let query = `
       SELECT 
@@ -121,45 +267,45 @@ export const getAllManualJournals = async (req, res, next) => {
       FROM manual_journal j
       LEFT JOIN user u ON j.User_idUser = u.idUser
       WHERE j.Branch_idBranch = ?`;
-    
-    const queryParams = [branchId];
-    
+
+    const queryParams = [req.branchId];
+
     // Add filters if provided
     if (narration) {
       query += " AND j.Narration LIKE ?";
       queryParams.push(`%${narration}%`);
     }
-    
+
     if (fromDate) {
       query += " AND j.Date >= ?";
       queryParams.push(fromDate);
     }
-    
+
     if (toDate) {
       query += " AND j.Date <= ?";
       queryParams.push(toDate);
     }
-    
+
     if (fromAmount) {
       query += " AND j.Amount >= ?";
       queryParams.push(fromAmount);
     }
-    
+
     if (toAmount) {
       query += " AND j.Amount <= ?";
       queryParams.push(toAmount);
     }
-    
+
     // Group by Narration and Date (and optionally user)
     query += ` GROUP BY j.Narration, j.Date`;
-    
+
     // Get total count for pagination
     let countQuery = `
       SELECT COUNT(*) AS total FROM (
         SELECT 1
         FROM manual_journal j
         WHERE j.Branch_idBranch = ?`;
-    let countQueryParams = [branchId];
+    let countQueryParams = [req.branchId];
     if (narration) {
       countQuery += " AND j.Narration LIKE ?";
       countQueryParams.push(`%${narration}%`);
@@ -181,24 +327,21 @@ export const getAllManualJournals = async (req, res, next) => {
       countQueryParams.push(toAmount);
     }
     countQuery += ` GROUP BY j.Narration, j.Date ) AS grouped`;
-    
+
     const paginationData = await getPaginationData(
       countQuery,
       countQueryParams,
       page,
       limit
     );
-    
-    // Calculate offset based on page and limit
-    const offset = (parseInt(page) - 1) * parseInt(limit);
-    
+
     // Add sorting and pagination
     query += " ORDER BY j.Date DESC LIMIT ? OFFSET ?";
     queryParams.push(parseInt(limit), offset);
-    
+
     // Execute the query
     const [journals] = await pool.query(query, queryParams);
-    
+
     res.status(200).json({
       message: "Manual journal entries fetched successfully",
       journals,
@@ -214,43 +357,83 @@ export const getAllManualJournals = async (req, res, next) => {
 export const getManualJournalById = async (req, res, next) => {
   try {
     const { id } = req.params;
-    
-    // Get branch ID - either from request or use the first branch from user's branches
-    let branchId;
-    if (req.branchId) {
-      branchId = req.branchId;
-    } else if (req.branches && req.branches.length > 0) {
-      branchId = req.branches[0];
-    } else {
-      return next(errorHandler(400, "No branch associated with user"));
-    }
 
-    // Get journal header
-    const [journal] = await pool.query(
-      `SELECT j.*, u.full_name AS Created_By
-       FROM manual_journal j
-       JOIN user u ON j.User_idUser = u.idUser
-       WHERE j.idManual_Journal = ? AND j.Branch_idBranch = ?`,
-      [id, branchId]
+    // Get the first journal entry to find narration and date
+    const [journalInfo] = await pool.query(
+      `SELECT Narration, Date 
+       FROM manual_journal 
+       WHERE idManual_Journal = ? AND Branch_idBranch = ?
+       LIMIT 1`,
+      [id, req.branchId]
     );
 
-    if (!journal[0]) {
+    if (journalInfo.length === 0) {
       return next(errorHandler(404, "Manual journal entry not found"));
     }
 
-    // Get journal entries for this journal ID
+    const narration = journalInfo[0].Narration;
+    const journalDate = journalInfo[0].Date;
+
+    // Get all manual journal entries for the given narration and date
     const [journalEntries] = await pool.query(
-      `SELECT je.*, aa.Account_Code, aa.Account_Name 
-       FROM manual_journal_logs je
-       JOIN accounting_accounts aa ON je.Accounting_Accounts_idAccounting_Accounts = aa.idAccounting_Accounts
-       WHERE je.Manual_Journal_idManual_Journal = ?`,
-      [id]
+      `SELECT 
+        j.idManual_Journal,
+        j.Narration,
+        j.Date AS Journal_Date,
+        j.Description,
+        j.Amount,
+        j.idAccounting_Accounts,
+        aa.Account_Code,
+        aa.Account_Name,
+        aa.Account_Type,
+        aa.Group_Of_Type,
+        aa.Type,
+        mjl.Credit_Amount,
+        mjl.Debit_Amount,
+        u.full_name AS Created_By,
+        j.User_idUser,
+        j.Branch_idBranch
+       FROM manual_journal j
+       LEFT JOIN user u ON j.User_idUser = u.idUser
+       LEFT JOIN accounting_accounts aa ON j.idAccounting_Accounts = aa.idAccounting_Accounts
+       LEFT JOIN manual_journal_logs mjl ON j.idManual_Journal = mjl.Manual_Journal_idManual_Journal
+       WHERE j.Narration = ? AND j.Date = ? AND j.Branch_idBranch = ?
+       ORDER BY j.idManual_Journal`,
+      [narration, journalDate, req.branchId]
     );
 
+    if (journalEntries.length === 0) {
+      return next(errorHandler(404, "Manual journal entries not found"));
+    }
+
+    // Get the journal header info from the first entry
+    const journalHeader = {
+      narration: journalEntries[0].Narration,
+      journalDate: journalEntries[0].Journal_Date,
+      createdBy: journalEntries[0].Created_By,
+      userId: journalEntries[0].User_idUser,
+      branchId: journalEntries[0].Branch_idBranch,
+    };
+
+    // Format entries data
+    const entries = journalEntries.map((entry) => ({
+      idManualJournal: entry.idManual_Journal,
+      description: entry.Description,
+      amount: entry.Amount,
+      accountId: entry.idAccounting_Accounts,
+      accountCode: entry.Account_Code,
+      accountName: entry.Account_Name,
+      accountType: entry.Account_Type,
+      groupOfType: entry.Group_Of_Type,
+      type: entry.Type,
+      creditAmount: entry.Credit_Amount,
+      debitAmount: entry.Debit_Amount,
+    }));
+
     res.status(200).json({
-      message: "Manual journal entry fetched successfully",
-      journal: journal[0],
-      entries: journalEntries
+      message: "Manual journal entries fetched successfully",
+      journal: journalHeader,
+      entries: entries,
     });
   } catch (error) {
     console.error("Error fetching manual journal entry:", error);
@@ -261,47 +444,14 @@ export const getManualJournalById = async (req, res, next) => {
 // Get chart of accounts for dropdown
 export const getChartAccountsForDropdown = async (req, res, next) => {
   try {
-    // Get branch ID - either from request or use the first branch from user's branches
-    let branchId;
-    if (req.branchId) {
-      branchId = req.branchId;
-    } else if (req.branches && req.branches.length > 0) {
-      branchId = req.branches[0];
-    } else {
-      console.log('No branch ID found in request, using default branch');
-      // For debugging purposes, get all accounts regardless of branch
-      const [allAccounts] = await pool.query(
-        `SELECT idAccounting_Accounts, Account_Code, Account_Name, Account_Type, Branch_idBranch
-         FROM accounting_accounts
-         WHERE Status = 1
-         ORDER BY Account_Code`
-      );
-      
-      console.log(`Found ${allAccounts.length} accounts across all branches`);
-      
-      if (allAccounts.length > 0) {
-        // Use the branch of the first account as a fallback
-        branchId = allAccounts[0].Branch_idBranch;
-        console.log(`Using fallback branch ID: ${branchId}`);
-      } else {
-        return next(errorHandler(400, "No accounts found in the system"));
-      }
-    }
-    
-    console.log(`Fetching accounts for branch ID: ${branchId}`);
-    
     // Get active accounts
     const [accounts] = await pool.query(
-      `SELECT idAccounting_Accounts, Account_Code, Account_Name, Account_Type
+      `SELECT idAccounting_Accounts, Account_Code, Account_Name, Account_Type,Group_Of_Type,Type
        FROM accounting_accounts
-       WHERE Branch_idBranch = ? AND Status = 1
-       ORDER BY Account_Code`,
-      [branchId]
+       WHERE Branch_idBranch = ? AND Status = 1`,
+      [req.branchId]
     );
-    
-    console.log(`Found ${accounts.length} accounts for branch ID: ${branchId}`);
-    
-    
+
     res.status(200).json({
       message: "Chart of accounts fetched successfully",
       accounts,

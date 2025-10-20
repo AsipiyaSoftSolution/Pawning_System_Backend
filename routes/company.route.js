@@ -39,7 +39,7 @@ import {
   updateSMSTemplateStatus,
   getAllSMSTemplates,
   getAssessedValues,
-  updateAssessedValue,
+  bulkUpdateAssessedValues,
 } from "../controllers/company.controller.js";
 const route = express.Router();
 
@@ -117,10 +117,10 @@ route.get(
   getAssessedValues
 );
 route.post(
-  "/:branchId/assessed-values/:id",
+  "/:branchId/assessed-values-bulk",
   protectedRoute,
   checkUserBranchAccess,
-  updateAssessedValue
+  bulkUpdateAssessedValues
 );
 
 // TEST USER - to be removed in production

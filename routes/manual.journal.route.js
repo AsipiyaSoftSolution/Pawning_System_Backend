@@ -19,10 +19,20 @@ router.post(
 );
 
 // Get all manual journal entries
-router.get("/all", protectedRoute, getAllManualJournals);
+router.get(
+  "/all/:branchId",
+  protectedRoute,
+  checkUserBranchAccess,
+  getAllManualJournals
+);
 
 // Get manual journal entry by ID
-router.get("/get/:id", protectedRoute, getManualJournalById);
+router.get(
+  "/get/:branchId/:id",
+  protectedRoute,
+  checkUserBranchAccess,
+  getManualJournalById
+);
 
 // Get chart of accounts for dropdown
 router.get(

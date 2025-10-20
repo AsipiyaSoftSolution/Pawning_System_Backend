@@ -248,27 +248,11 @@ export const createManualJournal = async (req, res, next) => {
 // Get all manual journal entries
 export const getAllManualJournals = async (req, res, next) => {
   try {
-    // Get branch ID - either from request or use the first branch from user's branches
-    let branchId;
-    if (req.branchId) {
-      branchId = req.branchId;
-    } else if (req.branches && req.branches.length > 0) {
-      branchId = req.branches[0];
-    } else {
-      return next(errorHandler(400, "No branch associated with user"));
-    }
-
     // Extract query parameters for filtering
-    const {
-      page = 1,
-      limit = 10,
-      narration,
-      fromDate,
-      toDate,
-      fromAmount,
-      toAmount,
-    } = req.query;
-
+    const { narration, fromDate, toDate, fromAmount, toAmount } = req.query;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
     // Build the query with filters
     let query = `
       SELECT 
@@ -284,7 +268,7 @@ export const getAllManualJournals = async (req, res, next) => {
       LEFT JOIN user u ON j.User_idUser = u.idUser
       WHERE j.Branch_idBranch = ?`;
 
-    const queryParams = [branchId];
+    const queryParams = [req.branchId];
 
     // Add filters if provided
     if (narration) {
@@ -321,7 +305,7 @@ export const getAllManualJournals = async (req, res, next) => {
         SELECT 1
         FROM manual_journal j
         WHERE j.Branch_idBranch = ?`;
-    let countQueryParams = [branchId];
+    let countQueryParams = [req.branchId];
     if (narration) {
       countQuery += " AND j.Narration LIKE ?";
       countQueryParams.push(`%${narration}%`);
@@ -351,9 +335,6 @@ export const getAllManualJournals = async (req, res, next) => {
       limit
     );
 
-    // Calculate offset based on page and limit
-    const offset = (parseInt(page) - 1) * parseInt(limit);
-
     // Add sorting and pagination
     query += " ORDER BY j.Date DESC LIMIT ? OFFSET ?";
     queryParams.push(parseInt(limit), offset);
@@ -377,42 +358,82 @@ export const getManualJournalById = async (req, res, next) => {
   try {
     const { id } = req.params;
 
-    // Get branch ID - either from request or use the first branch from user's branches
-    let branchId;
-    if (req.branchId) {
-      branchId = req.branchId;
-    } else if (req.branches && req.branches.length > 0) {
-      branchId = req.branches[0];
-    } else {
-      return next(errorHandler(400, "No branch associated with user"));
-    }
-
-    // Get journal header
-    const [journal] = await pool.query(
-      `SELECT j.*, u.full_name AS Created_By
-       FROM manual_journal j
-       JOIN user u ON j.User_idUser = u.idUser
-       WHERE j.idManual_Journal = ? AND j.Branch_idBranch = ?`,
-      [id, branchId]
+    // Get the first journal entry to find narration and date
+    const [journalInfo] = await pool.query(
+      `SELECT Narration, Date 
+       FROM manual_journal 
+       WHERE idManual_Journal = ? AND Branch_idBranch = ?
+       LIMIT 1`,
+      [id, req.branchId]
     );
 
-    if (!journal[0]) {
+    if (journalInfo.length === 0) {
       return next(errorHandler(404, "Manual journal entry not found"));
     }
 
-    // Get journal entries for this journal ID
+    const narration = journalInfo[0].Narration;
+    const journalDate = journalInfo[0].Date;
+
+    // Get all manual journal entries for the given narration and date
     const [journalEntries] = await pool.query(
-      `SELECT je.*, aa.Account_Code, aa.Account_Name 
-       FROM manual_journal_logs je
-       JOIN accounting_accounts aa ON je.Accounting_Accounts_idAccounting_Accounts = aa.idAccounting_Accounts
-       WHERE je.Manual_Journal_idManual_Journal = ?`,
-      [id]
+      `SELECT 
+        j.idManual_Journal,
+        j.Narration,
+        j.Date AS Journal_Date,
+        j.Description,
+        j.Amount,
+        j.idAccounting_Accounts,
+        aa.Account_Code,
+        aa.Account_Name,
+        aa.Account_Type,
+        aa.Group_Of_Type,
+        aa.Type,
+        mjl.Credit_Amount,
+        mjl.Debit_Amount,
+        u.full_name AS Created_By,
+        j.User_idUser,
+        j.Branch_idBranch
+       FROM manual_journal j
+       LEFT JOIN user u ON j.User_idUser = u.idUser
+       LEFT JOIN accounting_accounts aa ON j.idAccounting_Accounts = aa.idAccounting_Accounts
+       LEFT JOIN manual_journal_logs mjl ON j.idManual_Journal = mjl.Manual_Journal_idManual_Journal
+       WHERE j.Narration = ? AND j.Date = ? AND j.Branch_idBranch = ?
+       ORDER BY j.idManual_Journal`,
+      [narration, journalDate, req.branchId]
     );
 
+    if (journalEntries.length === 0) {
+      return next(errorHandler(404, "Manual journal entries not found"));
+    }
+
+    // Get the journal header info from the first entry
+    const journalHeader = {
+      narration: journalEntries[0].Narration,
+      journalDate: journalEntries[0].Journal_Date,
+      createdBy: journalEntries[0].Created_By,
+      userId: journalEntries[0].User_idUser,
+      branchId: journalEntries[0].Branch_idBranch,
+    };
+
+    // Format entries data
+    const entries = journalEntries.map((entry) => ({
+      idManualJournal: entry.idManual_Journal,
+      description: entry.Description,
+      amount: entry.Amount,
+      accountId: entry.idAccounting_Accounts,
+      accountCode: entry.Account_Code,
+      accountName: entry.Account_Name,
+      accountType: entry.Account_Type,
+      groupOfType: entry.Group_Of_Type,
+      type: entry.Type,
+      creditAmount: entry.Credit_Amount,
+      debitAmount: entry.Debit_Amount,
+    }));
+
     res.status(200).json({
-      message: "Manual journal entry fetched successfully",
-      journal: journal[0],
-      entries: journalEntries,
+      message: "Manual journal entries fetched successfully",
+      journal: journalHeader,
+      entries: entries,
     });
   } catch (error) {
     console.error("Error fetching manual journal entry:", error);

@@ -11,7 +11,12 @@ import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
 const router = express.Router();
 
 // Create a new manual journal entry
-router.post("/create", protectedRoute, createManualJournal);
+router.post(
+  "/create/:branchId",
+  protectedRoute,
+  checkUserBranchAccess,
+  createManualJournal
+);
 
 // Get all manual journal entries
 router.get("/all", protectedRoute, getAllManualJournals);

@@ -2,6 +2,7 @@ import { errorHandler } from "../utils/errorHandler.js";
 import { pool } from "../utils/db.js";
 import { getPaginationData } from "../utils/helper.js";
 import { createManualJournalLog } from "../utils/manual.journal.logs.js";
+import { addManualJournalCreditDebitLog } from "../utils/accounting.account.logs.js";
 
 // Create a new manual journal entry
 export const createManualJournal = async (req, res, next) => {
@@ -35,34 +36,19 @@ export const createManualJournal = async (req, res, next) => {
 
     // Validate entries
     for (const entry of entries) {
-      if (!entry.description || !entry.idAccounting_Accounts) {
-        return next(
-          errorHandler(
-            400,
-            "Description and account are required for each entry"
-          )
-        );
+      if (!entry.account) {
+        return next(errorHandler(400, "Account is required for each entry"));
       }
-      if (!entry.debitAmount && !entry.creditAmount) {
-        return next(
-          errorHandler(
-            400,
-            "At least one of debit amount or credit amount must be provided for each entry"
-          )
-        );
-      }
-    }
 
-    // Get branch ID - either from request or use the first branch from user's branches
-    let branchId;
-    if (req.branchId) {
-      branchId = req.branchId;
-    } else if (req.branches && req.branches.length > 0) {
-      branchId = req.branches[0];
-    } else {
-      return next(errorHandler(400, "No branch associated with user"));
+      if (!entry.creditAmount && !entry.debitAmount) {
+        return next(
+          errorHandler(
+            400,
+            "Either credit amount or debit amount must be provided for each entry"
+          )
+        );
+      }
     }
-    const userId = req.userId; // From auth middleware
 
     // Start a transaction
     const connection = await pool.getConnection();
@@ -70,8 +56,23 @@ export const createManualJournal = async (req, res, next) => {
 
     try {
       // Insert a row for each entry in manual_journal
-      const insertedIds = [];
       for (const entry of entries) {
+        // check account data exists
+        const [accountData] = await connection.query(
+          `SELECT idAccounting_Accounts,Group_Of_Type, Type,Account_Balance,Account_Name FROM accounting_accounts WHERE idAccounting_Accounts = ? AND Branch_idBranch = ?`,
+          [entry.account, req.branchId]
+        );
+
+        if (accountData.length === 0) {
+          await connection.rollback();
+          return next(
+            errorHandler(
+              400,
+              `Account with ID ${entry.account} does not exist in this branch`
+            )
+          );
+        }
+
         const amount =
           parseFloat(entry.debitAmount || 0) ||
           parseFloat(entry.creditAmount || 0) ||
@@ -83,33 +84,154 @@ export const createManualJournal = async (req, res, next) => {
           [
             narration,
             journalDate,
-            branchId,
-            userId,
-            entry.idAccounting_Accounts,
+            req.branchId,
+            req.userId,
+            entry.account,
             entry.description,
             amount,
           ]
         );
-        insertedIds.push(journalResult.insertId);
-      }
-      // Create log entries for each journal entry
-      for (let i = 0; i < insertedIds.length; i++) {
-        const journalId = insertedIds[i];
-        const accountId = entries[i].idAccounting_Accounts;
-        const debitAmount = entries[i].debitAmount || null;
-        const creditAmount = entries[i].creditAmount || null;
+
+        // add a manual journal log now
         await createManualJournalLog(
-          journalId,
-          accountId,
-          debitAmount,
-          creditAmount
+          journalResult.insertId,
+          entry.account,
+          entry.debitAmount,
+          entry.creditAmount
         );
+
+        let typeForLog = `Manual Journal Entry - ${narration}`; // define type for accounting log
+        let descriptionForLog;
+
+        // then update the balance in accounting accounts table
+        if (
+          accountData[0].Group_Of_Type === "Assets" ||
+          accountData[0].Group_Of_Type === "Expenses"
+        ) {
+          // if debit increase, credit decrease
+          // check if this is debit or credit
+          if (entry.debitAmount) {
+            const currentBalance =
+              parseFloat(accountData[0].Account_Balance) || 0;
+            const debitVal = parseFloat(entry.debitAmount) || 0;
+            const newBalance = currentBalance + debitVal;
+            await connection.query(
+              `UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ? AND Branch_idBranch = ?`,
+              [newBalance, entry.account, req.branchId]
+            );
+            descriptionForLog = `Amount Debited via Manual Journal - ${narration} | Amount: ${debitVal} | Group of Type: ${accountData[0].Group_Of_Type} | Account Type: ${accountData[0].Type}`;
+
+            // add accounting account log
+            await addManualJournalCreditDebitLog(
+              entry.account,
+              entry.creditAmount || 0,
+              entry.debitAmount || 0,
+              typeForLog,
+              descriptionForLog,
+              req.userId,
+              newBalance
+            );
+          } else if (entry.creditAmount) {
+            // check if this account has sufficient balance for credit
+            const currentBalance =
+              parseFloat(accountData[0].Account_Balance) || 0;
+            const creditVal = parseFloat(entry.creditAmount) || 0;
+            if (currentBalance < creditVal) {
+              await connection.rollback();
+              return next(
+                errorHandler(
+                  400,
+                  `Insufficient balance in account ID ${entry.account} for credit amount ${entry.creditAmount}`
+                )
+              );
+            }
+
+            const newBalance = currentBalance - creditVal;
+            await connection.query(
+              `UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ? AND Branch_idBranch = ?`,
+              [newBalance, entry.account, req.branchId]
+            );
+
+            descriptionForLog = `Amount Credited via Manual Journal - ${narration} | Amount: ${creditVal} | Group of Type: ${accountData[0].Group_Of_Type} | Account Type: ${accountData[0].Type}`;
+            // add accounting account log
+            await addManualJournalCreditDebitLog(
+              entry.account,
+              entry.creditAmount || 0,
+              entry.debitAmount || 0,
+              typeForLog,
+              descriptionForLog,
+              req.userId,
+              newBalance
+            );
+          }
+        }
+
+        if (
+          accountData[0].Group_Of_Type === "Liabilities" ||
+          accountData[0].Group_Of_Type === "Revenue" ||
+          accountData[0].Group_Of_Type === "Equity"
+        ) {
+          // if credit increase, debit decrease
+          if (entry.creditAmount) {
+            const currentBalance =
+              parseFloat(accountData[0].Account_Balance) || 0;
+            const creditVal = parseFloat(entry.creditAmount) || 0;
+            const newBalance = currentBalance + creditVal;
+            await connection.query(
+              `UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ? AND Branch_idBranch = ?`,
+              [newBalance, entry.account, req.branchId]
+            );
+
+            descriptionForLog = `Amount Credited via Manual Journal - ${narration} | Amount: ${creditVal} | Group of Type: ${accountData[0].Group_Of_Type} | Account Type: ${accountData[0].Type}`;
+            // add accounting account log
+            await addManualJournalCreditDebitLog(
+              entry.account,
+              entry.creditAmount || 0,
+              entry.debitAmount || 0,
+              typeForLog,
+              descriptionForLog,
+              req.userId,
+              newBalance
+            );
+          } else if (entry.debitAmount) {
+            // check if this account has sufficient balance for debit
+            const currentBalance =
+              parseFloat(accountData[0].Account_Balance) || 0;
+            const debitVal = parseFloat(entry.debitAmount) || 0;
+            if (currentBalance < debitVal) {
+              await connection.rollback();
+              return next(
+                errorHandler(
+                  400,
+                  `Insufficient balance in account ID ${entry.account} for debit amount ${entry.debitAmount}`
+                )
+              );
+            }
+
+            const newBalance = currentBalance - debitVal;
+            await connection.query(
+              `UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ? AND Branch_idBranch = ?`,
+              [newBalance, entry.account, req.branchId]
+            );
+
+            descriptionForLog = `Amount Debited via Manual Journal - ${narration} | Amount: ${debitVal} | Group of Type: ${accountData[0].Group_Of_Type} | Account Type: ${accountData[0].Type}`;
+            // add accounting account log
+            await addManualJournalCreditDebitLog(
+              entry.account,
+              entry.creditAmount || 0,
+              entry.debitAmount || 0,
+              typeForLog,
+              descriptionForLog,
+              req.userId,
+              newBalance
+            );
+          }
+        }
       }
 
       await connection.commit();
       res.status(201).json({
         message: "Manual journal entries created successfully",
-        journalIds: insertedIds,
       });
     } catch (error) {
       await connection.rollback();

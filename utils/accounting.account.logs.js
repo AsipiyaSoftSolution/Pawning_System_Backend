@@ -223,3 +223,29 @@ export const addCashierRegistryStartLog = async (
     throw new Error("Failed to create cashier registry start log");
   }
 };
+
+// Manual journal logs
+
+// Manual Journal Credit & Debit log
+export const addManualJournalCreditDebitLog = async (
+  accountId,
+  credit,
+  debit,
+  type,
+  description,
+  userId,
+  balance
+) => {
+  try {
+    const [result] = await pool.query(
+      "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts,Date_Time,Type,Description,Debit,Credit,Balance,User_idUser) VALUES(?,?,?,?,?,?,?,?)",
+      [accountId, new Date(), type, description, debit, credit, balance, userId]
+    );
+    if (result.affectedRows === 0) {
+      throw new Error("Failed to create manual journal credit debit log");
+    }
+  } catch (error) {
+    console.error("Error creating manual journal credit debit  log:", error);
+    throw new Error("Failed to create manual journal credit debit  log");
+  }
+};

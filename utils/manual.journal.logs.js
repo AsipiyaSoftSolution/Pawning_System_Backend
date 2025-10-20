@@ -20,8 +20,6 @@ export const createManualJournalLog = async (
       VALUES (?, ?, ?, ?, ?)`,
       [journalId, accountName, debitAmount, creditAmount, accountId]
     );
-
-    return result.insertId;
   } catch (error) {
     console.error("Error creating manual journal log:", error);
     throw error;

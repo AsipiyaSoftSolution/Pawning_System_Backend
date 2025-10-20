@@ -137,8 +137,8 @@ export const createManualJournal = async (req, res, next) => {
         await createManualJournalLog(
           journalResult.insertId,
           entry.account,
-          entry.debitAmount,
-          entry.creditAmount
+          entry.debitAmount || 0,
+          entry.creditAmount || 0
         );
 
         let typeForLog = `Manual Journal Entry - ${narration}`; // define type for accounting log

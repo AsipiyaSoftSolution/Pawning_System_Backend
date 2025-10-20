@@ -1,11 +1,12 @@
 import express from "express";
 import { protectedRoute } from "../middlewares/auth.middleware.js";
-import { 
-  createManualJournal, 
-  getAllManualJournals, 
+import {
+  createManualJournal,
+  getAllManualJournals,
   getManualJournalById,
-  getChartAccountsForDropdown
+  getChartAccountsForDropdown,
 } from "../controllers/manual.journal.controller.js";
+import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
 
 const router = express.Router();
 
@@ -19,6 +20,11 @@ router.get("/all", protectedRoute, getAllManualJournals);
 router.get("/get/:id", protectedRoute, getManualJournalById);
 
 // Get chart of accounts for dropdown
-router.get("/chart-accounts", protectedRoute, getChartAccountsForDropdown);
+router.get(
+  "/chart-accounts/:branchId",
+  protectedRoute,
+  checkUserBranchAccess,
+  getChartAccountsForDropdown
+);
 
 export default router;

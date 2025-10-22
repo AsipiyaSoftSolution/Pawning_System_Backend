@@ -11,32 +11,95 @@ const getAllBranchesForTheCompany = async (companyId) => {
   return branches;
 };
 
+// controller to send all the branches of the company
+export const getCompanyBranches = async (req, res, next) => {
+  try {
+    const [branches] = await pool.query(
+      "SELECT idBranch, Name,Branch_Code FROM branch WHERE Company_idCompany = ?",
+      [req.companyId]
+    );
+
+    return res.status(200).json({
+      success: true,
+      branches: branches,
+    });
+  } catch (error) {
+    console.error("Error fetching company branches:", error);
+    return next(errorHandler(500, "Internal server error"));
+  }
+};
+
+// Controller to generate Loan to Market Value report
 export const loanToMarketValueReport = async (req, res, next) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
+    const { start_date, end_date, branchId } = req.query;
 
-    // Get all branches for the company
-    const branches = await getAllBranchesForTheCompany(req.companyId);
+    let branchIds;
 
-    if (branches.length === 0) {
-      return next(
-        errorHandler(
-          404,
-          "No branches found for the company to generate report"
-        )
+    if (branchId) {
+      // Validate branchId is a valid integer
+      const parsedBranchId = parseInt(branchId, 10);
+      if (isNaN(parsedBranchId)) {
+        return next(errorHandler(400, "Invalid branchId parameter"));
+      }
+
+      // If branchId is provided, verify it belongs to the company
+      const [branch] = await pool.query(
+        "SELECT idBranch FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
+        [parsedBranchId, req.companyId]
       );
+
+      if (branch.length === 0) {
+        return next(
+          errorHandler(
+            404,
+            "Branch not found or does not belong to your company"
+          )
+        );
+      }
+
+      branchIds = [parsedBranchId];
+    } else {
+      // Get all branches for the company
+      const branches = await getAllBranchesForTheCompany(req.companyId);
+
+      if (branches.length === 0) {
+        return next(
+          errorHandler(
+            404,
+            "No branches found for the company to generate report"
+          )
+        );
+      }
+
+      branchIds = branches.map((branch) => branch.idBranch);
     }
 
-    const branchIds = branches.map((branch) => branch.idBranch);
+    // Build dynamic WHERE clause (use table alias 't' to avoid ambiguity)
+    let whereConditions = ["t.Branch_idBranch IN (?)"];
+    let queryParams = [branchIds];
+
+    if (start_date) {
+      whereConditions.push("DATE(t.Date_Time) >= ?");
+      queryParams.push(start_date);
+    }
+
+    if (end_date) {
+      whereConditions.push("DATE(t.Date_Time) <= ?");
+      queryParams.push(end_date);
+    }
+
+    const whereClause = whereConditions.join(" AND ");
 
     // Calculate offset
     const offset = (page - 1) * limit;
 
     // Get pagination data using your existing function
     const paginationData = await getReportPaginationData(
-      "SELECT COUNT(*) as count FROM pawning_ticket WHERE Branch_idBranch IN (?)",
-      [branchIds],
+      `SELECT COUNT(*) as count FROM pawning_ticket t WHERE ${whereClause}`,
+      queryParams,
       page,
       limit
     );
@@ -67,10 +130,10 @@ export const loanToMarketValueReport = async (req, res, next) => {
       FROM pawning_ticket t 
       JOIN customer c ON t.Customer_idCustomer = c.idCustomer 
       JOIN branch b ON t.Branch_idBranch = b.idBranch 
-      WHERE t.Branch_idBranch IN (?) 
+      WHERE ${whereClause}
       ORDER BY t.Date_Time DESC 
       LIMIT ? OFFSET ?`,
-      [branchIds, limit, offset]
+      [...queryParams, limit, offset]
     );
 
     if (ticketsData.length === 0) {

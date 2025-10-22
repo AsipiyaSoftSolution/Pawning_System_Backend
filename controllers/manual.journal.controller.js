@@ -50,6 +50,47 @@ export const createManualJournal = async (req, res, next) => {
       }
     }
 
+    // validate  contraAccount of each entry is not same as account and skip the first entry
+    for (let i = 1; i < entries.length; i++) {
+      const entry = entries[i];
+
+      if (!entry.contraAccount) {
+        return next(
+          errorHandler(
+            400,
+            "Contra Account is required for each entry except the first one"
+          )
+        );
+      }
+
+      // check contra account is not same as account
+      if (entry.contraAccount && entry.contraAccount === entry.account) {
+        return next(
+          errorHandler(
+            400,
+            `Contra account cannot be the same as account for entry ${i + 1}`
+          )
+        );
+      }
+    }
+
+    // Check all the credit and debit amounts
+    let totalCredit = 0;
+    let totalDebit = 0;
+    for (const entry of entries) {
+      totalCredit += parseFloat(entry.creditAmount || 0);
+      totalDebit += parseFloat(entry.debitAmount || 0);
+    }
+
+    if (totalCredit !== totalDebit) {
+      return next(
+        errorHandler(
+          400,
+          `Total credit amount (${totalCredit}) must equal total debit amount (${totalDebit})`
+        )
+      );
+    }
+
     // Start a transaction
     const connection = await pool.getConnection();
     await connection.beginTransaction();
@@ -96,8 +137,8 @@ export const createManualJournal = async (req, res, next) => {
         await createManualJournalLog(
           journalResult.insertId,
           entry.account,
-          entry.debitAmount,
-          entry.creditAmount
+          entry.debitAmount || 0,
+          entry.creditAmount || 0
         );
 
         let typeForLog = `Manual Journal Entry - ${narration}`; // define type for accounting log
@@ -129,7 +170,9 @@ export const createManualJournal = async (req, res, next) => {
               typeForLog,
               descriptionForLog,
               req.userId,
-              newBalance
+              newBalance,
+              entry.contraAccount,
+              connection
             );
           } else if (entry.creditAmount) {
             // check if this account has sufficient balance for credit
@@ -161,7 +204,9 @@ export const createManualJournal = async (req, res, next) => {
               typeForLog,
               descriptionForLog,
               req.userId,
-              newBalance
+              newBalance,
+              entry.contraAccount,
+              connection
             );
           }
         }
@@ -191,7 +236,9 @@ export const createManualJournal = async (req, res, next) => {
               typeForLog,
               descriptionForLog,
               req.userId,
-              newBalance
+              newBalance,
+              entry.contraAccount,
+              connection
             );
           } else if (entry.debitAmount) {
             // check if this account has sufficient balance for debit
@@ -223,7 +270,9 @@ export const createManualJournal = async (req, res, next) => {
               typeForLog,
               descriptionForLog,
               req.userId,
-              newBalance
+              newBalance,
+              entry.contraAccount,
+              connection
             );
           }
         }

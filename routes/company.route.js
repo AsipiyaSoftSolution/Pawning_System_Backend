@@ -50,6 +50,7 @@ route.post(
   protectedRoute,
   creteDesignationWithPrivilages
 ); // create designation with privileges
+route.get("/designations", protectedRoute, getDesignations); // Get all designations of the company
 route.get(
   "/designations-with-privileges",
   protectedRoute,

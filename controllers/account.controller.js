@@ -26,8 +26,8 @@ export const createAccount = async (req, res, next) => {
 
     // check if the account code already exists
     const [existingAccount] = await pool.query(
-      "SELECT 1 FROM accounting_accounts WHERE Account_Code = ?",
-      [accountCode]
+      "SELECT 1 FROM accounting_accounts WHERE Account_Code = ? AND Branch_idBranch = ?",
+      [accountCode, req.branchId]
     );
     if (existingAccount.length > 0) {
       return next(errorHandler(400, "Account code already exists"));

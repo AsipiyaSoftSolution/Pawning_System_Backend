@@ -26,7 +26,7 @@ const userWithoutPassword = async (userId) => {
 
     // get the designation privileges
     const [designationPrivileges] = await pool.query(
-      "SELECT User_Privilages_idUser_Privilages FROM designation_has_user_privilages WHERE Designation_idDesignation = ?",
+      "SELECT User_Privilages_idUser_Privilages FROM designation_has_user_privilages WHERE Designation_idDesignation = ? AND Status = '1'",
       [user[0].Designation_idDesignation]
     );
 

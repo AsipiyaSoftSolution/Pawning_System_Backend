@@ -18,10 +18,28 @@ const userWithoutPassword = async (userId) => {
       throw new Error("User not found");
     }
 
+    // get the desgination
     const [desgination] = await pool.query(
-      "SELECT Description from designation WHERE idDesignation = ?",
+      "SELECT Description, idDesignation from designation WHERE idDesignation = ?",
       [user[0].Designation_idDesignation]
     );
+
+    // get the designation privileges
+    const [designationPrivileges] = await pool.query(
+      "SELECT User_Privilages_idUser_Privilages FROM designation_has_user_privilages WHERE Designation_idDesignation = ? AND Status = '1'",
+      [user[0].Designation_idDesignation]
+    );
+
+    let privileges = [];
+    for (const privilege of designationPrivileges) {
+      const [privilegeRows] = await pool.query(
+        "SELECT idUser_privilages, Description FROM user_privilages WHERE idUser_privilages = ?",
+        [privilege.User_Privilages_idUser_Privilages]
+      );
+      if (privilegeRows.length > 0) {
+        privileges.push(privilegeRows[0]);
+      }
+    }
 
     const [company] = await pool.query(
       "SELECT * FROM company WHERE idCompany = ?",
@@ -64,6 +82,7 @@ const userWithoutPassword = async (userId) => {
     user = {
       ...user[0],
       designation: desgination[0]?.Description,
+      privileges: privileges,
       company: company[0],
       branches: userBranches,
       companyDocuments: companyDocuments,

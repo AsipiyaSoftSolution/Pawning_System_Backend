@@ -78,14 +78,13 @@ export async function sendViaHutch(
     // Use absolute simplest mask
 
     // Validate and normalize phone number
-    const numbersArray = Array.isArray(normalized)
-      ? normalized
-      : [String(normalized || "")];
+    // Accept either a single value or an array. Ensure we handle undefined/null entries.
+    const numbersArray = Array.isArray(normalized) ? normalized : [normalized];
     let validNumber = null;
 
     for (const num of numbersArray) {
-      const cleanNum = num
-        .toString()
+      if (num == null) continue; // skip undefined/null entries
+      const cleanNum = String(num)
         .trim()
         .replace(/[^0-9]/g, "");
       if (cleanNum.startsWith("07") && cleanNum.length === 10) {
@@ -98,7 +97,7 @@ export async function sendViaHutch(
     }
 
     if (!validNumber) {
-      console.error("No valid phone number found for OTP send");
+      console.error("No valid phone number found for sending SMS:", normalized);
       return {
         success: false,
         reason: "invalid_number",

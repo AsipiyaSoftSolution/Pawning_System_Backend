@@ -255,9 +255,18 @@ export const forgetPassword = async (req, res, next) => {
         );
       }
     } else if (mobile) {
+      // Trim and remove non-digit characters first
+      let normalizedMobile = String(mobile || "")
+        .trim()
+        .replace(/[^0-9]/g, "");
+
+      if (normalizedMobile.length < 9 || normalizedMobile.length > 15) {
+        return next(errorHandler(400, "Invalid mobile number format"));
+      }
+
       const [existingUser] = await pool.query(
         "SELECT idUser,full_name,Company_idCompany FROM user WHERE Contact_no = ?",
-        [mobile]
+        [normalizedMobile]
       );
 
       if (!existingUser[0]) {
@@ -277,56 +286,109 @@ export const forgetPassword = async (req, res, next) => {
       );
 
       // send the otp via sms
-      try {
-        let normalizedNumber = mobile.trim();
 
-        // Remove non-digit characters
-        normalizedNumber = normalizedNumber.replace(/[^0-9]/g, "");
+      let normalizedNumber = mobile.trim();
 
-        // Normalize to 947 format
-        if (normalizedNumber.startsWith("0")) {
-          normalizedNumber = "94" + normalizedNumber.slice(1);
-        } else if (!normalizedNumber.startsWith("94")) {
-          normalizedNumber = "94" + normalizedNumber;
-        }
+      // Remove non-digit characters
+      normalizedNumber = normalizedNumber.replace(/[^0-9]/g, "");
 
-        // get the company sms mask
-        const [companyRows] = await pool.query(
-          "SELECT SMS_Mask FROM company WHERE idCompany = ?",
-          [existingUser[0].Company_idCompany]
-        );
+      // Normalize to 947 format
+      if (normalizedNumber.startsWith("0")) {
+        normalizedNumber = "94" + normalizedNumber.slice(1);
+      } else if (!normalizedNumber.startsWith("94")) {
+        normalizedNumber = "94" + normalizedNumber;
+      }
 
-        // Create company object - the mask will be validated in sendViaHutch
-        const company = {
-          mask: companyRows[0]?.SMS_Mask || process.env.HUTCH_DEFAULT_MASK,
-        };
+      // get the company sms mask
+      const [companyRows] = await pool.query(
+        "SELECT SMS_Mask FROM company WHERE idCompany = ?",
+        [existingUser[0].Company_idCompany]
+      );
 
-        const message = `Your password reset OTP is ${token}`;
+      // Create company object - the mask will be validated in sendViaHutch
+      const company = {
+        mask: companyRows[0]?.SMS_Mask || process.env.HUTCH_DEFAULT_MASK,
+      };
 
-        // Call hutchSms.sendViaHutch
-        const sendResult = await hutchSms.sendViaHutch(
-          company,
-          existingUser[0].idUser,
-          { full_name: existingUser[0].full_name },
-          message,
-          "reset_password",
-          [normalizedNumber]
-        );
+      const message = `Your password reset OTP is ${token}`;
 
-        if (!(sendResult && sendResult.success)) {
-          console.error("Failed to send OTP SMS. Details:", sendResult);
-        }
-      } catch (smsErr) {
-        console.error("Error sending OTP SMS:", smsErr);
+      // Call hutchSms.sendViaHutch
+      const sendResult = await hutchSms.sendViaHutch(
+        company,
+        existingUser[0].idUser,
+        { full_name: existingUser[0].full_name },
+        message,
+        "reset_password",
+        [normalizedNumber]
+      );
+
+      if (!(sendResult && sendResult.success)) {
+        console.error("Failed to send OTP SMS. Details:", sendResult);
       }
     }
     res.status(200).json({
       success: true,
-      message:
-        "If the provided contact exists, a password reset link or OTP has been sent.",
+      message: email
+        ? "Password reset link has been sent."
+        : "Password reset OTP has been sent.",
     });
   } catch (error) {
     console.error("Forget password error:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// verify mobile otp and generate password reset token to reset password when perform forget password with mobile
+export const verifyMobileOtpForPasswordReset = async (req, res, next) => {
+  try {
+    const { otp, mobile } = req.body;
+    if (!otp) {
+      return next(errorHandler(400, "OTP is required"));
+    }
+    if (!mobile) {
+      return next(
+        errorHandler(
+          400,
+          "Contact Number is Missing, Please try again the forget password process again"
+        )
+      );
+    }
+
+    const [existingUser] = await pool.query(
+      "SELECT idUser,Reset_Password_Mobile_Otp_Expires_At FROM user WHERE Reset_Password_Mobile_Otp = ? AND Contact_no = ?",
+      [otp, mobile]
+    );
+
+    if (!existingUser[0]) {
+      return next(errorHandler(400, "Invalid OTP"));
+    }
+
+    // check if the token is expired
+    if (
+      new Date() >
+      new Date(existingUser[0].Reset_Password_Mobile_Otp_Expires_At)
+    ) {
+      return next(errorHandler(400, "OTP has expired"));
+    }
+
+    // create a token for password reset
+    const token = generatePasswordResetToken();
+    const tokenExpiry = new Date(Date.now() + 3600000); // Token valid for 1 hour from now
+
+    // Store the token and its expiry in the database and remove the otp and its expiry from table
+    await pool.query(
+      "UPDATE user SET Reset_Password_Token = ?,Reset_Password_Token_Expires_At = ?, Reset_Password_Mobile_Otp = NULL, Reset_Password_Mobile_Otp_Expires_At = NULL WHERE idUser = ?",
+      [token, tokenExpiry, existingUser[0].idUser]
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "OTP verified successfully.",
+      token,
+      userId: existingUser[0].idUser,
+    });
+  } catch (error) {
+    console.error("Verify mobile OTP error:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
@@ -376,7 +438,7 @@ export const resetPassword = async (req, res, next) => {
 
     // find there is a user with the token and userId and the token is not expired
     const [user] = await pool.query(
-      "SELECT idUser,Email,full_name,Reset_Password_Token,Reset_Password_Token_Expires_At FROM user WHERE idUser = ? ",
+      "SELECT idUser,Email,full_name,Reset_Password_Token,Reset_Password_Token_Expires_At,Company_idCompany,Contact_no FROM user WHERE idUser = ? ",
       [userId]
     );
 
@@ -414,6 +476,47 @@ export const resetPassword = async (req, res, next) => {
         user[0].Email
       );
       // Don't fail the password reset if email fails, just log it
+    }
+
+    // send the sms after password reset success
+    const [companyRows] = await pool.query(
+      "SELECT SMS_Mask FROM company WHERE idCompany = ?",
+      [user[0].Company_idCompany]
+    );
+
+    // Create company object - the mask will be validated in sendViaHutch
+    const company = {
+      mask: companyRows[0]?.SMS_Mask || process.env.HUTCH_DEFAULT_MASK,
+    };
+
+    const message = `Hello ${user[0].full_name}, your password has been reset successfully. If you did not perform this action, please contact support immediately.`;
+
+    // Only attempt SMS if Contact_no exists
+    if (user[0].Contact_no) {
+      let normalizedNumber = String(user[0].Contact_no).trim();
+
+      // Remove non-digit characters
+      normalizedNumber = normalizedNumber.replace(/[^0-9]/g, "");
+
+      // Normalize to 947 format
+      if (normalizedNumber.startsWith("0")) {
+        normalizedNumber = "94" + normalizedNumber.slice(1);
+      } else if (!normalizedNumber.startsWith("94")) {
+        normalizedNumber = "94" + normalizedNumber;
+      }
+
+      await hutchSms.sendViaHutch(
+        company,
+        user[0].idUser,
+        { full_name: user[0].full_name },
+        message,
+        "password_reset_success",
+        [normalizedNumber]
+      );
+    } else {
+      console.warn(
+        `User ${userId} has no Contact_no; skipping password-reset SMS`
+      );
     }
 
     res.status(200).json({

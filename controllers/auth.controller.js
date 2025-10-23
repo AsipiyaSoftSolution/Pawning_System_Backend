@@ -6,6 +6,7 @@ import {
   sendPasswordResetEmail,
   sendPasswordResetSuccessEmail,
 } from "../utils/mailConfig.js";
+import hutchSms, { setLogSMSCallback } from "../utils/hutchSms.js";
 
 // This function retrieves user information without the password when giving user id
 // It also retrieves the user's designation, company, branches, and company documents
@@ -105,7 +106,6 @@ const userWithoutPassword = async (userId) => {
 
 export const login = async (req, res, next) => {
   try {
-    console.log("Login request received:", req.body);
     const { email, password } = req.body;
 
     if (!email || !password) {
@@ -172,8 +172,6 @@ export const login = async (req, res, next) => {
 
 export const logout = async (req, res) => {
   try {
-    console.log("Logout request received");
-
     // Clear cookies
     res
       .clearCookie("accessToken", {
@@ -213,54 +211,119 @@ export const checkAuth = async (req, res, next) => {
 
 export const forgetPassword = async (req, res, next) => {
   try {
-    const { email } = req.body;
-    if (!email) {
-      return next(errorHandler(400, "Email is required"));
+    const { email, mobile } = req.body;
+    if (!email && !mobile) {
+      return next(errorHandler(400, "Email or Contact Number is required"));
     }
 
-    const [existingUser] = await pool.query(
-      "SELECT idUser,full_name FROM user WHERE Email = ?",
-      [email]
-    );
-
-    if (!existingUser[0]) {
-      return next(errorHandler(404, "User with this email does not exist"));
-    }
-
-    // Generate a password reset token
-    const token = generatePasswordResetToken();
-    const tokenExpiry = new Date(Date.now() + 3600000); // Token valid for 1 hour from now
-
-    // Store the token and its expiry in the database
-    await pool.query(
-      "UPDATE user SET Reset_Password_Token = ?,Reset_Password_Token_Expires_At = ? WHERE idUser = ?",
-      [token, tokenExpiry, existingUser[0].idUser]
-    );
-    // reset url
-    const resetUrl = `${process.env.CLIENT_URL}/reset-password/${token}/${existingUser[0].idUser}`;
-
-    // Send the password reset email
-    const emailSent = await sendPasswordResetEmail(
-      email,
-      resetUrl,
-      existingUser[0].full_name
-    );
-
-    if (!emailSent) {
-      console.error("Failed to send password reset email to:", email);
-      return next(
-        errorHandler(
-          500,
-          "Failed to send password reset email. Please try again."
-        )
+    if (email) {
+      const [existingUser] = await pool.query(
+        "SELECT idUser,full_name FROM user WHERE Email = ?",
+        [email]
       );
+
+      if (!existingUser[0]) {
+        return next(errorHandler(404, "User with this email does not exist"));
+      }
+
+      // Generate a password reset token
+      const token = generatePasswordResetToken();
+      const tokenExpiry = new Date(Date.now() + 3600000); // Token valid for 1 hour from now
+
+      // Store the token and its expiry in the database
+      await pool.query(
+        "UPDATE user SET Reset_Password_Token = ?,Reset_Password_Token_Expires_At = ? WHERE idUser = ?",
+        [token, tokenExpiry, existingUser[0].idUser]
+      );
+      // reset url
+      const resetUrl = `${process.env.CLIENT_URL}/reset-password/${token}/${existingUser[0].idUser}`;
+
+      // Send the password reset email
+      const emailSent = await sendPasswordResetEmail(
+        email,
+        resetUrl,
+        existingUser[0].full_name
+      );
+
+      if (!emailSent) {
+        console.error("Failed to send password reset email to:", email);
+        return next(
+          errorHandler(
+            500,
+            "Failed to send password reset email. Please try again."
+          )
+        );
+      }
+    } else if (mobile) {
+      const [existingUser] = await pool.query(
+        "SELECT idUser,full_name,Company_idCompany FROM user WHERE Contact_no = ?",
+        [mobile]
+      );
+
+      if (!existingUser[0]) {
+        return next(
+          errorHandler(404, "User with this contact number does not exist")
+        );
+      }
+
+      // generate 6 integer code
+      const token = Math.floor(100000 + Math.random() * 900000).toString();
+      const tokenExpiry = new Date(Date.now() + 3600000); // Token valid for 1 hour from now
+
+      // Store the token and its expiry in the database
+      await pool.query(
+        "UPDATE user SET Reset_Password_Mobile_Otp = ?, Reset_Password_Mobile_Otp_Expires_At = ? WHERE idUser = ?",
+        [token, tokenExpiry, existingUser[0].idUser]
+      );
+
+      // send the otp via sms
+      try {
+        let normalizedNumber = mobile.trim();
+
+        // Remove non-digit characters
+        normalizedNumber = normalizedNumber.replace(/[^0-9]/g, "");
+
+        // Normalize to 947 format
+        if (normalizedNumber.startsWith("0")) {
+          normalizedNumber = "94" + normalizedNumber.slice(1);
+        } else if (!normalizedNumber.startsWith("94")) {
+          normalizedNumber = "94" + normalizedNumber;
+        }
+
+        // get the company sms mask
+        const [companyRows] = await pool.query(
+          "SELECT SMS_Mask FROM company WHERE idCompany = ?",
+          [existingUser[0].Company_idCompany]
+        );
+
+        // Create company object - the mask will be validated in sendViaHutch
+        const company = {
+          mask: companyRows[0]?.SMS_Mask || process.env.HUTCH_DEFAULT_MASK,
+        };
+
+        const message = `Your password reset OTP is ${token}`;
+
+        // Call hutchSms.sendViaHutch
+        const sendResult = await hutchSms.sendViaHutch(
+          company,
+          existingUser[0].idUser,
+          { full_name: existingUser[0].full_name },
+          message,
+          "reset_password",
+          [normalizedNumber]
+        );
+
+        if (!(sendResult && sendResult.success)) {
+          console.error("Failed to send OTP SMS. Details:", sendResult);
+        }
+      } catch (smsErr) {
+        console.error("Error sending OTP SMS:", smsErr);
+      }
     }
-
-    console.log(`✓ Password reset email sent successfully to: ${email}`);
-
     res.status(200).json({
       success: true,
-      message: "Password reset link has been sent to your email address",
+      message:
+        "If the provided contact exists, a password reset link or OTP has been sent.",
     });
   } catch (error) {
     console.error("Forget password error:", error);
@@ -351,8 +414,6 @@ export const resetPassword = async (req, res, next) => {
         user[0].Email
       );
       // Don't fail the password reset if email fails, just log it
-    } else {
-      console.log(`✓ Password reset success email sent to: ${user[0].Email}`);
     }
 
     res.status(200).json({

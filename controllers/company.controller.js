@@ -718,16 +718,6 @@ export const getAllUsersForTheBranch = async (req, res, next) => {
     let status = req.query.status || "1";
     const offset = (page - 1) * limit;
 
-    console.log(status, "this is the status in the get all users function");
-    console.log(
-      req.branchId,
-      "this is the branch id in the get all users function"
-    );
-    console.log(
-      req.companyId,
-      "this is the company id in the get all users function"
-    );
-
     // format search term
     if (searchTerm && typeof searchTerm === "string") {
       searchTerm = formatSearchPattern(searchTerm);
@@ -735,93 +725,103 @@ export const getAllUsersForTheBranch = async (req, res, next) => {
 
     let paginationData;
     let users;
-
-    // Build status condition and parameters properly
-    let statusCondition = "";
-    let baseParams = [];
-
-    if (searchTerm) {
-      // Parameters for search query - users who belong to the specific branch
-      baseParams = [req.branchId, `%${searchTerm}%`, `%${searchTerm}%`];
-
-      // Add status condition and parameter
-      if (status) {
-        statusCondition = "AND u.Status = ?";
-        baseParams.push(status);
+    // Determine if the provided branch is the Head Office for this company
+    let isHeadOffice = false;
+    try {
+      const [branchRow] = await pool.query(
+        "SELECT Name FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
+        [req.branchId, req.companyId]
+      );
+      if (
+        branchRow &&
+        branchRow[0] &&
+        branchRow[0].Name &&
+        branchRow[0].Name.trim().toLowerCase() === "head office"
+      ) {
+        isHeadOffice = true;
       }
+    } catch (err) {
+      // If branch lookup fails, treat as not head office and continue
+      console.error("Error checking branch name for Head Office:", err);
+    }
 
-      // Add company ID and logged user ID
-      baseParams.push(req.companyId, req.userId);
+    // Build dynamic WHERE clauses
+    let whereClauses = [];
+    let paramsForCount = [];
+    let paramsForUsers = [];
 
-      // Get pagination data - count users who belong to this branch and match search
+    // If not head office, filter by the provided branch
+    if (!isHeadOffice) {
+      // For COUNT query we will need to JOIN user_has_branch, so we pass branchId as first param
+      whereClauses.push("ub.Branch_idBranch = ?");
+      paramsForCount.push(req.branchId);
+      paramsForUsers.push(req.branchId);
+    }
+
+    // Search condition
+    if (searchTerm) {
+      whereClauses.push("(u.full_name LIKE ? OR u.email LIKE ?)");
+      paramsForCount.push(`%${searchTerm}%`, `%${searchTerm}%`);
+      paramsForUsers.push(`%${searchTerm}%`, `%${searchTerm}%`);
+    }
+
+    // Status condition (include '0')
+    if (status || status === "0") {
+      whereClauses.push("u.Status = ?");
+      paramsForCount.push(status);
+      paramsForUsers.push(status);
+    }
+
+    // Company and exclude logged-in user - always apply
+    whereClauses.push("u.Company_idCompany = ?", "u.idUser != ?");
+    paramsForCount.push(req.companyId, req.userId);
+    paramsForUsers.push(req.companyId, req.userId);
+
+    // Build the final WHERE clause
+    const whereSql =
+      whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+
+    // COUNT query - when not head office we need to join user_has_branch
+    if (isHeadOffice) {
       paginationData = await getPaginationData(
-        `SELECT COUNT(DISTINCT u.idUser) as total
-         FROM user u
-         JOIN user_has_branch ub ON u.idUser = ub.User_idUser
-         WHERE ub.Branch_idBranch = ? AND (u.full_name LIKE ? OR u.email LIKE ?) ${statusCondition} AND u.Company_idCompany = ? AND u.idUser != ?`,
-        baseParams,
+        `SELECT COUNT(DISTINCT u.idUser) as total FROM user u ${whereSql}`,
+        paramsForCount,
         page,
         limit
-      );
-
-      // Get users who belong to this branch, but show ALL their branches
-      [users] = await pool.query(
-        `SELECT u.*, d.Description as designationDescription,
-                GROUP_CONCAT(DISTINCT CONCAT(b.idBranch, ':', b.Name)) as branchData
-         FROM user u
-         JOIN user_has_branch ub_filter ON u.idUser = ub_filter.User_idUser
-         JOIN user_has_branch ub ON u.idUser = ub.User_idUser
-         LEFT JOIN designation d ON u.Designation_idDesignation = d.idDesignation
-         LEFT JOIN branch b ON ub.Branch_idBranch = b.idBranch
-         WHERE ub_filter.Branch_idBranch = ? AND (u.full_name LIKE ? OR u.email LIKE ?) ${statusCondition} AND u.Company_idCompany = ? AND u.idUser != ?
-         GROUP BY u.idUser
-         LIMIT ? OFFSET ?`,
-        [...baseParams, limit, offset]
       );
     } else {
-      // Parameters for non-search query - users who belong to the specific branch
-      baseParams = [req.branchId];
-
-      // Add status condition and parameter
-      if (status) {
-        statusCondition = "AND u.Status = ?";
-        baseParams.push(status);
-      }
-
-      // Add company ID and logged user ID
-      baseParams.push(req.companyId, req.userId);
-
-      console.log(baseParams, "these are the params");
-
-      // Get pagination data - count users who belong to this branch
       paginationData = await getPaginationData(
-        `SELECT COUNT(DISTINCT u.idUser) as total
-         FROM user u
-         JOIN user_has_branch ub ON u.idUser = ub.User_idUser
-         WHERE ub.Branch_idBranch = ? ${statusCondition} AND u.Company_idCompany = ? AND u.idUser != ?`,
-        baseParams,
+        `SELECT COUNT(DISTINCT u.idUser) as total FROM user u JOIN user_has_branch ub ON u.idUser = ub.User_idUser ${whereSql}`,
+        paramsForCount,
         page,
         limit
       );
-      console.log(paginationData, "this is the pagination data");
-
-      // Get users who belong to this branch, but show ALL their branches
-      [users] = await pool.query(
-        `SELECT u.*, d.Description as designationDescription,
-                GROUP_CONCAT(DISTINCT CONCAT(b.idBranch, ':', b.Name)) as branchData
-         FROM user u
-         JOIN user_has_branch ub_filter ON u.idUser = ub_filter.User_idUser
-         JOIN user_has_branch ub ON u.idUser = ub.User_idUser
-         LEFT JOIN designation d ON u.Designation_idDesignation = d.idDesignation
-         LEFT JOIN branch b ON ub.Branch_idBranch = b.idBranch
-         WHERE ub_filter.Branch_idBranch = ? ${statusCondition} AND u.Company_idCompany = ? AND u.idUser != ?
-         GROUP BY u.idUser
-         LIMIT ? OFFSET ?`,
-        [...baseParams, limit, offset]
-      );
-
-      console.log(users, "this is the users data");
     }
+
+    // Users query: always include GROUP_CONCAT of branches (join user_has_branch and branch), but when branch filter is applied we still need an alias filter
+    const usersSql = `SELECT u.*, d.Description as designationDescription,
+            GROUP_CONCAT(DISTINCT CONCAT(b.idBranch, ':', b.Name)) as branchData
+     FROM user u
+     LEFT JOIN user_has_branch ub ON u.idUser = ub.User_idUser
+     LEFT JOIN branch b ON ub.Branch_idBranch = b.idBranch
+     LEFT JOIN designation d ON u.Designation_idDesignation = d.idDesignation
+     ${
+       isHeadOffice
+         ? ""
+         : "JOIN user_has_branch ub_filter ON u.idUser = ub_filter.User_idUser"
+     }
+     ${
+       isHeadOffice
+         ? whereSql
+         : whereSql.replace(
+             "ub.Branch_idBranch = ?",
+             "ub_filter.Branch_idBranch = ?"
+           )
+     }
+     GROUP BY u.idUser
+     LIMIT ? OFFSET ?`;
+
+    [users] = await pool.query(usersSql, [...paramsForUsers, limit, offset]);
 
     // Parse branchData into array of objects {idBranch, Name}
     if (users && Array.isArray(users)) {
@@ -2213,7 +2213,6 @@ export const getAllSMSTemplates = async (req, res, next) => {
 // Assessed Values
 export const getAssessedValues = async (req, res, next) => {
   try {
-
     const [rows] = await pool.query(
       `SELECT 
          av.idAssessed_Value   AS id,
@@ -2246,7 +2245,6 @@ export const getAssessedValues = async (req, res, next) => {
   }
 };
 
-
 export const bulkUpdateAssessedValues = async (req, res, next) => {
   try {
     const { updates } = req.body || {};
@@ -2263,14 +2261,14 @@ export const bulkUpdateAssessedValues = async (req, res, next) => {
 
       for (const item of updates) {
         if (!item || typeof item.amount === "undefined") {
-          continue; 
+          continue;
         }
 
         const idOrCarat = item.id ?? item.carat;
         const amount = Number(item.amount);
 
         if (idOrCarat === undefined || idOrCarat === null || isNaN(amount)) {
-          continue; 
+          continue;
         }
 
         let recordId = null;
@@ -2284,7 +2282,7 @@ export const bulkUpdateAssessedValues = async (req, res, next) => {
         } else {
           const carat = parseInt(idOrCarat, 10);
           if (isNaN(carat)) {
-            continue; 
+            continue;
           }
           const [byCarat] = await connection.query(
             `SELECT idAssessed_Value FROM assessed_value WHERE Carat = ? AND Company_idCompany = ?`,

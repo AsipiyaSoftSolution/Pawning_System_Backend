@@ -2324,6 +2324,10 @@ export const generatePawningTicketNumber = async (req, res, next) => {
       }
 
       ticketNo = ticketCount;
+
+      if (ticketNo === 0) {
+        ticketNo = 1; // first ticket
+      }
     }
 
     res.status(200).json({

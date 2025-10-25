@@ -91,7 +91,27 @@ export const getPawningProductById = async (req, res, next) => {
         Late_Charge,
         Amount_For_22_Caratage,
         Last_Updated_User,
-        Last_Updated_Time
+        Last_Updated_Time,
+        interestApplicableMethod,
+        CASE WHEN interestApplicableMethod = 'calculate for stages ' THEN stage1StartDate ELSE NULL END AS stage1StartDate,
+        CASE WHEN interestApplicableMethod = 'calculate for stages ' THEN stage1EndDate ELSE NULL END AS stage1EndDate,
+        CASE WHEN interestApplicableMethod = 'calculate for stages ' THEN stage2StartDate ELSE NULL END AS stage2StartDate,
+        CASE WHEN interestApplicableMethod = 'calculate for stages ' THEN stage2EndDate ELSE NULL END AS stage2EndDate,
+        CASE WHEN interestApplicableMethod = 'calculate for stages ' THEN stage3StartDate ELSE NULL END AS stage3StartDate,
+        CASE WHEN interestApplicableMethod = 'calculate for stages ' THEN stage3EndDate ELSE NULL END AS stage3EndDate,
+        CASE WHEN interestApplicableMethod = 'calculate for stages ' THEN stage4StartDate ELSE NULL END AS stage4StartDate,
+        CASE WHEN interestApplicableMethod = 'calculate for stages ' THEN stage4EndDate ELSE NULL END AS stage4EndDate,
+        CASE WHEN interestApplicableMethod = 'calculate for stages ' THEN stage1Interest ELSE NULL END AS stage1Interest,
+        CASE WHEN interestApplicableMethod = 'calculate for stages ' THEN stage2Interest ELSE NULL END AS stage2Interest,
+        CASE WHEN interestApplicableMethod = 'calculate for stages ' THEN stage3Interest ELSE NULL END AS stage3Interest,
+        CASE WHEN interestApplicableMethod = 'calculate for stages ' THEN stage4Interest ELSE NULL END AS stage4Interest,
+        Week_Precentage_Amount_22_Caratage,
+        Month1_Precentage_Amount_22_Caratage,
+        Month3_Precentage_Amount_22_Caratage,
+        Month6_Precentage_Amount_22_Caratage,
+        Month9_Precentage_Amount_22_Caratage,
+        Month12_Precentage_Amount_22_Caratage
+
       FROM product_plan 
       WHERE Pawning_Product_idPawning_Product = ?`,
       [idPawning_Product]
@@ -138,25 +158,73 @@ export const getPawningProductById = async (req, res, next) => {
       },
 
       // Product items/plans
-      productItems: productPlanRows.map((plan) => ({
-        id: plan.idProduct_Plan,
-        periodType: plan.Period_Type,
-        minPeriod: plan.Minimum_Period,
-        maxPeriod: plan.Maximum_Period,
-        minAmount: plan.Minimum_Amount,
-        maxAmount: plan.Maximum_Amount,
-        interestType: plan.Interest_type,
-        interest: plan.Interest,
-        interestAfter: plan.Interest_Calculate_After,
-        serviceChargeValueType: plan.Service_Charge_Value_type,
-        serviceChargeValue: plan.Service_Charge_Value,
-        earlySettlementChargeValueType: plan.Early_Settlement_Charge_Value_type,
-        earlySettlementChargeValue: plan.Early_Settlement_Charge_Value,
-        lateChargePerDay: plan.Late_Charge,
-        amount22Carat: plan.Amount_For_22_Caratage,
-        lastUpdatedUser: plan.Last_Updated_User,
-        lastUpdatedTime: plan.Last_Updated_Time,
-      })),
+      productItems: productPlanRows.map((plan) => {
+        const base = {
+          id: plan.idProduct_Plan,
+          periodType: plan.Period_Type,
+          minPeriod: plan.Minimum_Period,
+          maxPeriod: plan.Maximum_Period,
+          minAmount: plan.Minimum_Amount,
+          maxAmount: plan.Maximum_Amount,
+          interestType: plan.Interest_type,
+          interest: plan.Interest,
+          interestAfter: plan.Interest_Calculate_After,
+          serviceChargeValueType: plan.Service_Charge_Value_type,
+          serviceChargeValue: plan.Service_Charge_Value,
+          earlySettlementChargeValueType:
+            plan.Early_Settlement_Charge_Value_type,
+          earlySettlementChargeValue: plan.Early_Settlement_Charge_Value,
+          lateChargePerDay: plan.Late_Charge,
+          amount22Carat: plan.Amount_For_22_Caratage,
+          lastUpdatedUser: plan.Last_Updated_User,
+          lastUpdatedTime: plan.Last_Updated_Time,
+          interestApplicableMethod: plan.interestApplicableMethod,
+          carat22Percentages: {
+            oneWeek: plan.Week_Precentage_Amount_22_Caratage,
+            oneMonth: plan.Month1_Precentage_Amount_22_Caratage,
+            threeMonths: plan.Month3_Precentage_Amount_22_Caratage,
+            sixMonths: plan.Month6_Precentage_Amount_22_Caratage,
+            nineMonths: plan.Month9_Precentage_Amount_22_Caratage,
+            twelveMonths: plan.Month12_Precentage_Amount_22_Caratage,
+          },
+          stage1StartDate: plan.stage1StartDate,
+          stage1EndDate: plan.stage1EndDate,
+          stage2StartDate: plan.stage2StartDate,
+          stage2EndDate: plan.stage2EndDate,
+          stage3StartDate: plan.stage3StartDate,
+          stage3EndDate: plan.stage3EndDate,
+          stage4StartDate: plan.stage4StartDate,
+          stage4EndDate: plan.stage4EndDate,
+          stage1Interest: plan.stage1Interest,
+          stage2Interest: plan.stage2Interest,
+          stage3Interest: plan.stage3Interest,
+          stage4Interest: plan.stage4Interest,
+        };
+
+        // Add stage fields only when interestApplicableMethod indicates staged calculation
+        if (plan.interestApplicableMethod === "calculate for stages") {
+          Object.assign(base, {
+            stage1StartDate: plan.stage1StartDate,
+            stage1EndDate: plan.stage1EndDate,
+            stage2StartDate: plan.stage2StartDate,
+            stage2EndDate: plan.stage2EndDate,
+            stage3StartDate: plan.stage3StartDate,
+            stage3EndDate: plan.stage3EndDate,
+            stage4StartDate: plan.stage4StartDate,
+            stage4EndDate: plan.stage4EndDate,
+            stage1Interest:
+              plan.stage1Interest != null ? parseFloat(plan.stage1Interest) : 0,
+            stage2Interest:
+              plan.stage2Interest != null ? parseFloat(plan.stage2Interest) : 0,
+            stage3Interest:
+              plan.stage3Interest != null ? parseFloat(plan.stage3Interest) : 0,
+            stage4Interest:
+              plan.stage4Interest != null ? parseFloat(plan.stage4Interest) : 0,
+          });
+        }
+
+        return base;
+      }),
 
       lastUpdatedUser: await returnUserData(
         product.Last_Updated_User,

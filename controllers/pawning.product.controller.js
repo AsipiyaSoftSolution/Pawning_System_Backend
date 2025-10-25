@@ -251,8 +251,8 @@ export const getPawningProducts = async (req, res, next) => {
     const page = parseInt(req.query.page) || 1; // Default to page 1
     const limit = parseInt(req.query.limit) || 10; // Default to 10
     const offset = (page - 1) * limit;
-    console.log("params of get pawning products", req.query);
-    console.log("page", page, "limit", limit, "offset", offset);
+    //console.log("params of get pawning products", req.query);
+    // console.log("page", page, "limit", limit, "offset", offset);
 
     const paginationData = await getPaginationData(
       "SELECT COUNT(*) AS total FROM pawning_product WHERE Branch_idBranch = ?",
@@ -266,7 +266,7 @@ export const getPawningProducts = async (req, res, next) => {
       `SELECT idPawning_Product,Name,Interest_Method,Service_Charge,Early_Settlement_Charge,Late_Charge_Status FROM pawning_product WHERE Branch_idBranch = ? LIMIT ? OFFSET ?`,
       [req.branchId, limit, offset]
     );
-    console.log("fetched pawning products:", pawningProducts);
+    //console.log("fetched pawning products:", pawningProducts);
 
     // find number of active tickets for each product
     for (let product of pawningProducts) {
@@ -336,6 +336,7 @@ export const createPawningProduct = async (req, res, next) => {
     if (!data) {
       return next(errorHandler(400, "Product data is required"));
     }
+    console.log("data received for creating pawning product:", data);
 
     // Ready the data of service charge for pawning product table
     const serviceCharge = data.serviceCharge?.status === "Active" ? 1 : 0;
@@ -564,8 +565,8 @@ export const updatePawningProductById = async (req, res, next) => {
 
     // Prepare service charge data for pawning product table
     const serviceCharge = data.serviceCharge?.status === "Active" ? 1 : 0;
-    const serviceChargeCreateAs = data.serviceCharge?.chargeType || null;
-    const serviceChargeValueType = data.serviceCharge?.valueType || null;
+    const serviceChargeCreateAs = data.serviceCharge?.chargeType || "inactive";
+    const serviceChargeValueType = data.serviceCharge?.valueType || "inactive";
     const serviceChargeValue = parseFloat(data.serviceCharge?.value) || 0;
 
     // Prepare early settlement data for pawning product table
@@ -574,21 +575,22 @@ export const updatePawningProductById = async (req, res, next) => {
         ? 1
         : 0;
     const earlySettlementChargeCreateAs =
-      data.earlysettlementsData?.newEarlySettlement?.chargeType || null;
-    let earlySettlementChargeValueType = null;
-    let earlySettlementChargeValue = null;
+      data.earlysettlementsData?.newEarlySettlement?.chargeType || "inactive";
+    let earlySettlementChargeValueType = "inactive";
+    let earlySettlementChargeValue = 0;
 
     // Handle different early settlement charge types
     if (earlySettlementChargeCreateAs === "Charge For Product") {
       earlySettlementChargeValueType =
-        data.earlysettlementsData?.newEarlySettlement?.valueType || null;
+        data.earlysettlementsData?.newEarlySettlement?.valueType || "inactive";
       earlySettlementChargeValue =
-        parseFloat(data.earlysettlementsData?.newEarlySettlement?.value) || 0;
+        parseFloat(data.earlysettlementsData?.newEarlySettlement?.value) ||
+        "inactive";
     }
 
     // Prepare late charge data for pawning product table
     const lateCharge = data.lateCharge?.status === "Active" ? 1 : 0;
-    const lateChargeCreateAs = data.lateCharge?.chargeType || null;
+    const lateChargeCreateAs = data.lateCharge?.chargeType || "inactive";
     const lateChargePresentage = parseFloat(data.lateCharge?.percentage) || 0;
 
     // Update the main pawning product table
@@ -614,8 +616,12 @@ export const updatePawningProductById = async (req, res, next) => {
         data.productName,
         serviceCharge,
         serviceChargeCreateAs,
-        serviceChargeValueType,
-        serviceChargeValue,
+        serviceChargeCreateAs === "Charge For Product Item"
+          ? "N/A"
+          : serviceChargeValueType,
+        serviceChargeCreateAs === "Charge For Product Item"
+          ? "N/A"
+          : serviceChargeValue,
         earlySettlementCharge,
         earlySettlementChargeCreateAs,
         earlySettlementChargeValueType,

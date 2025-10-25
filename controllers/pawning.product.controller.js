@@ -529,6 +529,7 @@ export const updatePawningProductById = async (req, res, next) => {
   try {
     const idPawning_Product = req.params.productId || req.params.id;
     const { data } = req.body;
+    console.log(data, "data in update pawning product");
 
     if (!idPawning_Product) {
       return next(errorHandler(400, "Product ID is required"));
@@ -536,6 +537,17 @@ export const updatePawningProductById = async (req, res, next) => {
 
     if (!data) {
       return next(errorHandler(400, "Product data is required"));
+    }
+
+    // Validate required fields
+    if (!data.productName || data.productName.trim().length < 3) {
+      return next(
+        errorHandler(400, "Product name must be at least 3 characters")
+      );
+    }
+
+    if (!data.productItems || data.productItems.length === 0) {
+      return next(errorHandler(400, "At least one product item is required"));
     }
 
     // Check if product exists and belongs to the branch
@@ -550,13 +562,13 @@ export const updatePawningProductById = async (req, res, next) => {
       );
     }
 
-    // Ready the data of service charge for pawning product table
+    // Prepare service charge data for pawning product table
     const serviceCharge = data.serviceCharge?.status === "Active" ? 1 : 0;
     const serviceChargeCreateAs = data.serviceCharge?.chargeType || null;
     const serviceChargeValueType = data.serviceCharge?.valueType || null;
-    const serviceChargeValue = data.serviceCharge?.value || 0;
+    const serviceChargeValue = parseFloat(data.serviceCharge?.value) || 0;
 
-    // Ready the data of early settlement for pawning product table
+    // Prepare early settlement data for pawning product table
     const earlySettlementCharge =
       data.earlysettlementsData?.newEarlySettlement?.status === "Active"
         ? 1
@@ -571,13 +583,13 @@ export const updatePawningProductById = async (req, res, next) => {
       earlySettlementChargeValueType =
         data.earlysettlementsData?.newEarlySettlement?.valueType || null;
       earlySettlementChargeValue =
-        data.earlysettlementsData?.newEarlySettlement?.value || null;
+        parseFloat(data.earlysettlementsData?.newEarlySettlement?.value) || 0;
     }
 
-    // Ready the late charge data for pawning product table
+    // Prepare late charge data for pawning product table
     const lateCharge = data.lateCharge?.status === "Active" ? 1 : 0;
     const lateChargeCreateAs = data.lateCharge?.chargeType || null;
-    const lateChargePresentage = data.lateCharge?.percentage || 0;
+    const lateChargePresentage = parseFloat(data.lateCharge?.percentage) || 0;
 
     // Update the main pawning product table
     const [updateResult] = await pool.query(
@@ -599,7 +611,7 @@ export const updatePawningProductById = async (req, res, next) => {
         Last_Updated_Time = ?
       WHERE idPawning_Product = ?`,
       [
-        data.productName || "Unnamed Product",
+        data.productName,
         serviceCharge,
         serviceChargeCreateAs,
         serviceChargeValueType,
@@ -632,7 +644,7 @@ export const updatePawningProductById = async (req, res, next) => {
     if (earlySettlementChargeCreateAs === "Charge For Settlement Amount") {
       const earlySettlements = data.earlysettlementsData?.earlySettlements;
 
-      if (!earlySettlements) {
+      if (!earlySettlements || earlySettlements.length === 0) {
         return next(
           errorHandler(
             400,
@@ -648,13 +660,13 @@ export const updatePawningProductById = async (req, res, next) => {
 
       // Insert new early settlement charges
       const insertPromises = settlementsArray.map(async (settlement) => {
-        const fromAmount = settlement.lessThan || 0;
-        const toAmount = settlement.endAmount || 0;
+        const fromAmount = parseFloat(settlement.lessThan) || 0;
+        const toAmount = parseFloat(settlement.endAmount) || 0;
         const valueType = settlement.valueType || null;
-        const value = settlement.value || null;
+        const value = parseFloat(settlement.value) || 0;
 
         const [earlySettlementResult] = await pool.query(
-          "INSERT INTO early_settlement_charges (From_Amount,To_Amount,Value_Type,Amount,Pawning_Product_idPawning_Product) VALUES (?,?,?,?,?)",
+          "INSERT INTO early_settlement_charges (From_Amount, To_Amount, Value_Type, Amount, Pawning_Product_idPawning_Product) VALUES (?, ?, ?, ?, ?)",
           [fromAmount, toAmount, valueType, value, idPawning_Product]
         );
 
@@ -685,31 +697,106 @@ export const updatePawningProductById = async (req, res, next) => {
     // Insert updated product plans
     const productPlans = data.productItems;
 
-    if (!productPlans || productPlans.length === 0) {
-      return next(errorHandler(400, "At least one product item is required"));
-    }
-
     for (const plan of productPlans) {
+      // Extract 22 carat percentages from the plan object (not from root data)
+      const carat22Percentages = plan.carat22Percentages || {};
+
+      // Get amount for 22 caratage
+      const amount22CaratValue = parseFloat(plan.amount22Carat) || 0;
+
+      // Validate stage dates if stage-based calculation is used
+      if (plan.interestApplicableMethod === "Calculate for stages") {
+        // Stage 1 start must be 0
+        if (plan.stage1StartDate !== 0 && plan.stage1StartDate !== "0") {
+          return next(errorHandler(400, "Stage 1 start date must be 0"));
+        }
+      }
+
+      // Prepare stage values (convert null/undefined to null, keep numbers/strings as is)
+      const prepareStageValue = (value) => {
+        if (value === undefined || value === null || value === "") return null;
+        return value;
+      };
+
       const [productPlanResult] = await pool.query(
-        "INSERT INTO product_plan (Period_Type,Minimum_Period,Maximum_Period,Minimum_Amount,Maximum_Amount,Interest_type,Interest,Interest_Calculate_After,Service_Charge_Value_type,Service_Charge_Value,Early_Settlement_Charge_Value_type,Early_Settlement_Charge_Value,Late_Charge,Amount_For_22_Caratage,Last_Updated_User,Last_Updated_Time,Pawning_Product_idPawning_Product) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        `INSERT INTO product_plan (
+          Period_Type,
+          Minimum_Period,
+          Maximum_Period,
+          Minimum_Amount,
+          Maximum_Amount,
+          Interest_type,
+          Interest,
+          Interest_Calculate_After,
+          Service_Charge_Value_type,
+          Service_Charge_Value,
+          Early_Settlement_Charge_Value_type,
+          Early_Settlement_Charge_Value,
+          Late_Charge,
+          Amount_For_22_Caratage,
+          Last_Updated_User,
+          Last_Updated_Time,
+          Pawning_Product_idPawning_Product,
+          stage1StartDate,
+          stage1EndDate,
+          stage2StartDate,
+          stage2EndDate,
+          stage3StartDate,
+          stage3EndDate,
+          stage4StartDate,
+          stage4EndDate,
+          stage1Interest,
+          stage2Interest,
+          stage3Interest,
+          stage4Interest,
+          Week_Precentage_Amount_22_Caratage,
+          Month1_Precentage_Amount_22_Caratage,
+          Month3_Precentage_Amount_22_Caratage,
+          Month6_Precentage_Amount_22_Caratage,
+          Month9_Precentage_Amount_22_Caratage,
+          Month12_Precentage_Amount_22_Caratage,
+          InterestApplicableMethod
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?)`,
         [
-          plan.periodType,
-          plan.minPeriod,
-          plan.maxPeriod,
-          plan.minAmount,
-          plan.maxAmount,
-          plan.interestType,
-          plan.interest || 0,
-          plan.interestAfter,
-          plan.serviceChargeValueType,
-          plan.serviceChargeValue || 0,
-          plan.earlySettlementChargeValueType,
-          plan.earlySettlementChargeValue || 0,
-          plan.lateChargePerDay || 0,
-          plan.amount22Carat,
+          plan.periodType || null,
+          parseInt(plan.minPeriod) || 0,
+          parseInt(plan.maxPeriod) || 0,
+          parseFloat(plan.minAmount) || 0,
+          parseFloat(plan.maxAmount) || 0,
+          plan.interestType || null,
+          parseFloat(plan.interest) || 0,
+          parseInt(plan.interestAfter) || 0,
+          plan.serviceChargeValueType || null,
+          parseFloat(plan.serviceChargeValue) || 0,
+          plan.earlySettlementChargeValueType || null,
+          parseFloat(plan.earlySettlementChargeValue) || 0,
+          parseFloat(plan.lateChargePerDay) || 0,
+          amount22CaratValue,
           req.userId,
           new Date(),
           idPawning_Product,
+          // Stage dates (can be null, numeric, or string for stage4)
+          prepareStageValue(plan.stage1StartDate) || 0,
+          prepareStageValue(plan.stage1EndDate),
+          prepareStageValue(plan.stage2StartDate),
+          prepareStageValue(plan.stage2EndDate),
+          prepareStageValue(plan.stage3StartDate),
+          prepareStageValue(plan.stage3EndDate),
+          prepareStageValue(plan.stage4StartDate),
+          prepareStageValue(plan.stage4EndDate) || "To maturity date",
+          // Stage interests
+          parseFloat(plan.stage1Interest) || 0,
+          parseFloat(plan.stage2Interest) || 0,
+          parseFloat(plan.stage3Interest) || 0,
+          parseFloat(plan.stage4Interest) || 0,
+          // 22-carat percentages from plan.carat22Percentages
+          parseFloat(carat22Percentages.oneWeek) || 0,
+          parseFloat(carat22Percentages.oneMonth) || 0,
+          parseFloat(carat22Percentages.threeMonths) || 0,
+          parseFloat(carat22Percentages.sixMonths) || 0,
+          parseFloat(carat22Percentages.nineMonths) || 0,
+          parseFloat(carat22Percentages.twelveMonths) || 0,
+          plan.interestApplicableMethod || null,
         ]
       );
 
@@ -718,8 +805,25 @@ export const updatePawningProductById = async (req, res, next) => {
       }
     }
 
+    // Fetch updated product data with full details
     const [updatedProductData] = await pool.query(
-      "SELECT idPawning_Product,Name,Service_Charge,Early_Settlement_Charge,Late_Charge_Status,Interest_Method FROM pawning_product WHERE idPawning_Product = ?",
+      `SELECT 
+        idPawning_Product,
+        Name,
+        Service_Charge,
+        Service_Charge_Create_As,
+        Service_Charge_Value_type,
+        Service_Charge_Value,
+        Early_Settlement_Charge,
+        Early_Settlement_Charge_Create_As,
+        Early_Settlement_Charge_Value_type,
+        Early_Settlement_Charge_Value,
+        Late_Charge_Status,
+        Late_Charge_Create_As,
+        Late_Charge,
+        Interest_Method
+      FROM pawning_product 
+      WHERE idPawning_Product = ?`,
       [idPawning_Product]
     );
 

@@ -1041,7 +1041,7 @@ export const createBranch = async (req, res, next) => {
 // Get all branches for the company
 export const getAllBranches = async (req, res, next) => {
   try {
-    const page = parseInt(req.query.page) || 1;
+    /* const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
 
     const offset = (page - 1) * limit;
@@ -1052,15 +1052,15 @@ export const getAllBranches = async (req, res, next) => {
       page,
       limit
     );
+    */
     const [branches] = await pool.query(
-      "SELECT * FROM branch WHERE Company_idCompany = ? LIMIT ? OFFSET ?",
-      [req.companyId, limit, offset]
+      "SELECT * FROM branch WHERE Company_idCompany = ?",
+      [req.companyId]
     );
 
     res.status(200).json({
       message: "Branches fetched successfully",
       branches,
-      pagination: paginationData,
     });
   } catch (error) {
     console.error("Error fetching branches:", error);

@@ -2130,7 +2130,7 @@ export const sendTicketsForPrinting = async (req, res, next) => {
       : "ORDER BY pt.updated_at DESC, pt.idPawning_Ticket DESC";
 
     // Build main data query - fetch ticket data with customer NIC and product name
-    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, pt.Pawning_Advance_Amount, pt.Status, c.Full_name, c.NIC, c.Mobile_No, pp.Name AS ProductName
+    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, pt.Pawning_Advance_Amount, pt.Status,pt.Print_Status, c.Full_name, c.NIC, c.Mobile_No, pp.Name AS ProductName
                   FROM pawning_ticket pt
             LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
             LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product

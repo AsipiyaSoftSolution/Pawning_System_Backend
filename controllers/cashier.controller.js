@@ -128,8 +128,8 @@ export const startCashierRegistryForDay = async (req, res, next) => {
 
       // Check if there is already a cashier registry started for the day
       const [existingRegistry] = await connection.query(
-        "SELECT * FROM daily_registry WHERE User_idUser = ? AND Date = CURDATE() AND Description = 'Day Start'",
-        [req.userId]
+        "SELECT * FROM daily_registry WHERE User_idUser = ? AND Date = CURDATE() AND Description = 'Day Start' AND daily_registry_status = ?",
+        [req.userId, 1]
       );
 
       if (existingRegistry.length > 0) {
@@ -182,8 +182,8 @@ export const startCashierRegistryForDay = async (req, res, next) => {
         // if no existing registry, this is going to be the first registry for the day
         // insert entries to daily_registry and daily_registry_has_cash tables
         const [dailyRegistryResult] = await connection.query(
-          "INSERT INTO daily_registry (Date, Time, Description, User_idUser, Total_Amount) VALUES (CURDATE(), CURTIME(), ?, ?, ?)",
-          ["Day Start", req.userId, totalAmount]
+          "INSERT INTO daily_registry (Date, Time, Description, User_idUser, Total_Amount,daily_registry_status) VALUES (CURDATE(), CURTIME(), ?, ?, ?,?)",
+          ["Day Start", req.userId, totalAmount, 1]
         );
 
         if (!dailyRegistryResult || dailyRegistryResult.affectedRows === 0) {

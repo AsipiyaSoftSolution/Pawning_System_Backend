@@ -387,6 +387,7 @@ export const getCashierAccountLogsData = async (req, res, next) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
+    const date = req.query.date;
 
     const cashierAccountId = req.params.accountId || req.params.id;
 
@@ -411,8 +412,35 @@ export const getCashierAccountLogsData = async (req, res, next) => {
       );
     }
 
+    // validate date param if provided
+    if (date) {
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/; // YYYY-MM-DD
+      if (!dateRegex.test(date)) {
+        return next(errorHandler(400, "Date must be in YYYY-MM-DD format"));
+      }
+    }
+
+    let paginationData;
+    let logs;
+
+    if (date) {
+      // Get total count of logs for pagination
+      paginationData = await getPaginationData(
+        "SELECT COUNT(*) as total FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND STR_TO_DATE(Date_Time, '%Y-%m-%d') = ?",
+        [cashierAccountId, date],
+        page,
+        limit
+      );
+
+      // get log data
+      [logs] = await pool.query(
+        "SELECT aal.*, u.full_name as enteredUser FROM accounting_accounts_log aal JOIN user u ON aal.User_idUser = u.idUser WHERE aal.Accounting_Accounts_idAccounting_Accounts = ? AND STR_TO_DATE(Date_Time, '%Y-%m-%d') = ? ORDER BY aal.idAccounting_Accounts_Log DESC LIMIT ? OFFSET ?",
+        [cashierAccountId, date, limit, offset]
+      );
+    }
+
     // Get total count of logs for pagination
-    const paginationData = await getPaginationData(
+    paginationData = await getPaginationData(
       "SELECT COUNT(*) as total FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND STR_TO_DATE(Date_Time, '%Y-%m-%d') = CURDATE()",
       [cashierAccountId],
       page,
@@ -420,7 +448,7 @@ export const getCashierAccountLogsData = async (req, res, next) => {
     );
 
     // get log data
-    const [logs] = await pool.query(
+    [logs] = await pool.query(
       "SELECT aal.*, u.full_name as enteredUser FROM accounting_accounts_log aal JOIN user u ON aal.User_idUser = u.idUser WHERE aal.Accounting_Accounts_idAccounting_Accounts = ? AND STR_TO_DATE(Date_Time, '%Y-%m-%d') = CURDATE()  ORDER BY aal.idAccounting_Accounts_Log DESC LIMIT ? OFFSET ?",
       [cashierAccountId, limit, offset]
     );
@@ -441,6 +469,7 @@ export const getCashierAccountLogsData = async (req, res, next) => {
 export const getCashierDashboardSummary = async (req, res, next) => {
   try {
     const cashierAccountId = req.params.accountId || req.params.id;
+    const date = req.query.date;
     if (!cashierAccountId) {
       return next(errorHandler(400, "Cashier Account ID is required"));
     }

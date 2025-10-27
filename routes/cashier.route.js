@@ -7,10 +7,12 @@ import {
   getCashierAccountLogsData,
   getCashierDashboardSummary,
   getCashierDenominationSummary,
+  getCashierDailyExpenses,
 } from "../controllers/cashier.controller.js";
 
 const route = express.Router();
 
+// Day Start Routes
 // Start or update cashier registry for the day
 route.post(
   "/:branchId/cashier-registry-start-or-update",
@@ -27,6 +29,7 @@ route.get(
   getTodayCashierRegistry
 );
 
+// Dashboard Routes
 // Get cashier account logs data for current date to cashier dashboard for the current day
 route.get(
   "/:branchId/cashier-account-logs-current-date/:accountId",
@@ -49,5 +52,13 @@ route.get(
   protectedRoute,
   checkUserBranchAccess,
   getCashierDenominationSummary
+);
+
+// Get cashier daily expenses for the current day or filtered date
+route.get(
+  "/:branchId/cashier-daily-expenses",
+  protectedRoute,
+  checkUserBranchAccess,
+  getCashierDailyExpenses
 );
 export default route;

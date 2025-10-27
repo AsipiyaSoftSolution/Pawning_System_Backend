@@ -484,11 +484,58 @@ export const getCashierDashboardSummary = async (req, res, next) => {
       return next(errorHandler(400, "Invalid Cashier Account ID"));
     }
 
+    // validate date param if provided
+    if (date) {
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/; // YYYY-MM-DD
+      if (!dateRegex.test(date)) {
+        return next(errorHandler(400, "Date must be in YYYY-MM-DD format"));
+      }
+    }
+
     const currentBalance = parseFloat(account[0].Account_Balance) || 0; // assign current balance from account balance
 
     let dayStartBalance = 0;
+    let paymentReceivedAmount = 0;
+    let ticketIssuedAmount = 0;
+
+    let dayStartRegistry;
+    let ticketIssues;
+    let payments;
+
+    if (date) {
+      // get day start registry balance for the provided date
+      [dayStartRegistry] = await pool.query(
+        "SELECT Total_Amount FROM daily_registry WHERE User_idUser = ? AND Date = ? AND Description = 'Day Start' ORDER BY Time DESC LIMIT 1",
+        [req.userId, date]
+      );
+
+      if (dayStartRegistry.length > 0) {
+        dayStartBalance = parseFloat(dayStartRegistry[0].Total_Amount) || 0;
+      }
+
+      // get total ticket issued amount for the provided date
+      [ticketIssues] = await pool.query(
+        "SELECT SUM(CAST(Credit AS DECIMAL(10,2))) as totalIssued FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND User_idUser = ? AND Type = 'Pawning Ticket Issued' AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d %H:%i:%s')) = ?",
+        [cashierAccountId, req.userId, date]
+      );
+
+      if (ticketIssues.length > 0) {
+        ticketIssuedAmount = parseFloat(ticketIssues[0].totalIssued) || 0;
+      }
+
+      // get payment received amount for the provided date
+      [payments] = await pool.query(
+        "SELECT SUM(CAST(Debit AS DECIMAL(10,2))) as totalPayments FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND Date(STR_TO_DATE(Date_Time, '%Y-%m-%d %H:%i:%s')) = ? AND Type != 'Cashier Registry Start' AND Type != 'Cashier Registry Updated' ",
+        [cashierAccountId, date]
+      );
+
+      if (payments.length > 0) {
+        paymentReceivedAmount = parseFloat(payments[0].totalPayments) || 0;
+      }
+    }
+
     // get day start registry balance for today
-    const [dayStartRegistry] = await pool.query(
+    [dayStartRegistry] = await pool.query(
       "SELECT Total_Amount FROM daily_registry WHERE User_idUser = ? AND Date = CURDATE() AND Description = 'Day Start' ORDER BY Time DESC LIMIT 1",
       [req.userId]
     );
@@ -498,8 +545,7 @@ export const getCashierDashboardSummary = async (req, res, next) => {
     }
 
     // get total ticket issued amount for today
-    let ticketIssuedAmount = 0;
-    const [ticketIssues] = await pool.query(
+    [ticketIssues] = await pool.query(
       "SELECT SUM(CAST(Credit AS DECIMAL(10,2))) as totalIssued FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND User_idUser = ? AND Type = 'Pawning Ticket Issued' AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d %H:%i:%s')) = CURDATE()",
       [cashierAccountId, req.userId]
     );
@@ -508,7 +554,13 @@ export const getCashierDashboardSummary = async (req, res, next) => {
       ticketIssuedAmount = parseFloat(ticketIssues[0].totalIssued) || 0;
     }
     // get payment received amount for today (to be implemented)
-    let paymentReceivedAmount = 0;
+    [payments] = await pool.query(
+      "SELECT SUM(CAST(Debit AS DECIMAL(10,2))) as totalPayments FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND Date(STR_TO_DATE(Date_Time, '%Y-%m-%d %H:%i:%s')) = CURDATE() AND Type != 'Cashier Registry Start' AND Type != 'Cashier Registry Updated' ",
+      [cashierAccountId, req.userId]
+    );
+    if (payments.length > 0) {
+      paymentReceivedAmount = parseFloat(payments[0].totalPayments) || 0;
+    }
 
     res.status(200).json({
       success: true,
@@ -603,6 +655,142 @@ export const getCashierDenominationSummary = async (req, res, next) => {
     }
   } catch (error) {
     console.error("Get Cashier Denomination Summary error:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// send all cashier account's daily expenses for the current day or filtered date
+export const getCashierDailyExpenses = async (req, res, next) => {
+  try {
+  } catch (error) {}
+};
+
+// Get cashier account logs and card data
+export const getCashierAccountDayLogWithSummaryCards = async (
+  req,
+  res,
+  next
+) => {
+  try {
+    const cashierAccountId = req.params.accountId || req.params.id;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    if (!cashierAccountId) {
+      return next(errorHandler(400, "Cashier Account ID is required"));
+    }
+
+    // validate pagination params
+    if (page <= 0 || limit <= 0) {
+      return next(
+        errorHandler(400, "Page and limit must be positive integers")
+      );
+    }
+
+    let logs = [];
+    let dayStartBalance = 0;
+    let paymentReceivedAmount = 0;
+    let ticketIssuedAmount = 0;
+    let inAccountTransfers = 0;
+    let outAccountTransfers = 0;
+    let paidDailyExpenses = 0;
+    let currentBalance = 0;
+
+    const [account] = pool.query(
+      "SELECT * FROM accounting_accounts WHERE idAccounting_Accounts = ? AND Branch_idBranch = ?",
+      [cashierAccountId, req.branchId]
+    );
+
+    if (account.length === 0) {
+      return next(errorHandler(400, "Invalid Cashier Account ID"));
+    }
+
+    // get logs
+    // pagination data
+    const paginationData = await getPaginationData(
+      "SELECT COUNT(*) as total FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND STR_TO_DATE(Date_Time, '%Y-%m-%d') = CURDATE()",
+      [cashierAccountId],
+      page,
+      limit
+    );
+
+    [logs] = await pool.query(
+      "SELECT * FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND STR_TO_DATE(Date_Time, '%Y-%m-%d') = CURDATE() ORDER BY idAccounting_Accounts_Log DESC LIMIT ? OFFSET ?",
+      [cashierAccountId, limit, offset]
+    );
+
+    // get summary card data
+
+    // get current balance
+    currentBalance = parseFloat(account[0].Account_Balance) || 0;
+
+    // get day start balance
+    const [dayStartRegistry] = await pool.query(
+      "SELECT Total_Amount FROM daily_registry WHERE User_idUser = ? AND Date = CURDATE() AND Description = 'Day Start' ORDER BY Time DESC LIMIT 1",
+      [req.userId]
+    );
+
+    if (dayStartRegistry.length > 0) {
+      dayStartBalance = parseFloat(dayStartRegistry[0].Total_Amount) || 0;
+    }
+
+    // get ticket issued amount
+    const [ticketIssues] = await pool.query(
+      "SELECT SUM(CAST(Credit AS DECIMAL(10,2))) as totalIssued FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND User_idUser = ? AND Type = 'Ticket Loan Disbursement' AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d %H:%i:%s')) = CURDATE()",
+      [cashierAccountId, req.userId]
+    );
+
+    if (ticketIssues.length > 0) {
+      ticketIssuedAmount = parseFloat(ticketIssues[0].totalIssued) || 0;
+    }
+
+    // get payment received amount
+    const [payments] = await pool.query(
+      "SELECT SUM(CAST(Debit AS DECIMAL(10,2))) as totalPayments FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND Date(STR_TO_DATE(Date_Time, '%Y-%m-%d %H:%i:%s')) = CURDATE() AND Type != 'Cashier Registry Start' AND Type != 'Cashier Registry Updated' ",
+      [cashierAccountId]
+    );
+
+    if (payments.length > 0) {
+      paymentReceivedAmount = parseFloat(payments[0].totalPayments) || 0;
+    }
+
+    // get in account transfers
+    const [inTransfers] = await pool.query(
+      "SELECT SUM(CAST(Debit AS DECIMAL(10,2))) as totalIn FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND Type = 'Account Transfer In' AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d %H:%i:%s')) = CURDATE()",
+      [cashierAccountId]
+    );
+
+    // get out account transfers
+    const [outTransfers] = await pool.query(
+      "SELECT SUM(CAST(Credit AS DECIMAL(10,2))) as totalOut FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND Type = 'Account Transfer Out' AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d %H:%i:%s')) = CURDATE()",
+      [cashierAccountId]
+    );
+
+    // get paid daily expenses
+    const [dailyExpenses] = await pool.query(
+      "SELECT SUM(CAST(Credit AS DECIMAL(10,2))) as totalExpenses FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND Type = 'Daily Expense Paid' AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d %H:%i:%s')) = CURDATE()",
+      [cashierAccountId]
+    );
+
+    res.status(200).json({
+      success: true,
+      message:
+        "Cashier Account Day Log with Summary Cards fetched successfully",
+      logs,
+      pagination: paginationData,
+      summaryCards: {
+        dayStartBalance,
+        currentBalance,
+        ticketIssuedAmount,
+        paymentReceivedAmount,
+        inAccountTransfers,
+        outAccountTransfers,
+        paidDailyExpenses,
+      },
+    });
+  } catch (error) {
+    console.log("Get Cashier Account Day Log With Summary Cards error:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

@@ -732,9 +732,13 @@ export const getCashierAccountDayLogWithSummaryCards = async (
     );
 
     if (latestRegistry.length === 0) {
-      return next(
-        errorHandler(400, "No active daily registry found for the user")
-      );
+      return res.status(200).json({
+        success: true,
+        message:
+          "No active daily registry found for the user. Cannot fetch logs and summary data.",
+        logs: [],
+        pagination: {},
+      });
     }
 
     // get logs

@@ -8,6 +8,7 @@ import {
   getAccountsForTransfer,
   transferBetweenAccounts,
   sendTransferRecords,
+  getCashAndBankAccounts,
 } from "../controllers/account.controller.js";
 
 const route = express.Router();
@@ -58,5 +59,13 @@ route.get(
   protectedRoute,
   checkUserBranchAccess,
   sendTransferRecords
+);
+
+// get cash and bank accounts
+route.get(
+  "/:branchId/cash-and-bank-accounts",
+  protectedRoute,
+  checkUserBranchAccess,
+  getCashAndBankAccounts
 );
 export default route;

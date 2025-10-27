@@ -1109,7 +1109,7 @@ export const endCashierDay = async (req, res, next) => {
 // cashier day end print data
 export const getCashierDayEndPrintData = async (req, res, next) => {
   try {
-    const endRegistryId = req.params.id;
+    const endRegistryId = req.params.id || req.params.endRegistryId;
     if (!endRegistryId) {
       return next(errorHandler(400, "End Registry ID is required"));
     }
@@ -1272,6 +1272,49 @@ export const getCashierDayEndPrintData = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Get Cashier Day End Print Data error:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// check if there is a cashier start day to end
+export const checkCashierDayEndAvailability = async (req, res, next) => {
+  try {
+    const cashierAccountId = req.params.accountId || req.params.id;
+    if (!cashierAccountId) {
+      return next(errorHandler(400, "Cashier Account ID is required"));
+    }
+
+    // validate account id
+    const [account] = await pool.query(
+      "SELECT * FROM accounting_accounts WHERE idAccounting_Accounts = ? AND Branch_idBranch = ?",
+      [cashierAccountId, req.branchId]
+    );
+
+    if (account.length === 0) {
+      return next(errorHandler(400, "Invalid Cashier Account ID"));
+    }
+
+    // Check if there is an active daily registry which is unsettled for the user
+    const [activeRegistry] = await pool.query(
+      "SELECT * FROM daily_registry WHERE User_idUser = ? AND (daily_registry_status = 1 OR daily_registry_status = 2) ORDER BY idDaily_Registry DESC LIMIT 1",
+      [req.userId]
+    );
+
+    if (activeRegistry.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: "No active daily registry found to end the day",
+        canEndDay: false,
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Active daily registry found to end the day",
+      canEndDay: true,
+    });
+  } catch (error) {
+    console.error("Check Cashier Day End Availability error:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

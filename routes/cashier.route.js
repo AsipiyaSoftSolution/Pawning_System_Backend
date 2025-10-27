@@ -9,6 +9,9 @@ import {
   getCashierDenominationSummary,
   getCashierDailyExpenses,
   getCashierAccountDayLogWithSummaryCards,
+  checkCashierDayEndAvailability,
+  getCashierDayEndPrintData,
+  endCashierDay,
 } from "../controllers/cashier.controller.js";
 
 const route = express.Router();
@@ -28,6 +31,39 @@ route.get(
   protectedRoute,
   checkUserBranchAccess,
   getTodayCashierRegistry
+);
+
+// Day End Routes
+// Check if cashier day end is available to perform day end
+route.get(
+  "/:branchId/check-cashier-day-end-availability/:accountId",
+  protectedRoute,
+  checkUserBranchAccess,
+  checkCashierDayEndAvailability
+);
+
+// Get cashier day end print data
+route.get(
+  "/:branchId/cashier-day-end-print-data/:endRegistryId",
+  protectedRoute,
+  checkUserBranchAccess,
+  getCashierDayEndPrintData
+);
+
+// End cashier day
+route.post(
+  "/:branchId/end-cashier-day",
+  protectedRoute,
+  checkUserBranchAccess,
+  endCashierDay
+);
+
+// Cashier Account Day Log and summary data
+route.get(
+  "/:branchId/cashier-account-day-log-with-summary-cards/:accountId",
+  protectedRoute,
+  checkUserBranchAccess,
+  getCashierAccountDayLogWithSummaryCards
 );
 
 // Dashboard Routes

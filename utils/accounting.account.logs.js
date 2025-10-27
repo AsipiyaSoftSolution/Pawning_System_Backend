@@ -188,7 +188,7 @@ export const addAccountTransferLogs = async (
 };
 
 // create a log to accounting_accounts_log when a cashier registry is started for the day
-export const addCashierRegistryStartLog = async (
+export const addCashierRegistryStartEndLog = async (
   connection,
   accountId,
   type,
@@ -216,11 +216,11 @@ export const addCashierRegistryStartLog = async (
     );
 
     if (result.affectedRows === 0) {
-      throw new Error("Failed to create cashier registry start log");
+      throw new Error("Failed to create cashier registry start | end log");
     }
   } catch (error) {
-    console.error("Error creating cashier registry start log:", error);
-    throw new Error("Failed to create cashier registry start log");
+    console.error("Error creating cashier registry start | end log:", error);
+    throw new Error("Failed to create cashier registry start | end log");
   }
 };
 

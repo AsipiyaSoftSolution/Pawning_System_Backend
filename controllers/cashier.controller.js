@@ -3,7 +3,7 @@ import { pool } from "../utils/db.js";
 import { getPaginationData } from "../utils/helper.js";
 import {
   addAccountTransferLogs,
-  addCashierRegistryStartLog,
+  addCashierRegistryStartEndLog,
 } from "../utils/accounting.account.logs.js";
 
 // Start cashier registry for the day (Start or update if already started)
@@ -45,6 +45,25 @@ export const startCashierRegistryForDay = async (req, res, next) => {
 
     if (toAccount.length === 0) {
       return next(errorHandler(400, "Invalid Transfer Cashier Account ID"));
+    }
+
+    // check if the lastest record in the table with this user is settled or not
+    const [latestRegistry] = await pool.query(
+      "SELECT * FROM daily_registry WHERE User_idUser = ? AND (daily_registry_status = 1 OR daily_registry_status = 2 ) ORDER BY idDaily_Registry DESC LIMIT 1",
+      [req.userId]
+    );
+
+    if (
+      latestRegistry.length > 0 &&
+      (latestRegistry[0].daily_registry_status === 1 ||
+        latestRegistry[0].daily_registry_status === 2)
+    ) {
+      return next(
+        errorHandler(
+          400,
+          "Cannot start a new registry while there is an active registry. Please end the current registry first."
+        )
+      );
     }
 
     // bills and coins available in Sri Lanka
@@ -135,8 +154,8 @@ export const startCashierRegistryForDay = async (req, res, next) => {
       if (existingRegistry.length > 0) {
         // insert entries to daily_registry and daily_registry_has_cash tables
         const [dailyRegistryResult] = await connection.query(
-          "INSERT INTO daily_registry (Date, Time, Description, User_idUser, Total_Amount) VALUES (CURDATE(), CURTIME(), ?, ?, ?)",
-          ["Day Start Updated", req.userId, totalAmount]
+          "INSERT INTO daily_registry (Date, Time, Description, User_idUser, Total_Amount,daily_registry_status) VALUES (CURDATE(), CURTIME(), ?, ?, ?,?)",
+          ["Day Start Updated", req.userId, totalAmount, 2] // updated status 2 for registry updates
         );
 
         if (!dailyRegistryResult || dailyRegistryResult.affectedRows === 0) {
@@ -167,7 +186,7 @@ export const startCashierRegistryForDay = async (req, res, next) => {
         }
 
         // Make a log entry for the cashier registry update
-        await addCashierRegistryStartLog(
+        await addCashierRegistryStartEndLog(
           connection,
           toAccountId,
           "Cashier Registry Updated",
@@ -706,18 +725,31 @@ export const getCashierAccountDayLogWithSummaryCards = async (
       return next(errorHandler(400, "Invalid Cashier Account ID"));
     }
 
+    // get the latest not settled daily registry for the user
+    const [latestRegistry] = await pool.query(
+      "SELECT * FROM daily_registry WHERE User_idUser = ? AND (daily_registry_status = 1 OR daily_registry_status = 2 ) ORDER BY idDaily_Registry DESC LIMIT 1",
+      [req.userId]
+    );
+
+    if (latestRegistry.length === 0) {
+      return next(
+        errorHandler(400, "No active daily registry found for the user")
+      );
+    }
+
     // get logs
     // pagination data
+    // paginate logs between the registry start date and today (inclusive)
     const paginationData = await getPaginationData(
-      "SELECT COUNT(*) as total FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND STR_TO_DATE(Date_Time, '%Y-%m-%d') = CURDATE()",
-      [cashierAccountId],
+      "SELECT COUNT(*) as total FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d %H:%i:%s')) BETWEEN ? AND CURDATE()",
+      [cashierAccountId, latestRegistry[0].Date],
       page,
       limit
     );
 
     [logs] = await pool.query(
-      "SELECT * FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND STR_TO_DATE(Date_Time, '%Y-%m-%d') = CURDATE() ORDER BY idAccounting_Accounts_Log DESC LIMIT ? OFFSET ?",
-      [cashierAccountId, limit, offset]
+      "SELECT * FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d %H:%i:%s')) BETWEEN ? AND CURDATE() ORDER BY idAccounting_Accounts_Log DESC LIMIT ? OFFSET ?",
+      [cashierAccountId, latestRegistry[0].Date, limit, offset]
     );
 
     // get summary card data
@@ -727,51 +759,63 @@ export const getCashierAccountDayLogWithSummaryCards = async (
 
     // get day start balance
     const [dayStartRegistry] = await pool.query(
-      "SELECT Total_Amount FROM daily_registry WHERE User_idUser = ? AND Date = CURDATE() AND Description = 'Day Start' ORDER BY Time DESC LIMIT 1",
-      [req.userId]
+      "SELECT Total_Amount FROM daily_registry WHERE User_idUser = ? AND Date = ? AND Description = 'Day Start' ORDER BY Time DESC LIMIT 1",
+      [req.userId, latestRegistry[0].Date]
     );
 
     if (dayStartRegistry.length > 0) {
       dayStartBalance = parseFloat(dayStartRegistry[0].Total_Amount) || 0;
     }
 
-    // get ticket issued amount
+    // get ticket issued amount from the registry start date up to today
     const [ticketIssues] = await pool.query(
-      "SELECT SUM(CAST(Credit AS DECIMAL(10,2))) as totalIssued FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND User_idUser = ? AND Type = 'Ticket Loan Disbursement' AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d %H:%i:%s')) = CURDATE()",
-      [cashierAccountId, req.userId]
+      "SELECT SUM(CAST(Credit AS DECIMAL(10,2))) as totalIssued FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND User_idUser = ? AND Type = 'Ticket Loan Disbursement' AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d %H:%i:%s')) BETWEEN ? AND CURDATE()",
+      [cashierAccountId, req.userId, latestRegistry[0].Date]
     );
 
     if (ticketIssues.length > 0) {
       ticketIssuedAmount = parseFloat(ticketIssues[0].totalIssued) || 0;
     }
 
-    // get payment received amount
+    // get payment received amount between registry date and today
     const [payments] = await pool.query(
-      "SELECT SUM(CAST(Debit AS DECIMAL(10,2))) as totalPayments FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND Date(STR_TO_DATE(Date_Time, '%Y-%m-%d %H:%i:%s')) = CURDATE() AND Type != 'Cashier Registry Start' AND Type != 'Cashier Registry Updated' ",
-      [cashierAccountId]
+      "SELECT SUM(CAST(Debit AS DECIMAL(10,2))) as totalPayments FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d %H:%i:%s')) BETWEEN ? AND CURDATE() AND Type != 'Cashier Registry Start' AND Type != 'Cashier Registry Updated'",
+      [cashierAccountId, latestRegistry[0].Date]
     );
 
     if (payments.length > 0) {
       paymentReceivedAmount = parseFloat(payments[0].totalPayments) || 0;
     }
 
-    // get in account transfers
+    // get in account transfers between registry date and today
     const [inTransfers] = await pool.query(
-      "SELECT SUM(CAST(Debit AS DECIMAL(10,2))) as totalIn FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND Type = 'Account Transfer In' AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d %H:%i:%s')) = CURDATE()",
-      [cashierAccountId]
+      "SELECT SUM(CAST(Debit AS DECIMAL(10,2))) as totalIn FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND Type = 'Account Transfer In' AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d %H:%i:%s')) BETWEEN ? AND CURDATE()",
+      [cashierAccountId, latestRegistry[0].Date]
     );
 
-    // get out account transfers
+    if (inTransfers.length > 0) {
+      inAccountTransfers = parseFloat(inTransfers[0].totalIn) || 0;
+    }
+
+    // get out account transfers between registry date and today
     const [outTransfers] = await pool.query(
-      "SELECT SUM(CAST(Credit AS DECIMAL(10,2))) as totalOut FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND Type = 'Account Transfer Out' AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d %H:%i:%s')) = CURDATE()",
-      [cashierAccountId]
+      "SELECT SUM(CAST(Credit AS DECIMAL(10,2))) as totalOut FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND Type = 'Account Transfer Out' AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d %H:%i:%s')) BETWEEN ? AND CURDATE()",
+      [cashierAccountId, latestRegistry[0].Date]
     );
 
-    // get paid daily expenses
+    if (outTransfers.length > 0) {
+      outAccountTransfers = parseFloat(outTransfers[0].totalOut) || 0;
+    }
+
+    // get paid daily expenses between registry date and today
     const [dailyExpenses] = await pool.query(
-      "SELECT SUM(CAST(Credit AS DECIMAL(10,2))) as totalExpenses FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND Type = 'Daily Expense Paid' AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d %H:%i:%s')) = CURDATE()",
-      [cashierAccountId]
+      "SELECT SUM(CAST(Credit AS DECIMAL(10,2))) as totalExpenses FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND Type = 'Daily Expense Paid' AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d %H:%i:%s')) BETWEEN ? AND CURDATE()",
+      [cashierAccountId, latestRegistry[0].Date]
     );
+
+    if (dailyExpenses.length > 0) {
+      paidDailyExpenses = parseFloat(dailyExpenses[0].totalExpenses) || 0;
+    }
 
     res.status(200).json({
       success: true,
@@ -792,5 +836,238 @@ export const getCashierAccountDayLogWithSummaryCards = async (
   } catch (error) {
     console.log("Get Cashier Account Day Log With Summary Cards error:", error);
     return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// end cashier day
+export const endCashierDay = async (req, res, next) => {
+  let connection;
+
+  try {
+    const { fromAccountId, toAccountId, entries, note } = req.body;
+    if (!fromAccountId || !toAccountId || !entries || entries.length === 0) {
+      return next(
+        errorHandler(400, "fromAccountId, toAccountId and entries are required")
+      );
+    }
+
+    // validate accounts id's
+    if (fromAccountId === toAccountId) {
+      return next(
+        errorHandler(400, "from Account and to Account cannot be the same")
+      );
+    }
+
+    // Parse Account IDs to integers
+    const parsedFromAccountId = parseInt(fromAccountId, 10);
+    const parsedToAccountId = parseInt(toAccountId, 10);
+
+    // Validate fromAccountId and toAccountId
+    const [fromAccount] = await pool.query(
+      "SELECT * FROM accounting_accounts WHERE idAccounting_Accounts = ? AND Branch_idBranch = ?",
+      [fromAccountId, req.branchId]
+    );
+    if (fromAccount.length === 0) {
+      return next(errorHandler(400, "Invalid Transfer From Account ID"));
+    }
+
+    const [toAccount] = await pool.query(
+      "SELECT * FROM accounting_accounts WHERE idAccounting_Accounts = ? AND Branch_idBranch = ?",
+      [toAccountId, req.branchId]
+    );
+
+    if (toAccount.length === 0) {
+      return next(errorHandler(400, "Invalid Transfer Cashier Account ID"));
+    }
+
+    // bills and coins available in Sri Lanka
+    const validDenominations = [1, 2, 5, 10, 50, 100, 500, 1000, 5000];
+
+    // validate entries
+    for (const entry of entries) {
+      if (!entry.denomination || entry.denomination <= 0) {
+        return next(errorHandler(400, "Denomination must be greater than 0"));
+      }
+
+      if (!validDenominations.includes(entry.denomination)) {
+        return next(
+          errorHandler(400, `Denomination ${entry.denomination} is not valid`)
+        );
+      }
+
+      if (!entry.quantity || entry.quantity <= 0) {
+        return next(errorHandler(400, "Quantity must be greater than 0"));
+      }
+
+      // Ensure quantity is an integer
+      if (!Number.isInteger(entry.quantity)) {
+        return next(errorHandler(400, "Quantity must be a whole number"));
+      }
+    }
+
+    // validate note
+    if (note && typeof note !== "string") {
+      return next(errorHandler(400, "Note must be a string"));
+    }
+
+    if (note && note.length > 500) {
+      return next(errorHandler(400, "Note cannot exceed 500 characters"));
+    }
+
+    note = note ? note.trim() : null;
+
+    // Calculate total amount from entries (denomination × quantity)
+    let totalAmount = 0;
+    entries.forEach((entry) => {
+      const entryAmount =
+        parseFloat(entry.denomination) * parseInt(entry.quantity);
+      totalAmount += entryAmount;
+    });
+
+    // Round to 2 decimal places to avoid floating point errors
+    totalAmount = Math.round(totalAmount * 100) / 100;
+
+    // Check if transfer from account has sufficient balance
+    const fromAccountBalance = parseFloat(fromAccount[0].Account_Balance);
+    if (fromAccountBalance < totalAmount) {
+      return next(
+        errorHandler(400, "Insufficient balance in Transfer From Account")
+      );
+    }
+
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    try {
+      // deduct amount from fromAccount
+      const newFromAccountBalance =
+        Math.round((fromAccountBalance - totalAmount) * 100) / 100;
+      await connection.query(
+        "UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ?",
+        [newFromAccountBalance, fromAccountId]
+      );
+
+      // add amount to toAccount
+      const toAccountBalance = parseFloat(toAccount[0].Account_Balance);
+      const newToAccountBalance =
+        Math.round((toAccountBalance + totalAmount) * 100) / 100;
+      await connection.query(
+        "UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ?",
+        [newToAccountBalance, toAccountId]
+      );
+
+      // add account transfer logs for both accounts
+      await addAccountTransferLogs(
+        connection,
+        fromAccountId,
+        toAccountId,
+        fromAccount[0].Account_Name,
+        toAccount[0].Account_Name,
+        totalAmount,
+        newFromAccountBalance,
+        newToAccountBalance,
+        "Cashier Day End Transfer",
+        req.userId
+      );
+      let date;
+      let time;
+      let existingRegistry;
+
+      // Check if there is already a cashier registry started for the day
+      [existingRegistry] = await connection.query(
+        "SELECT * FROM daily_registry WHERE User_idUser = ? AND Date = CURDATE() AND (daily_registry_status = 1 OR daily_registry_status = 2) ORDER BY Date DESC, Time DESC LIMIT 1",
+        [req.userId]
+      );
+
+      if (existingRegistry.length === 0) {
+        // it is meaning that day start or update registry is not done for the day
+        // and we have to find the latest registry which start or update before today
+        [existingRegistry] = await connection.query(
+          "SELECT * FROM daily_registry WHERE User_idUser = ? AND Date < CURDATE() AND (daily_registry_status = 1 OR daily_registry_status = 2) ORDER BY Date DESC, Time DESC LIMIT 1",
+          [req.userId]
+        );
+
+        if (existingRegistry.length === 0) {
+          await connection.rollback();
+          return next(
+            errorHandler(
+              400,
+              "No existing cashier registry start found to end the day"
+            )
+          );
+        }
+
+        date = existingRegistry[0].Date;
+        time = existingRegistry[0].Time;
+      }
+
+      date = existingRegistry[0].Date;
+      time = existingRegistry[0].Time;
+
+      if (existingRegistry.length > 0) {
+        // insert entries to daily_registry and daily_registry_has_cash tables
+        const [dailyRegistryResult] = await connection.query(
+          "INSERT INTO daily_registry (Date, Time, Description, User_idUser, Total_Amount,daily_registry_status,note) VALUES (?, ?, ?, ?, ?,?,?)",
+          [date, time, "Day End", req.userId, totalAmount, 3, note] // updated status 3 for registry day end
+        );
+
+        if (!dailyRegistryResult || dailyRegistryResult.affectedRows === 0) {
+          await connection.rollback();
+          return next(
+            errorHandler(
+              500,
+              "Failed to update daily registry record as day end"
+            )
+          );
+        }
+
+        const dailyRegistryId = dailyRegistryResult.insertId;
+        for (const entry of entries) {
+          const entryAmount =
+            Math.round(
+              parseFloat(entry.denomination) * parseInt(entry.quantity) * 100
+            ) / 100;
+
+          const result = await connection.query(
+            "INSERT INTO daily_registry_has_cash (Daily_registry_idDaily_Registry, Denomination, Quantity, Amount) VALUES (?, ?, ?, ?)",
+            [dailyRegistryId, entry.denomination, entry.quantity, entryAmount]
+          );
+
+          if (!result || result[0].affectedRows === 0) {
+            await connection.rollback();
+            return next(
+              errorHandler(
+                500,
+                "Failed to create daily registry cash entry for day end"
+              )
+            );
+          }
+        }
+
+        // Make a log entry for the cashier registry update
+        await addCashierRegistryStartEndLog(
+          connection,
+          toAccountId,
+          "Cashier Registry End",
+          `Cashier registry End. Total Amount: ${totalAmount}`,
+          totalAmount,
+          0,
+          newToAccountBalance,
+          fromAccountId,
+          req.userId
+        );
+      }
+    } catch (error) {
+      console.error("Transaction error:", error);
+      await connection.rollback();
+      return next(errorHandler(500, "Transaction failed, rolled back"));
+    }
+  } catch (error) {
+    console.error("End Cashier Registry error:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  } finally {
+    if (connection) {
+      connection.release();
+    }
   }
 };

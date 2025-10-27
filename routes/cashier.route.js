@@ -8,6 +8,7 @@ import {
   getCashierDashboardSummary,
   getCashierDenominationSummary,
   getCashierDailyExpenses,
+  getCashierAccountDayLogWithSummaryCards,
 } from "../controllers/cashier.controller.js";
 
 const route = express.Router();

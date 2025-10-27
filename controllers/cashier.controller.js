@@ -1009,10 +1009,35 @@ export const endCashierDay = async (req, res, next) => {
       time = existingRegistry[0].Time;
 
       if (existingRegistry.length > 0) {
+        // get the currect user's latest registry row with 'Day Start' to get the Total_Amount and Created_at
+        const [dailyRegistryRows] = await connection.query(
+          "SELECT * FROM daily_registry WHERE User_idUser = ? AND Description = 'Day Start' ORDER BY idDaily_Registry DESC LIMIT 1",
+          [req.userId]
+        );
+        if (dailyRegistryRows.length === 0) {
+          await connection.rollback();
+          return next(
+            errorHandler(
+              400,
+              "No existing daily registry 'Day Start' record found for the user"
+            )
+          );
+        }
+
         // insert entries to daily_registry and daily_registry_has_cash tables
         const [dailyRegistryResult] = await connection.query(
-          "INSERT INTO daily_registry (Date, Time, Description, User_idUser, Total_Amount,daily_registry_status,note) VALUES (?, ?, ?, ?, ?,?,?)",
-          [date, time, "Day End", req.userId, totalAmount, 3, note] // updated status 3 for registry day end
+          "INSERT INTO daily_registry (Date, Time, Description, User_idUser, Total_Amount,daily_registry_status,note,Start_Date_Time,Start_Amount) VALUES (?, ?, ?, ?, ?,?,?,?,?)",
+          [
+            date,
+            time,
+            "Day End",
+            req.userId,
+            totalAmount,
+            3,
+            note,
+            dailyRegistryRows[0].Created_at,
+            dailyRegistryRows[0].Total_Amount,
+          ] // updated status 3 for registry day end
         );
 
         if (!dailyRegistryResult || dailyRegistryResult.affectedRows === 0) {
@@ -1066,6 +1091,14 @@ export const endCashierDay = async (req, res, next) => {
       await connection.rollback();
       return next(errorHandler(500, "Transaction failed, rolled back"));
     }
+
+    await connection.commit();
+
+    res.status(200).json({
+      success: true,
+      message: "Cashier day ended successfully",
+      endRegistryId: dailyRegistryId,
+    });
   } catch (error) {
     console.error("End Cashier Registry error:", error);
     return next(errorHandler(500, "Internal Server Error"));
@@ -1073,5 +1106,175 @@ export const endCashierDay = async (req, res, next) => {
     if (connection) {
       connection.release();
     }
+  }
+};
+
+// cashier day end print data
+export const getCashierDayEndPrintData = async (req, res, next) => {
+  try {
+    const endRegistryId = req.params.id;
+    if (!endRegistryId) {
+      return next(errorHandler(400, "End Registry ID is required"));
+    }
+
+    // fetch end registry data (include User_idUser so we can aggregate other registries for the same user/date)
+    const [endRegistryResult] = await pool.query(
+      "SELECT dr.idDaily_Registry, dr.Date, dr.Time, dr.Description, dr.Total_Amount, dr.note, dr.User_idUser,dr_Created_at, dr.Start_Date_Time,dr.Start_Amount u.full_name as enteredUser FROM daily_registry dr JOIN user u ON dr.User_idUser = u.idUser WHERE dr.idDaily_Registry = ?",
+      [endRegistryId]
+    );
+
+    if (endRegistryResult.length === 0) {
+      return next(errorHandler(404, "End Registry not found"));
+    }
+
+    const endRegistry = endRegistryResult[0];
+
+    // fetch cash entries for the end registry
+    const [cashEntriesResult] = await pool.query(
+      "SELECT Denomination, Quantity, Amount FROM daily_registry_has_cash WHERE Daily_registry_idDaily_Registry = ? ORDER BY Denomination DESC",
+      [endRegistry.idDaily_Registry]
+    );
+
+    let cashEntries = [];
+    if (cashEntriesResult.length > 0) {
+      cashEntries = cashEntriesResult;
+    }
+
+    // Calculate total by denomination across all registries for the same user and date
+    const denominationSummary = {};
+    const validDenominations = [1, 2, 5, 10, 50, 100, 500, 1000, 5000];
+
+    // Initialize denomination summary
+    validDenominations.forEach((denom) => {
+      denominationSummary[denom] = {
+        denomination: denom,
+        totalQuantity: 0,
+        totalAmount: 0,
+      };
+    });
+
+    // get all registries for that user on the same date
+    const [dailyRegistries] = await pool.query(
+      "SELECT idDaily_Registry FROM daily_registry WHERE User_idUser = ? AND Date = ?",
+      [endRegistry.User_idUser, endRegistry.Date]
+    );
+
+    if (dailyRegistries.length > 0) {
+      // for each registry get cash entries and add to summary
+      for (const registry of dailyRegistries) {
+        const [entries] = await pool.query(
+          "SELECT Denomination, Quantity, Amount FROM daily_registry_has_cash WHERE Daily_registry_idDaily_Registry = ?",
+          [registry.idDaily_Registry]
+        );
+
+        entries.forEach((entry) => {
+          const denom = parseInt(entry.Denomination);
+          if (denominationSummary[denom]) {
+            denominationSummary[denom].totalQuantity +=
+              parseInt(entry.Quantity) || 0;
+            denominationSummary[denom].totalAmount +=
+              parseFloat(entry.Amount) || 0;
+          }
+        });
+      }
+    }
+
+    // Convert denomination summary to array and filter out zero quantities
+    const denominationSummaryArray = Object.values(denominationSummary)
+      .filter((item) => item.totalQuantity > 0)
+      .map((item) => ({
+        ...item,
+        totalAmount: Math.round(item.totalAmount * 100) / 100,
+      }));
+
+    // Logs data
+    const [logs] = await pool.query(
+      "SELECT aal.*, u.full_name as enteredUser FROM accounting_accounts_log aal JOIN user u ON aal.User_idUser = u.idUser WHERE aal.Accounting_Accounts_idAccounting_Accounts = ? AND DATE(STR_TO_DATE(aal.Date_Time, '%Y-%m-%d %H:%i:%s')) = BETWEEN ? AND ? ORDER BY aal.idAccounting_Accounts_Log DESC",
+      [
+        endRegistry[0].idDaily_Registry,
+        endRegistry[0].Start_Date_Time,
+        endRegistry[0].Created_at,
+      ]
+    );
+
+    // start balane
+    const startBalance = parseFloat(endRegistry.Start_Amount) || 0;
+
+    // total payments received
+    let totalPayments = 0;
+    logs.forEach((log) => {
+      if (
+        log.Type !== "Cashier Registry Start" &&
+        log.Type !== "Cashier Registry Updated"
+      ) {
+        totalPayments += parseFloat(log.Debit) || 0;
+      }
+    });
+    totalPayments = Math.round(totalPayments * 100) / 100;
+
+    // total ticket issued
+    let totalTicketIssued = 0;
+    logs.forEach((log) => {
+      if (log.Type === "Ticket Loan Disbursement") {
+        totalTicketIssued += parseFloat(log.Credit) || 0;
+      }
+    });
+    totalTicketIssued = Math.round(totalTicketIssued * 100) / 100;
+
+    // total expenses paid
+    let totalExpensesPaid = 0;
+    logs.forEach((log) => {
+      if (log.Type === "Daily Expense Paid") {
+        totalExpensesPaid += parseFloat(log.Credit) || 0;
+      }
+    });
+    totalExpensesPaid = Math.round(totalExpensesPaid * 100) / 100;
+
+    // total in account transfers
+    let totalInAccountTransfers = 0;
+    logs.forEach((log) => {
+      if (log.Type === "Account Transfer In") {
+        totalInAccountTransfers += parseFloat(log.Debit) || 0;
+      }
+    });
+    totalInAccountTransfers = Math.round(totalInAccountTransfers * 100) / 100;
+
+    // total out account transfers
+    let totalOutAccountTransfers = 0;
+    logs.forEach((log) => {
+      if (log.Type === "Account Transfer Out") {
+        totalOutAccountTransfers += parseFloat(log.Credit) || 0;
+      }
+    });
+    totalOutAccountTransfers = Math.round(totalOutAccountTransfers * 100) / 100;
+
+    // cashier account current balance with cashier data
+    const [cashierAccount] = await pool.query(
+      "SELECT ac.Account_Balance, u.full_name as cashierName, u.Email as cashierEmail, u.Contact_no as cashierContact FROM accounting_accounts ac JOIN user u ON ac.User_idUser = u.idUser WHERE ac.idAccounting_Accounts = ? AND ac.Branch_idBranch = ?",
+      [req.params.accountId, req.branchId]
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Cashier Day End Print Data fetched successfully",
+      data: {
+        endRegistry,
+        cashEntries,
+        denominationSummary: denominationSummaryArray,
+        logs,
+        summary: {
+          startBalance,
+          totalPayments,
+          totalTicketIssued,
+          totalExpensesPaid,
+          totalInAccountTransfers,
+          totalOutAccountTransfers,
+        },
+        cashierAccount: cashierAccount.length > 0 ? cashierAccount[0] : null,
+      },
+    });
+  } catch (error) {
+    console.error("Get Cashier Day End Print Data error:", error);
+    return next(errorHandler(500, "Internal Server Error"));
   }
 };

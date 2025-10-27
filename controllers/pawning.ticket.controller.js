@@ -2034,17 +2034,25 @@ export const sendSettledTickets = async (req, res, next) => {
 // send ticket which status '1' or '-1' for ticket print after ticket approve or ticket renewal (-1 after ticket approve and after renewal ticket goes to 1 which is active state)
 export const sendTicketsForPrinting = async (req, res, next) => {
   try {
-    const { product, start_date, end_date, nic } = req.query;
+    const { product, start_date, end_date, nic, print_status } = req.query;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
-    console.log(req.query, "query params for printing");
 
     // Build base WHERE conditions for both count and data queries
     let baseWhereConditions =
-      "pt.Branch_idBranch = ? AND (pt.Status = '1' OR pt.Status = '-1') AND pt.Print_Status = '0'";
+      "pt.Branch_idBranch = ? AND (pt.Status = '1' OR pt.Status = '-1')";
     let countParams = [req.branchId];
     let dataParams = [req.branchId];
+
+    // decide original or duplicate print status filter
+    if (print_status) {
+      if (print_status === "0") {
+        baseWhereConditions += " AND pt.Print_Status = '0'";
+      } else if (print_status === "1") {
+        baseWhereConditions += " AND pt.Print_Status = '1'";
+      }
+    }
 
     // Add filter conditions dynamically
     if (product) {
@@ -2122,7 +2130,7 @@ export const sendTicketsForPrinting = async (req, res, next) => {
       : "ORDER BY pt.updated_at DESC, pt.idPawning_Ticket DESC";
 
     // Build main data query - fetch ticket data with customer NIC and product name
-    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, pt.Pawning_Advance_Amount, pt.Status, c.Full_name, c.NIC, c.Mobile_No, pp.Name AS ProductName
+    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, pt.Pawning_Advance_Amount, pt.Status,pt.Print_Status, c.Full_name, c.NIC, c.Mobile_No, pp.Name AS ProductName
                   FROM pawning_ticket pt
             LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
             LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product

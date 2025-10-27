@@ -1254,7 +1254,7 @@ export const getCashierDayEndPrintData = async (req, res, next) => {
     res.status(200).json({
       success: true,
       message: "Cashier Day End Print Data fetched successfully",
-      data: {
+      printData: {
         endRegistry,
         cashEntries,
         denominationSummary: denominationSummaryArray,

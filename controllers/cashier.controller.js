@@ -716,7 +716,7 @@ export const getCashierAccountDayLogWithSummaryCards = async (
     let paidDailyExpenses = 0;
     let currentBalance = 0;
 
-    const [account] = pool.query(
+    const [account] = await pool.query(
       "SELECT * FROM accounting_accounts WHERE idAccounting_Accounts = ? AND Branch_idBranch = ?",
       [cashierAccountId, req.branchId]
     );
@@ -793,7 +793,7 @@ export const getCashierAccountDayLogWithSummaryCards = async (
 
     // get in account transfers between registry date and today
     const [inTransfers] = await pool.query(
-      "SELECT SUM(CAST(Debit AS DECIMAL(10,2))) as totalIn FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND Type = 'Account Transfer In' AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d %H:%i:%s')) BETWEEN ? AND CURDATE()",
+      "SELECT SUM(CAST(Debit AS DECIMAL(10,2))) as totalIn FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND Type = 'Internal Account Transfer In' AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d %H:%i:%s')) BETWEEN ? AND CURDATE()",
       [cashierAccountId, latestRegistry[0].Date]
     );
 
@@ -803,7 +803,7 @@ export const getCashierAccountDayLogWithSummaryCards = async (
 
     // get out account transfers between registry date and today
     const [outTransfers] = await pool.query(
-      "SELECT SUM(CAST(Credit AS DECIMAL(10,2))) as totalOut FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND Type = 'Account Transfer Out' AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d %H:%i:%s')) BETWEEN ? AND CURDATE()",
+      "SELECT SUM(CAST(Credit AS DECIMAL(10,2))) as totalOut FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND Type = 'Internal Account Transfer Out' AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d %H:%i:%s')) BETWEEN ? AND CURDATE()",
       [cashierAccountId, latestRegistry[0].Date]
     );
 

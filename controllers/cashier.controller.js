@@ -806,7 +806,16 @@ export const endCashierDay = async (req, res, next) => {
   let connection;
 
   try {
-    const { fromAccountId, toAccountId, entries, note } = req.body;
+    const {
+      fromAccountId,
+      toAccountId,
+      entries,
+      note,
+      requiredAmount,
+      totalAmount: totalAmountParam,
+      difference,
+      differenceStatus,
+    } = req.body;
     if (!fromAccountId || !toAccountId || !entries || entries.length === 0) {
       return next(
         errorHandler(400, "fromAccountId, toAccountId and entries are required")
@@ -818,6 +827,61 @@ export const endCashierDay = async (req, res, next) => {
       return next(
         errorHandler(400, "from Account and to Account cannot be the same")
       );
+    }
+
+    // validate requiredAmount, totalAmount, difference and differenceStatus
+    if (parseFloat(requiredAmount) === parseFloat(totalAmountParam)) {
+      if (difference !== 0 || differenceStatus !== "Balanced") {
+        return next(
+          errorHandler(
+            400,
+            "Difference and Difference Status must indicate balanced state"
+          )
+        );
+      }
+    }
+
+    if (parseFloat(requiredAmount) > parseFloat(totalAmountParam)) {
+      // calculate the difference
+      const calculatedDifference =
+        Math.round(
+          (parseFloat(requiredAmount) - parseFloat(totalAmountParam)) * 100
+        ) / 100;
+      if (parseFloat(difference) !== calculatedDifference) {
+        return next(
+          errorHandler(
+            400,
+            "Difference value does not match the calculated shortage amount"
+          )
+        );
+      }
+      if (differenceStatus !== "Shortage") {
+        return next(
+          errorHandler(400, "Difference Status must indicate shortage state")
+        );
+      }
+    }
+
+    if (parseFloat(requiredAmount) < parseFloat(totalAmountParam)) {
+      // calculate the difference
+      const calculatedDifference =
+        Math.round(
+          (parseFloat(totalAmountParam) - parseFloat(requiredAmount)) * 100
+        ) / 100;
+      if (parseFloat(difference) !== calculatedDifference) {
+        return next(
+          errorHandler(
+            400,
+            "Difference value does not match the calculated excess amount"
+          )
+        );
+      }
+
+      if (differenceStatus !== "Excess") {
+        return next(
+          errorHandler(400, "Difference Status must indicate excess state")
+        );
+      }
     }
 
     // Parse Account IDs to integers
@@ -985,7 +1049,7 @@ export const endCashierDay = async (req, res, next) => {
 
       // insert entries to daily_registry and daily_registry_has_cash tables
       const [dailyRegistryResult] = await connection.query(
-        "INSERT INTO daily_registry (Date, Time, Description, User_idUser, Total_Amount,daily_registry_status,note,Start_Date_Time,Start_Amount) VALUES (?, ?, ?, ?, ?,?,?,?,?)",
+        "INSERT INTO daily_registry (Date, Time, Description, User_idUser, Total_Amount,daily_registry_status,note,Start_Date_Time,Start_Amount,difference_status,difference_value) VALUES (?, ?, ?, ?, ?,?,?,?,?,?,?)",
         [
           date,
           time,
@@ -996,6 +1060,8 @@ export const endCashierDay = async (req, res, next) => {
           trimmedNote,
           dailyRegistryRows[0].Created_at,
           dailyRegistryRows[0].Total_Amount,
+          differenceStatus,
+          difference,
         ] // updated status 3 for registry day end
       );
 

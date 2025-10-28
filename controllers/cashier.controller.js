@@ -47,9 +47,10 @@ export const startCashierRegistryForDay = async (req, res, next) => {
       return next(errorHandler(400, "Invalid Transfer Cashier Account ID"));
     }
 
-    // check if the lastest record in the table with this user is settled or not
+    // get the latest record for this user and then check if it's unsettled (status 1 or 2)
+    // selecting the latest overall and then checking status avoids missing a more recent day-end record
     const [latestRegistry] = await pool.query(
-      "SELECT * FROM daily_registry WHERE User_idUser = ? AND (daily_registry_status = 1 OR daily_registry_status = 2 ) ORDER BY idDaily_Registry DESC LIMIT 1",
+      "SELECT * FROM daily_registry WHERE User_idUser = ? ORDER BY idDaily_Registry DESC LIMIT 1",
       [req.userId]
     );
 
@@ -233,7 +234,7 @@ export const startCashierRegistryForDay = async (req, res, next) => {
         }
 
         // Make a log entry for the cashier registry start
-        await addCashierRegistryStartLog(
+        await addCashierRegistryStartEndLog(
           connection,
           toAccountId,
           "Cashier Registry Start",
@@ -1116,7 +1117,7 @@ export const getCashierDayEndPrintData = async (req, res, next) => {
 
     // fetch end registry data (include User_idUser so we can aggregate other registries for the same user/date)
     const [endRegistryResult] = await pool.query(
-      "SELECT dr.idDaily_Registry, dr.Date, dr.Time, dr.Description, dr.Total_Amount, dr.note, dr.User_idUser,dr_Created_at, dr.Start_Date_Time,dr.Start_Amount u.full_name as enteredUser FROM daily_registry dr JOIN user u ON dr.User_idUser = u.idUser WHERE dr.idDaily_Registry = ?",
+      "SELECT dr.idDaily_Registry, dr.Date, dr.Time, dr.Description, dr.Total_Amount, dr.note, dr.User_idUser, dr.Created_at, dr.Start_Date_Time, dr.Start_Amount, u.full_name as enteredUser FROM daily_registry dr JOIN user u ON dr.User_idUser = u.idUser WHERE dr.idDaily_Registry = ?",
       [endRegistryId]
     );
 
@@ -1186,11 +1187,11 @@ export const getCashierDayEndPrintData = async (req, res, next) => {
 
     // Logs data
     const [logs] = await pool.query(
-      "SELECT aal.*, u.full_name as enteredUser FROM accounting_accounts_log aal JOIN user u ON aal.User_idUser = u.idUser WHERE aal.Accounting_Accounts_idAccounting_Accounts = ? AND DATE(STR_TO_DATE(aal.Date_Time, '%Y-%m-%d %H:%i:%s')) = BETWEEN ? AND ? ORDER BY aal.idAccounting_Accounts_Log DESC",
+      "SELECT aal.*, u.full_name as enteredUser FROM accounting_accounts_log aal JOIN user u ON aal.User_idUser = u.idUser WHERE aal.Accounting_Accounts_idAccounting_Accounts = ? AND DATE(STR_TO_DATE(aal.Date_Time, '%Y-%m-%d %H:%i:%s')) BETWEEN ? AND ? ORDER BY aal.idAccounting_Accounts_Log DESC",
       [
-        endRegistry[0].idDaily_Registry,
-        endRegistry[0].Start_Date_Time,
-        endRegistry[0].Created_at,
+        req.params.accountId,
+        endRegistry.Start_Date_Time,
+        endRegistry.Created_at,
       ]
     );
 

@@ -44,7 +44,7 @@ route.get(
 
 // Get cashier day end print data
 route.get(
-  "/:branchId/cashier-day-end-print-data/:endRegistryId",
+  "/:branchId/cashier-day-end-print-data/:endRegistryId/:accountId",
   protectedRoute,
   checkUserBranchAccess,
   getCashierDayEndPrintData

@@ -784,7 +784,7 @@ export const getCashierAccountDayLogWithSummaryCards = async (
 
     // get payment received amount between registry date and today
     const [payments] = await pool.query(
-      "SELECT SUM(CAST(Debit AS DECIMAL(10,2))) as totalPayments FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d %H:%i:%s')) BETWEEN ? AND CURDATE() AND Type != 'Cashier Registry Start' AND Type != 'Cashier Registry Updated'",
+      "SELECT SUM(CAST(Debit AS DECIMAL(10,2))) as totalPayments FROM accounting_accounts_log WHERE Accounting_Accounts_idAccounting_Accounts = ? AND DATE(STR_TO_DATE(Date_Time, '%Y-%m-%d %H:%i:%s')) BETWEEN ? AND CURDATE() AND Type != 'Cashier Registry Start' AND Type != 'Cashier Registry Updated' AND Type != 'Internal Account Transfer In'",
       [cashierAccountId, latestRegistry[0].Date]
     );
 
@@ -1107,17 +1107,38 @@ export const endCashierDay = async (req, res, next) => {
     }
   }
 };
+
 // cashier day end print data
 export const getCashierDayEndPrintData = async (req, res, next) => {
   try {
     const endRegistryId = req.params.id || req.params.endRegistryId;
+    const accountId = req.params.accountId || req.params.accountId;
+
     if (!endRegistryId) {
       return next(errorHandler(400, "End Registry ID is required"));
     }
 
-    // fetch end registry data (include User_idUser so we can aggregate other registries for the same user/date)
+    if (!accountId) {
+      return next(errorHandler(400, "Cashier Account ID is required"));
+    }
+
+    // fetch end registry data
     const [endRegistryResult] = await pool.query(
-      "SELECT dr.idDaily_Registry, dr.Date, dr.Time, dr.Description, dr.Total_Amount, dr.note, dr.User_idUser, dr.Created_at, dr.Start_Date_Time, dr.Start_Amount, u.full_name as enteredUser FROM daily_registry dr JOIN user u ON dr.User_idUser = u.idUser WHERE dr.idDaily_Registry = ?",
+      `SELECT 
+        dr.idDaily_Registry, 
+        dr.Date, 
+        dr.Time, 
+        dr.Description, 
+        dr.Total_Amount, 
+        dr.note, 
+        dr.User_idUser, 
+        dr.Created_at, 
+        dr.Start_Date_Time, 
+        dr.Start_Amount,
+        u.full_name as enteredUser 
+      FROM daily_registry dr 
+      JOIN user u ON dr.User_idUser = u.idUser 
+      WHERE dr.idDaily_Registry = ?`,
       [endRegistryId]
     );
 
@@ -1129,16 +1150,16 @@ export const getCashierDayEndPrintData = async (req, res, next) => {
 
     // fetch cash entries for the end registry
     const [cashEntriesResult] = await pool.query(
-      "SELECT Denomination, Quantity, Amount FROM daily_registry_has_cash WHERE Daily_registry_idDaily_Registry = ? ORDER BY Denomination DESC",
+      `SELECT Denomination, Quantity, Amount 
+       FROM daily_registry_has_cash 
+       WHERE Daily_registry_idDaily_Registry = ? 
+       ORDER BY Denomination DESC`,
       [endRegistry.idDaily_Registry]
     );
 
-    let cashEntries = [];
-    if (cashEntriesResult.length > 0) {
-      cashEntries = cashEntriesResult;
-    }
+    const cashEntries = cashEntriesResult || [];
 
-    // Calculate total by denomination across all registries for the same user and date
+    // Calculate total by denomination
     const denominationSummary = {};
     const validDenominations = [1, 2, 5, 10, 50, 100, 500, 1000, 5000];
 
@@ -1151,31 +1172,15 @@ export const getCashierDayEndPrintData = async (req, res, next) => {
       };
     });
 
-    // get all registries for that user on the same date
-    const [dailyRegistries] = await pool.query(
-      "SELECT idDaily_Registry FROM daily_registry WHERE User_idUser = ? AND Date = ?",
-      [endRegistry.User_idUser, endRegistry.Date]
-    );
-
-    if (dailyRegistries.length > 0) {
-      // for each registry get cash entries and add to summary
-      for (const registry of dailyRegistries) {
-        const [entries] = await pool.query(
-          "SELECT Denomination, Quantity, Amount FROM daily_registry_has_cash WHERE Daily_registry_idDaily_Registry = ?",
-          [registry.idDaily_Registry]
-        );
-
-        entries.forEach((entry) => {
-          const denom = parseInt(entry.Denomination);
-          if (denominationSummary[denom]) {
-            denominationSummary[denom].totalQuantity +=
-              parseInt(entry.Quantity) || 0;
-            denominationSummary[denom].totalAmount +=
-              parseFloat(entry.Amount) || 0;
-          }
-        });
+    // Populate denomination summary from cash entries
+    cashEntries.forEach((entry) => {
+      const denom = parseFloat(entry.Denomination);
+      if (denominationSummary[denom]) {
+        denominationSummary[denom].totalQuantity +=
+          parseInt(entry.Quantity) || 0;
+        denominationSummary[denom].totalAmount += parseFloat(entry.Amount) || 0;
       }
-    }
+    });
 
     // Convert denomination summary to array and filter out zero quantities
     const denominationSummaryArray = Object.values(denominationSummary)
@@ -1187,18 +1192,19 @@ export const getCashierDayEndPrintData = async (req, res, next) => {
 
     // Logs data
     const [logs] = await pool.query(
-      "SELECT aal.*, u.full_name as enteredUser FROM accounting_accounts_log aal JOIN user u ON aal.User_idUser = u.idUser WHERE aal.Accounting_Accounts_idAccounting_Accounts = ? AND DATE(STR_TO_DATE(aal.Date_Time, '%Y-%m-%d %H:%i:%s')) BETWEEN ? AND ? ORDER BY aal.idAccounting_Accounts_Log DESC",
-      [
-        req.params.accountId,
-        endRegistry.Start_Date_Time,
-        endRegistry.Created_at,
-      ]
+      `SELECT aal.*, u.full_name as enteredUser 
+       FROM accounting_accounts_log aal 
+       JOIN user u ON aal.User_idUser = u.idUser 
+       WHERE aal.Accounting_Accounts_idAccounting_Accounts = ? 
+         AND DATE(STR_TO_DATE(aal.Date_Time, '%Y-%m-%d %H:%i:%s')) BETWEEN DATE(?) AND DATE(?) 
+       ORDER BY aal.idAccounting_Accounts_Log DESC`,
+      [accountId, endRegistry.Start_Date_Time, endRegistry.Created_at]
     );
 
-    // start balane
+    // Start balance
     const startBalance = parseFloat(endRegistry.Start_Amount) || 0;
 
-    // total payments received
+    // Total payments received (Debits excluding registry start/update)
     let totalPayments = 0;
     logs.forEach((log) => {
       if (
@@ -1210,7 +1216,7 @@ export const getCashierDayEndPrintData = async (req, res, next) => {
     });
     totalPayments = Math.round(totalPayments * 100) / 100;
 
-    // total ticket issued
+    // Total ticket issued
     let totalTicketIssued = 0;
     logs.forEach((log) => {
       if (log.Type === "Ticket Loan Disbursement") {
@@ -1219,7 +1225,7 @@ export const getCashierDayEndPrintData = async (req, res, next) => {
     });
     totalTicketIssued = Math.round(totalTicketIssued * 100) / 100;
 
-    // total expenses paid
+    // Total expenses paid
     let totalExpensesPaid = 0;
     logs.forEach((log) => {
       if (log.Type === "Daily Expense Paid") {
@@ -1228,28 +1234,54 @@ export const getCashierDayEndPrintData = async (req, res, next) => {
     });
     totalExpensesPaid = Math.round(totalExpensesPaid * 100) / 100;
 
-    // total in account transfers
+    // Total in account transfers
     let totalInAccountTransfers = 0;
     logs.forEach((log) => {
-      if (log.Type === "Account Transfer In") {
+      if (log.Type === "Internal Account Transfer In") {
         totalInAccountTransfers += parseFloat(log.Debit) || 0;
       }
     });
     totalInAccountTransfers = Math.round(totalInAccountTransfers * 100) / 100;
 
-    // total out account transfers
+    // Total out account transfers
     let totalOutAccountTransfers = 0;
     logs.forEach((log) => {
-      if (log.Type === "Account Transfer Out") {
+      if (log.Type === "Internal Account Transfer Out") {
         totalOutAccountTransfers += parseFloat(log.Credit) || 0;
       }
     });
     totalOutAccountTransfers = Math.round(totalOutAccountTransfers * 100) / 100;
 
-    // cashier account current balance with cashier data
+    // Calculate expected balance
+    const expectedBalance =
+      Math.round(
+        (startBalance +
+          totalPayments +
+          totalInAccountTransfers -
+          totalTicketIssued -
+          totalExpensesPaid -
+          totalOutAccountTransfers) *
+          100
+      ) / 100;
+
+    // Actual cash counted
+    const actualCashCounted = parseFloat(endRegistry.Total_Amount) || 0;
+
+    // Cash difference
+    const cashDifference =
+      Math.round((actualCashCounted - expectedBalance) * 100) / 100;
+
+    // Cashier account current balance with cashier data
     const [cashierAccount] = await pool.query(
-      "SELECT ac.Account_Balance, u.full_name as cashierName, u.Email as cashierEmail, u.Contact_no as cashierContact FROM accounting_accounts ac JOIN user u ON ac.User_idUser = u.idUser WHERE ac.idAccounting_Accounts = ? AND ac.Branch_idBranch = ?",
-      [req.params.accountId, req.branchId]
+      `SELECT 
+        ac.Account_Balance, 
+        u.full_name as cashierName, 
+        u.Email as cashierEmail, 
+        u.Contact_no as cashierContact 
+       FROM accounting_accounts ac 
+       JOIN user u ON ac.User_idUser = u.idUser 
+       WHERE ac.idAccounting_Accounts = ? AND ac.Branch_idBranch = ?`,
+      [accountId, req.branchId]
     );
 
     res.status(200).json({
@@ -1267,6 +1299,9 @@ export const getCashierDayEndPrintData = async (req, res, next) => {
           totalExpensesPaid,
           totalInAccountTransfers,
           totalOutAccountTransfers,
+          expectedBalance,
+          actualCashCounted,
+          cashDifference,
         },
         cashierAccount: cashierAccount.length > 0 ? cashierAccount[0] : null,
       },

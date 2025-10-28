@@ -47,25 +47,26 @@ export const startCashierRegistryForDay = async (req, res, next) => {
       return next(errorHandler(400, "Invalid Transfer Cashier Account ID"));
     }
 
-    // get the latest record for this user and then check if it's unsettled (status 1 or 2)
-    // selecting the latest overall and then checking status avoids missing a more recent day-end record
-    const [latestRegistry] = await pool.query(
-      "SELECT * FROM daily_registry WHERE User_idUser = ? ORDER BY idDaily_Registry DESC LIMIT 1",
+    // Check if there's an unsettled registry from a previous day
+    const [previousUnsettledRegistry] = await pool.query(
+      "SELECT * FROM daily_registry WHERE User_idUser = ? AND Date < CURDATE() AND daily_registry_status IN (1, 2) ORDER BY idDaily_Registry DESC LIMIT 1",
       [req.userId]
     );
 
-    if (
-      latestRegistry.length > 0 &&
-      (latestRegistry[0].daily_registry_status === 1 ||
-        latestRegistry[0].daily_registry_status === 2)
-    ) {
+    if (previousUnsettledRegistry.length > 0) {
       return next(
         errorHandler(
           400,
-          "Cannot start a new registry while there is an active registry. Please end the current registry first."
+          "Cannot start a new registry while there is an unsettled registry from a previous day. Please settle the previous registry first."
         )
       );
     }
+
+    // Check if there is already an active cashier registry for today
+    const [todayRegistry] = await pool.query(
+      "SELECT * FROM daily_registry WHERE User_idUser = ? AND Date = CURDATE() AND daily_registry_status IN (1, 2) ORDER BY idDaily_Registry DESC LIMIT 1",
+      [req.userId]
+    );
 
     // bills and coins available in Sri Lanka
     const validDenominations = [1, 2, 5, 10, 50, 100, 500, 1000, 5000];
@@ -146,115 +147,71 @@ export const startCashierRegistryForDay = async (req, res, next) => {
         req.userId
       );
 
-      // Check if there is already a cashier registry started for the day
-      const [existingRegistry] = await connection.query(
-        "SELECT * FROM daily_registry WHERE User_idUser = ? AND Date = CURDATE() AND Description = 'Day Start' AND daily_registry_status = ?",
-        [req.userId, 1]
+      // Determine if this is an update or new start
+      const isUpdate = todayRegistry.length > 0;
+
+      // Insert entries to daily_registry and daily_registry_has_cash tables
+      const [dailyRegistryResult] = await connection.query(
+        "INSERT INTO daily_registry (Date, Time, Description, User_idUser, Total_Amount, daily_registry_status) VALUES (CURDATE(), CURTIME(), ?, ?, ?, ?)",
+        [
+          isUpdate ? "Day Start Updated" : "Day Start",
+          req.userId,
+          totalAmount,
+          isUpdate ? 2 : 1,
+        ]
       );
 
-      if (existingRegistry.length > 0) {
-        // insert entries to daily_registry and daily_registry_has_cash tables
-        const [dailyRegistryResult] = await connection.query(
-          "INSERT INTO daily_registry (Date, Time, Description, User_idUser, Total_Amount,daily_registry_status) VALUES (CURDATE(), CURTIME(), ?, ?, ?,?)",
-          ["Day Start Updated", req.userId, totalAmount, 2] // updated status 2 for registry updates
-        );
-
-        if (!dailyRegistryResult || dailyRegistryResult.affectedRows === 0) {
-          await connection.rollback();
-          return next(
-            errorHandler(500, "Failed to create daily registry record")
-          );
-        }
-
-        const dailyRegistryId = dailyRegistryResult.insertId;
-        for (const entry of entries) {
-          const entryAmount =
-            Math.round(
-              parseFloat(entry.denomination) * parseInt(entry.quantity) * 100
-            ) / 100;
-
-          const result = await connection.query(
-            "INSERT INTO daily_registry_has_cash (Daily_registry_idDaily_Registry, Denomination, Quantity, Amount) VALUES (?, ?, ?, ?)",
-            [dailyRegistryId, entry.denomination, entry.quantity, entryAmount]
-          );
-
-          if (!result || result[0].affectedRows === 0) {
-            await connection.rollback();
-            return next(
-              errorHandler(500, "Failed to create daily registry cash entry")
-            );
-          }
-        }
-
-        // Make a log entry for the cashier registry update
-        await addCashierRegistryStartEndLog(
-          connection,
-          toAccountId,
-          "Cashier Registry Updated",
-          `Cashier registry Updated. Total Amount: ${totalAmount}`,
-          totalAmount,
-          0,
-          newToAccountBalance,
-          fromAccountId,
-          req.userId
-        );
-      } else {
-        // if no existing registry, this is going to be the first registry for the day
-        // insert entries to daily_registry and daily_registry_has_cash tables
-        const [dailyRegistryResult] = await connection.query(
-          "INSERT INTO daily_registry (Date, Time, Description, User_idUser, Total_Amount,daily_registry_status) VALUES (CURDATE(), CURTIME(), ?, ?, ?,?)",
-          ["Day Start", req.userId, totalAmount, 1]
-        );
-
-        if (!dailyRegistryResult || dailyRegistryResult.affectedRows === 0) {
-          await connection.rollback();
-          return next(
-            errorHandler(500, "Failed to create daily registry record")
-          );
-        }
-
-        const dailyRegistryId = dailyRegistryResult.insertId;
-        for (const entry of entries) {
-          const entryAmount =
-            Math.round(
-              parseFloat(entry.denomination) * parseInt(entry.quantity) * 100
-            ) / 100;
-
-          const result = await connection.query(
-            "INSERT INTO daily_registry_has_cash (Daily_registry_idDaily_Registry, Denomination, Quantity, Amount) VALUES (?, ?, ?, ?)",
-            [dailyRegistryId, entry.denomination, entry.quantity, entryAmount]
-          );
-
-          if (!result || result[0].affectedRows === 0) {
-            await connection.rollback();
-            return next(
-              errorHandler(500, "Failed to create daily registry cash entry")
-            );
-          }
-        }
-
-        // Make a log entry for the cashier registry start
-        await addCashierRegistryStartEndLog(
-          connection,
-          toAccountId,
-          "Cashier Registry Start",
-          `Cashier registry started for the day. Total Amount: ${totalAmount}`,
-          totalAmount,
-          0,
-          newToAccountBalance,
-          fromAccountId,
-          req.userId
+      if (!dailyRegistryResult || dailyRegistryResult.affectedRows === 0) {
+        await connection.rollback();
+        return next(
+          errorHandler(500, "Failed to create daily registry record")
         );
       }
+
+      const dailyRegistryId = dailyRegistryResult.insertId;
+
+      // Insert cash entries
+      for (const entry of entries) {
+        const entryAmount =
+          Math.round(
+            parseFloat(entry.denomination) * parseInt(entry.quantity) * 100
+          ) / 100;
+
+        const result = await connection.query(
+          "INSERT INTO daily_registry_has_cash (Daily_registry_idDaily_Registry, Denomination, Quantity, Amount) VALUES (?, ?, ?, ?)",
+          [dailyRegistryId, entry.denomination, entry.quantity, entryAmount]
+        );
+
+        if (!result || result[0].affectedRows === 0) {
+          await connection.rollback();
+          return next(
+            errorHandler(500, "Failed to create daily registry cash entry")
+          );
+        }
+      }
+
+      // Make a log entry for the cashier registry start/update
+      await addCashierRegistryStartEndLog(
+        connection,
+        toAccountId,
+        isUpdate ? "Cashier Registry Updated" : "Cashier Registry Start",
+        isUpdate
+          ? `Cashier registry updated. Total Amount: ${totalAmount}`
+          : `Cashier registry started for the day. Total Amount: ${totalAmount}`,
+        totalAmount,
+        0,
+        newToAccountBalance,
+        fromAccountId,
+        req.userId
+      );
 
       await connection.commit();
 
       res.status(200).json({
         success: true,
-        message:
-          existingRegistry.length > 0
-            ? "Cashier registry updated successfully"
-            : "Cashier registry started successfully",
+        message: isUpdate
+          ? "Cashier registry updated successfully"
+          : "Cashier registry started successfully",
         totalAmount: totalAmount,
       });
     } catch (error) {
@@ -1121,6 +1078,8 @@ export const getCashierDayEndPrintData = async (req, res, next) => {
     if (!accountId) {
       return next(errorHandler(400, "Cashier Account ID is required"));
     }
+    console.log("Fetching day end print data for registry ID:", endRegistryId);
+    console.log("Cashier Account ID:", accountId);
 
     // fetch end registry data
     const [endRegistryResult] = await pool.query(

@@ -1295,24 +1295,40 @@ export const checkCashierDayEndAvailability = async (req, res, next) => {
       return next(errorHandler(400, "Invalid Cashier Account ID"));
     }
 
-    // Check if there is an active daily registry which is unsettled for the user
-    const [activeRegistry] = await pool.query(
-      "SELECT * FROM daily_registry WHERE User_idUser = ? AND (daily_registry_status = 1 OR daily_registry_status = 2) ORDER BY idDaily_Registry DESC LIMIT 1",
+    // Get the latest registry row for the user and decide if it can be ended
+    const [latestRegistry] = await pool.query(
+      "SELECT * FROM daily_registry WHERE User_idUser = ? ORDER BY idDaily_Registry DESC LIMIT 1",
       [req.userId]
     );
 
-    if (activeRegistry.length === 0) {
+    // No registry found at all
+    if (latestRegistry.length === 0) {
       return res.status(200).json({
         success: true,
-        message: "No active daily registry found to end the day",
+        message: "No daily registry found for the user",
         canEndDay: false,
       });
     }
 
-    res.status(200).json({
+    const latest = latestRegistry[0];
+
+    // daily_registry_status: 1 = Day Start, 2 = Day Start Updated, 3 = Day End
+    if (
+      latest.daily_registry_status === 1 ||
+      latest.daily_registry_status === 2
+    ) {
+      return res.status(200).json({
+        success: true,
+        message: "Active daily registry found to end the day",
+        canEndDay: true,
+      });
+    }
+
+    // latest registry exists but it's already ended (or other non-active status)
+    return res.status(200).json({
       success: true,
-      message: "Active daily registry found to end the day",
-      canEndDay: true,
+      message: "No active daily registry found to end the day",
+      canEndDay: false,
     });
   } catch (error) {
     console.error("Check Cashier Day End Availability error:", error);

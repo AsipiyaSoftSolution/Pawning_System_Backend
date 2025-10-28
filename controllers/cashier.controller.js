@@ -1033,13 +1033,13 @@ export const endCashierDay = async (req, res, next) => {
       // Make a log entry for the cashier registry update
       await addCashierRegistryStartEndLog(
         connection,
-        toAccountId,
+        fromAccountId,
         "Cashier Registry End",
         `Cashier registry End. Total Amount: ${totalAmount}`,
-        totalAmount,
         0,
-        newToAccountBalance,
-        fromAccountId,
+        totalAmount,
+        newFromAccountBalance,
+        toAccountId,
         req.userId
       );
 

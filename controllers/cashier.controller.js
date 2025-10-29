@@ -47,19 +47,34 @@ export const startCashierRegistryForDay = async (req, res, next) => {
       return next(errorHandler(400, "Invalid Transfer Cashier Account ID"));
     }
 
-    // Check if there's an unsettled registry from a previous day
-    const [previousUnsettledRegistry] = await pool.query(
-      "SELECT * FROM daily_registry WHERE User_idUser = ? AND Date < CURDATE() AND daily_registry_status IN (1, 2) ORDER BY idDaily_Registry DESC LIMIT 1",
+    // Check latest registry row for the user. If the latest registry was
+    // created before today and its status is not 3 (Day End), prevent starting
+    // a new registry until the previous one is settled.
+    const [previousRegistryRows] = await pool.query(
+      "SELECT idDaily_Registry, Created_at, daily_registry_status FROM daily_registry WHERE User_idUser = ? ORDER BY Created_at DESC LIMIT 1",
       [req.userId]
     );
 
-    if (previousUnsettledRegistry.length > 0) {
-      return next(
-        errorHandler(
-          400,
-          "Cannot start a new registry while there is an unsettled registry from a previous day. Please settle the previous registry first."
-        )
+    if (previousRegistryRows.length > 0) {
+      const prev = previousRegistryRows[0];
+      const prevCreatedAt = new Date(prev.Created_at);
+      const now = new Date();
+      const startOfToday = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate()
       );
+
+      // If the latest registry row was created before today and it's not a Day End (status 3),
+      // block starting a new registry.
+      if (prevCreatedAt < startOfToday && prev.daily_registry_status !== 3) {
+        return next(
+          errorHandler(
+            400,
+            "Cannot start a new registry while there is an unsettled registry from a previous day. Please settle the previous registry first."
+          )
+        );
+      }
     }
 
     // Check if there is already an active cashier registry for today
@@ -943,7 +958,7 @@ export const endCashierDay = async (req, res, next) => {
         Math.round(
           (parseFloat(requiredAmount) - parseFloat(totalAmountParam)) * 100
         ) / 100;
-      if (parseFloat(difference) !== calculatedDifference) {
+      if (parseFloat(difference) !== parseFloat(calculatedDifference)) {
         return next(
           errorHandler(
             400,
@@ -964,7 +979,7 @@ export const endCashierDay = async (req, res, next) => {
         Math.round(
           (parseFloat(totalAmountParam) - parseFloat(requiredAmount)) * 100
         ) / 100;
-      if (parseFloat(difference) !== calculatedDifference) {
+      if (parseFloat(difference) !== parseFloat(calculatedDifference)) {
         return next(
           errorHandler(
             400,

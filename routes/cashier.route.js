@@ -12,6 +12,8 @@ import {
   checkCashierDayEndAvailability,
   getCashierDayEndPrintData,
   endCashierDay,
+  getCashierAccountDataForDashboard,
+  getAllCashierAccounts,
 } from "../controllers/cashier.controller.js";
 
 const route = express.Router();
@@ -66,23 +68,6 @@ route.get(
   getCashierAccountDayLogWithSummaryCards
 );
 
-// Dashboard Routes
-// Get cashier account logs data for current date to cashier dashboard for the current day
-route.get(
-  "/:branchId/cashier-account-logs-current-date/:accountId",
-  protectedRoute,
-  checkUserBranchAccess,
-  getCashierAccountLogsData
-);
-
-// Get cashier dashboard summary data for the day
-route.get(
-  "/:branchId/cashier-dashboard-summary/:accountId",
-  protectedRoute,
-  checkUserBranchAccess,
-  getCashierDashboardSummary
-);
-
 // Get cashier denomination summary data for the day
 route.get(
   "/:branchId/cashier-denomination-summary/:accountId",
@@ -91,11 +76,19 @@ route.get(
   getCashierDenominationSummary
 );
 
-// Get cashier daily expenses for the current day or filtered date
+// Get cashier account data for dashboard
 route.get(
-  "/:branchId/cashier-daily-expenses",
+  "/:branchId/cashier-dashboard-data/:accountId/:cashierId",
   protectedRoute,
   checkUserBranchAccess,
-  getCashierDailyExpenses
+  getCashierAccountDataForDashboard
+);
+
+// Get all cashier accounts for the branch
+route.get(
+  "/:branchId/cashier-accounts",
+  protectedRoute,
+  checkUserBranchAccess,
+  getAllCashierAccounts
 );
 export default route;

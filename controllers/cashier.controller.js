@@ -941,8 +941,23 @@ export const endCashierDay = async (req, res, next) => {
     }
 
     // validate requiredAmount, totalAmount, difference and differenceStatus
+    // normalize provided difference (strip commas/whitespace) and allow a
+    // small epsilon for rounding differences
+    const epsilon = 0.01;
+    const parseProvided = (val) => {
+      if (val === undefined || val === null) return NaN;
+      const s = String(val).replace(/,/g, "").trim();
+      if (s === "") return NaN;
+      return parseFloat(s);
+    };
+
+    const providedDiff = parseProvided(difference);
+
+    // Balanced
     if (parseFloat(requiredAmount) === parseFloat(totalAmountParam)) {
-      if (difference !== 0 || differenceStatus !== "Balanced") {
+      const providedIsZero =
+        !Number.isNaN(providedDiff) && Math.abs(providedDiff) <= epsilon;
+      if (!providedIsZero || differenceStatus !== "Balanced") {
         return next(
           errorHandler(
             400,
@@ -958,7 +973,12 @@ export const endCashierDay = async (req, res, next) => {
         Math.round(
           (parseFloat(requiredAmount) - parseFloat(totalAmountParam)) * 100
         ) / 100;
-      if (parseFloat(difference) !== parseFloat(calculatedDifference)) {
+      // allow the client to send negative provided differences (sign
+      // convention). Compare absolute values.
+      if (
+        Number.isNaN(providedDiff) ||
+        Math.abs(Math.abs(providedDiff) - calculatedDifference) > epsilon
+      ) {
         return next(
           errorHandler(
             400,
@@ -979,7 +999,11 @@ export const endCashierDay = async (req, res, next) => {
         Math.round(
           (parseFloat(totalAmountParam) - parseFloat(requiredAmount)) * 100
         ) / 100;
-      if (parseFloat(difference) !== parseFloat(calculatedDifference)) {
+      // accept signed provided difference by comparing absolute values
+      if (
+        Number.isNaN(providedDiff) ||
+        Math.abs(Math.abs(providedDiff) - calculatedDifference) > epsilon
+      ) {
         return next(
           errorHandler(
             400,

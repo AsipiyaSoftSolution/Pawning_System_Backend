@@ -4,6 +4,7 @@ import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
 import {
   loanToMarketValueReport,
   getCompanyBranches,
+  ticketDayEndReport,
 } from "../controllers/report.controller.js";
 
 const route = express.Router();
@@ -14,6 +15,13 @@ route.get(
   protectedRoute,
   checkUserBranchAccess,
   loanToMarketValueReport
+);
+
+// Route to get Day End Ticket Report
+route.get(
+  "/:branchId/day-end-ticket-report",
+  protectedRoute,
+  ticketDayEndReport
 );
 
 // New route to get company branches for the filter dropdown

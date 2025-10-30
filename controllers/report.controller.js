@@ -339,3 +339,137 @@ export const loanToMarketValueReport = async (req, res, next) => {
     return next(errorHandler(500, "Internal server error"));
   }
 };
+
+// Ticket day end report
+export const ticketDayEndReport = async (req, res, next) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+    const { date, branchId } = req.query;
+
+    // validate date
+    if (date) {
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRegex.test(date)) {
+        return next(errorHandler(400, "Invalid date format. Use YYYY-MM-DD"));
+      }
+    }
+
+    // if branchId is provided use it (after validation), otherwise get all company branches
+    let branchIds;
+    if (branchId) {
+      // Validate branchId is a valid integer
+      const parsedBranchId = parseInt(branchId, 10);
+      if (isNaN(parsedBranchId)) {
+        return next(errorHandler(400, "Invalid branchId parameter"));
+      }
+
+      // Verify the branch belongs to this company
+      const [branchRow] = await pool.query(
+        "SELECT idBranch FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
+        [parsedBranchId, req.companyId]
+      );
+
+      if (branchRow.length === 0) {
+        return next(
+          errorHandler(
+            404,
+            "Branch not found or does not belong to your company"
+          )
+        );
+      }
+
+      branchIds = [parsedBranchId];
+    } else {
+      // get all branches for the company
+      const branches = await getAllBranchesForTheCompany(req.companyId);
+      if (branches.length === 0) {
+        return next(
+          errorHandler(
+            404,
+            "No branches found for the company to generate report"
+          )
+        );
+      }
+
+      branchIds = branches.map((branch) => branch.idBranch); // branch id's
+    }
+
+    // Build pagination/count query
+    let paginationQuery = `SELECT COUNT(*) as count FROM pawning_ticket pt WHERE pt.Branch_idBranch IN (?)`;
+    let paginationQueryParams = [branchIds];
+
+    // Build data query (do NOT join ticket_articles here — a ticket can have multiple articles/categories)
+    // fetch articles separately and attach them per ticket to avoid duplicate ticket rows.
+    let dataQuery = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.SEQ_No, pt.Date_Time, pt.Period_Type, pt.Period, pt.Net_Weight, pt.Gross_Weight, pt.Pawning_Advance_Amount, pt.Status, pt.updated_at, b.Name as Branch_Name, c.Full_name, c.NIC FROM pawning_ticket pt JOIN branch b ON pt.Branch_idBranch = b.idBranch JOIN customer c ON pt.Customer_idCustomer = c.idCustomer WHERE pt.Branch_idBranch IN (?)`;
+    let dataQueryParams = [branchIds];
+
+    // If a specific date is provided use otherwise default to current date
+    if (date) {
+      paginationQuery += ` AND STR_TO_DATE(pt.Date_Time, '%Y-%m-%d') = ?`;
+      paginationQueryParams.push(date);
+
+      dataQuery += ` AND STR_TO_DATE(pt.Date_Time, '%Y-%m-%d') = ?`;
+      dataQueryParams.push(date);
+    } else {
+      paginationQuery += ` AND STR_TO_DATE(pt.Date_Time, '%Y-%m-%d') = CURDATE()`;
+      dataQuery += ` AND STR_TO_DATE(pt.Date_Time, '%Y-%m-%d') = CURDATE()`;
+    }
+
+    // Add ordering and pagination to data query
+    dataQuery += ` ORDER BY pt.Date_Time DESC LIMIT ? OFFSET ?`;
+    dataQueryParams.push(limit, offset);
+
+    // Get pagination data
+    const paginationData = await getReportPaginationData(
+      paginationQuery,
+      paginationQueryParams,
+      page,
+      limit
+    );
+
+    // Get ticket rows (one row per ticket)
+    const [ticketsData] = await pool.query(dataQuery, dataQueryParams);
+
+    if (ticketsData.length === 0) {
+      return res.status(200).json({
+        success: true,
+        dayEndTicketReport: [],
+        pagination: paginationData,
+      });
+    }
+
+    // Fetch article categories for all tickets in this page and group them by ticket id
+    const ticketIds = ticketsData.map((t) => t.idPawning_Ticket);
+    const [articleRows] = await pool.query(
+      `SELECT ta.Pawning_Ticket_idPawning_Ticket as ticketId, ac.Description as Article_Category
+       FROM ticket_articles ta
+       LEFT JOIN article_categories ac ON ta.Article_category = ac.idArticle_Categories
+       WHERE ta.Pawning_Ticket_idPawning_Ticket IN (?)`,
+      [ticketIds]
+    );
+
+    const categoriesByTicket = {};
+    articleRows.forEach((row) => {
+      const id = row.ticketId;
+      if (!categoriesByTicket[id]) categoriesByTicket[id] = new Set();
+      categoriesByTicket[id].add(row.Article_Category || "N/A");
+    });
+
+    // Attach categories (as array) to each ticket
+    ticketsData.forEach((ticket) => {
+      const set = categoriesByTicket[ticket.idPawning_Ticket] || new Set();
+      ticket.Article_Categories = Array.from(set);
+    });
+
+    return res.status(200).json({
+      success: true,
+      dayEndTicketReport: ticketsData,
+      pagination: paginationData,
+    });
+  } catch (error) {
+    console.error("Error in ticket day end report:", error);
+    return next(errorHandler(500, "Internal server error"));
+  }
+};

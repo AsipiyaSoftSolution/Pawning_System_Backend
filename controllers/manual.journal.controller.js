@@ -50,21 +50,18 @@ export const createManualJournal = async (req, res, next) => {
       }
     }
 
-    // validate  contraAccount of each entry is not same as account and skip the first entry
-    for (let i = 1; i < entries.length; i++) {
+    // validate contraAccount of each entry is provided and not the same as account
+    for (let i = 0; i < entries.length; i++) {
       const entry = entries[i];
 
       if (!entry.contraAccount) {
         return next(
-          errorHandler(
-            400,
-            "Contra Account is required for each entry except the first one"
-          )
+          errorHandler(400, "Contra Account is required for each entry")
         );
       }
 
       // check contra account is not same as account
-      if (entry.contraAccount && entry.contraAccount === entry.account) {
+      if (entry.contraAccount === entry.account) {
         return next(
           errorHandler(
             400,

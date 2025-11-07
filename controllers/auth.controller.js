@@ -7,6 +7,7 @@ import {
   sendPasswordResetSuccessEmail,
 } from "../utils/mailConfig.js";
 import hutchSms, { setLogSMSCallback } from "../utils/hutchSms.js";
+import { uploadImage, deleteImage } from "../utils/cloudinary.js";
 
 // This function retrieves user information without the password when giving user id
 // It also retrieves the user's designation, company, branches, and company documents
@@ -525,6 +526,89 @@ export const resetPassword = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Reset password error:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// update profile
+export const updateProfile = async (req, res, next) => {
+  try {
+    const { full_name, contact_no, email, profileImage } = req.body;
+    if (!full_name || !contact_no || !email) {
+      return next(
+        errorHandler(400, "Full name, Contact number and Email are required")
+      );
+    }
+
+    // get the existing user's profile image to perform update or delete from cloudinary
+    const [existingUser] = await pool.query(
+      "SELECT Profile_Image FROM user WHERE idUser = ?",
+      [req.userId]
+    );
+    let secureUrl = null;
+    if (profileImage && profileImage !== null) {
+      if (
+        typeof profileImage !== "string" ||
+        !profileImage.startsWith("http")
+      ) {
+        // upload new image to cloudinary
+        secureUrl = await uploadImage(
+          profileImage,
+          `pawning_system/user_profiles/user_${req.userId}`
+        );
+      }
+
+      // check weather to delete the previous image from cloudinary can be added here
+      if (
+        existingUser[0].Profile_Image &&
+        existingUser[0].Profile_Image !== secureUrl
+      ) {
+        const publicId = existingUser[0].Profile_Image.split("/")
+          .slice(-1)[0]
+          .split(".")[0];
+
+        await deleteImage(
+          `pawning_system/user_profiles/user_${req.userId}/${publicId}`
+        );
+      }
+    } else {
+      // delete the existing image from cloudinary if profileImage is null
+      if (existingUser[0].Profile_Image) {
+        const publicId = existingUser[0].Profile_Image.split("/")
+          .slice(-1)[0]
+          .split(".")[0];
+        await deleteImage(
+          `pawning_system/user_profiles/user_${req.userId}/${publicId}`
+        );
+      }
+    }
+
+    // update the user profile
+    const [result] = await pool.query(
+      "UPDATE user SET full_name = ?, Contact_no = ?, Email = ?, Profile_Image = ? WHERE idUser = ?",
+      [
+        full_name,
+        contact_no,
+        email,
+        secureUrl || existingUser[0].Profile_Image,
+        req.userId,
+      ]
+    );
+
+    if (result.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to update profile"));
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Profile updated successfully",
+      updatedName: full_name,
+      updatedEmail: email,
+      updatedContactNo: contact_no,
+      updatedProfileImage: secureUrl || existingUser[0].Profile_Image,
+    });
+  } catch (error) {
+    console.error("Update profile error:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

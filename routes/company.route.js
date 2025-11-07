@@ -40,10 +40,12 @@ import {
   getAllSMSTemplates,
   getAssessedValues,
   bulkUpdateAssessedValues,
+  updateCompanyDetails,
 } from "../controllers/company.controller.js";
 const route = express.Router();
 
 route.get("/", protectedRoute, getCompanyDetails); // Get company details
+route.patch("/", protectedRoute, updateCompanyDetails); // Update company details
 route.get("/privileges", protectedRoute, getAllPrivilages); // Get all privileges that can be assigned to designations
 route.post(
   "/designation-with-privileges",

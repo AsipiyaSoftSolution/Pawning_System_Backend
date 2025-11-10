@@ -808,14 +808,12 @@ export const getAllUsersForTheBranch = async (req, res, next) => {
     let isHeadOffice = false;
     try {
       const [branchRow] = await pool.query(
-        "SELECT Name FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
+        "SELECT Name,Branch_Code FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
         [req.branchId, req.companyId]
       );
       if (
         branchRow &&
-        branchRow[0] &&
-        branchRow[0].Name &&
-        branchRow[0].Name.trim().toLowerCase() === "head office"
+        String(branchRow[0].Branch_Code).trim() === `${req.companyId}-HO`
       ) {
         isHeadOffice = true;
       }

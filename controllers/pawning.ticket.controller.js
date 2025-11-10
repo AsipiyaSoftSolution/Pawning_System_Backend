@@ -1291,15 +1291,28 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
 
+    // Initialize parameters arrays
+    let countParams = [];
+    let dataParams = [];
+
     // Build base WHERE conditions for both count and data queries
-    let baseWhereConditions =
-      "pt.Branch_idBranch = ? AND (pt.Status IS NULL OR pt.Status = '0')";
-    let countParams = [req.branchId];
-    let dataParams = [req.branchId];
+    let baseWhereConditions = "(pt.Status IS NULL OR pt.Status = '0')";
+
+    // Handle branch filtering
+    if (req.isHeadBranch === true) {
+      baseWhereConditions =
+        "pt.Branch_idBranch IN (SELECT idBranch FROM branch WHERE Company_idCompany = ?) AND (pt.Status IS NULL OR pt.Status = '0')";
+      countParams = [req.companyId]; // ✅ Only companyId for the subquery
+      dataParams = [req.companyId]; // ✅ Only companyId for the subquery
+    } else {
+      baseWhereConditions =
+        "pt.Branch_idBranch = ? AND (pt.Status IS NULL OR pt.Status = '0')";
+      countParams = [req.branchId]; // ✅ Only branchId for regular branch
+      dataParams = [req.branchId]; // ✅ Only branchId for regular branch
+    }
 
     // Add filter conditions dynamically
     if (product) {
-      // Sanitize product name for LIKE query
       const sanitizedProduct = `%${product.replace(/[%_\\]/g, "\\$&")}%`;
       baseWhereConditions += " AND pp.Name LIKE ?";
       countParams.push(sanitizedProduct);
@@ -1307,7 +1320,6 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
     }
 
     if (date) {
-      // Validate date format (YYYY-MM-DD)
       const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
       if (!dateRegex.test(date)) {
         return next(errorHandler(400, "Invalid date format. Use YYYY-MM-DD"));
@@ -1319,16 +1331,14 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
     }
 
     if (nic) {
-      // Sanitize and format NIC for SQL LIKE query
-      const sanitizedNIC = nic.replace(/[^a-zA-Z0-9]/g, ""); // Remove special characters
-
+      const sanitizedNIC = nic.replace(/[^a-zA-Z0-9]/g, "");
       const formattedNIC = formatSearchPattern(sanitizedNIC);
       baseWhereConditions += " AND c.NIC LIKE ?";
       countParams.push(formattedNIC);
       dataParams.push(formattedNIC);
     }
 
-    // Build count query with same conditions as main query
+    // Build count query
     const countQuery = `SELECT COUNT(*) AS total
                         FROM pawning_ticket pt
                  LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
@@ -1342,7 +1352,7 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
       limit
     );
 
-    // Build main data query - fetch ticket data with customer NIC and product name
+    // Build main data query
     let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, pt.Pawning_Advance_Amount, pt.Status, c.NIC, pp.Name AS ProductName
                  FROM pawning_ticket pt
           LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
@@ -1350,12 +1360,12 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
                 WHERE ${baseWhereConditions}
              ORDER BY pt.idPawning_Ticket DESC LIMIT ? OFFSET ?`;
 
+    // Add pagination parameters
     dataParams.push(limit, offset);
 
     const [tickets] = await pool.query(query, dataParams);
-    console.log(tickets, "tickets for approval");
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       tickets: tickets || [],
       pagination: paginationData,

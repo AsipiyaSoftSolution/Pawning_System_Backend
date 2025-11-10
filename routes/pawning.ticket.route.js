@@ -1,6 +1,7 @@
 import express from "express";
 import { protectedRoute } from "../middlewares/auth.middleware.js";
 import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
+import { checkUserSelectedHeadBranch } from "../middlewares/headBranch.middleware.js";
 import {
   createPawningTicket,
   getGrandSeqNo,
@@ -120,6 +121,7 @@ router.get(
   "/:branchId/tickets-for-approval",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserSelectedHeadBranch,
   getPawningTicketsForApproval
 ); // Get pawning tickets for approval
 

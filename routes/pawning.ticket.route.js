@@ -158,6 +158,7 @@ router.get(
   "/:branchId/active-tickets",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserSelectedHeadBranch,
   sendActiveTickets
 ); // Get all active pawning tickets
 

@@ -166,6 +166,7 @@ router.get(
   "/:branchId/settled-tickets",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserSelectedHeadBranch,
   sendSettledTickets
 ); // Get all overdue pawning tickets
 

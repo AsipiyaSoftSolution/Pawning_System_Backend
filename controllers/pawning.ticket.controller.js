@@ -2053,18 +2053,41 @@ export const sendSettledTickets = async (req, res, next) => {
 // send ticket which status '1' or '-1' for ticket print after ticket approve or ticket renewal (-1 after ticket approve and after renewal ticket goes to 1 which is active state)
 export const sendTicketsForPrinting = async (req, res, next) => {
   try {
-    const { product, start_date, end_date, nic, print_status } = req.query;
+    const { product, start_date, end_date, nic, print_status, branchId } =
+      req.query;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
 
-    // Build base WHERE conditions for both count and data queries
-    let baseWhereConditions =
-      "pt.Branch_idBranch = ? AND (pt.Status = '1' OR pt.Status = '-1')";
-    let countParams = [req.branchId];
-    let dataParams = [req.branchId];
+    // Initialize parameters arrays
+    let countParams = [];
+    let dataParams = [];
 
-    // decide original or duplicate print status filter
+    // Build base WHERE conditions for both count and data queries
+    let baseWhereConditions = "(pt.Status = '1' OR pt.Status = '-1')";
+
+    // Handle branch filtering
+    if (req.isHeadBranch === true && branchId) {
+      // Head branch filtering by specific branch - need to verify branch belongs to company
+      baseWhereConditions =
+        "pt.Branch_idBranch = ? AND (pt.Status = '1' OR pt.Status = '-1') AND pt.Branch_idBranch IN (SELECT idBranch FROM branch WHERE Company_idCompany = ?)";
+      countParams = [branchId, req.companyId];
+      dataParams = [branchId, req.companyId];
+    } else if (req.isHeadBranch === true) {
+      // Head branch - show all branches from company
+      baseWhereConditions =
+        "pt.Branch_idBranch IN (SELECT idBranch FROM branch WHERE Company_idCompany = ?) AND (pt.Status = '1' OR pt.Status = '-1')";
+      countParams = [req.companyId];
+      dataParams = [req.companyId];
+    } else {
+      // Regular branch - only show tickets from this branch
+      baseWhereConditions =
+        "pt.Branch_idBranch = ? AND (pt.Status = '1' OR pt.Status = '-1')";
+      countParams = [req.branchId];
+      dataParams = [req.branchId];
+    }
+
+    // Add print status filter
     if (print_status) {
       if (print_status === "0") {
         baseWhereConditions += " AND pt.Print_Status = '0'";
@@ -2133,6 +2156,7 @@ export const sendTicketsForPrinting = async (req, res, next) => {
                  LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
                  LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product 
                        WHERE ${baseWhereConditions}`;
+
     const paginationData = await getPaginationData(
       countQuery,
       countParams,
@@ -2149,17 +2173,22 @@ export const sendTicketsForPrinting = async (req, res, next) => {
       : "ORDER BY pt.updated_at DESC, pt.idPawning_Ticket DESC";
 
     // Build main data query - fetch ticket data with customer NIC and product name
-    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, pt.Pawning_Advance_Amount, pt.Status,pt.Print_Status, c.Full_name, c.NIC, c.Mobile_No, pp.Name AS ProductName
-                  FROM pawning_ticket pt
+    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, 
+                        pt.Pawning_Advance_Amount, pt.Status, pt.Print_Status, 
+                        c.Full_name, c.NIC, c.Mobile_No, pp.Name AS ProductName,
+                        b.Name AS BranchName
+                 FROM pawning_ticket pt
             LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
             LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product
-                  WHERE ${baseWhereConditions}
-               ${orderBy} LIMIT ? OFFSET ?`;
+            LEFT JOIN branch b ON pt.Branch_idBranch = b.idBranch
+                 WHERE ${baseWhereConditions}
+                 ${orderBy} LIMIT ? OFFSET ?`;
+
     dataParams.push(limit, offset);
 
     const [tickets] = await pool.query(query, dataParams);
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       tickets: tickets || [],
       pagination: paginationData,

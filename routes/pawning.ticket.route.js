@@ -172,6 +172,7 @@ router.get(
   "/:branchId/tickets-for-printing",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserSelectedHeadBranch,
   sendTicketsForPrinting
 ); // Get all tickets for printing
 

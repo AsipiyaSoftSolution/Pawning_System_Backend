@@ -1286,7 +1286,7 @@ export const createTicketComment = async (req, res, next) => {
 // send pawning tickets for ticket approval
 export const getPawningTicketsForApproval = async (req, res, next) => {
   try {
-    const { product, date, nic } = req.query;
+    const { product, date, nic, branchId } = req.query;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
@@ -1296,19 +1296,30 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
     let dataParams = [];
 
     // Build base WHERE conditions for both count and data queries
-    let baseWhereConditions = "(pt.Status IS NULL OR pt.Status = '0')";
+    let baseWhereConditions =
+      "(pt.Status IS NULL OR pt.Status = '0') AND Company_idCompany = ?";
+    countParams = [req.companyId];
+    dataParams = [req.companyId];
 
     // Handle branch filtering
     if (req.isHeadBranch === true) {
       baseWhereConditions =
         "pt.Branch_idBranch IN (SELECT idBranch FROM branch WHERE Company_idCompany = ?) AND (pt.Status IS NULL OR pt.Status = '0')";
-      countParams = [req.companyId]; // ✅ Only companyId for the subquery
-      dataParams = [req.companyId]; // ✅ Only companyId for the subquery
+      countParams = [req.companyId];
+      dataParams = [req.companyId];
     } else {
       baseWhereConditions =
-        "pt.Branch_idBranch = ? AND (pt.Status IS NULL OR pt.Status = '0')";
-      countParams = [req.branchId]; // ✅ Only branchId for regular branch
-      dataParams = [req.branchId]; // ✅ Only branchId for regular branch
+        "pt.Branch_idBranch = ? AND (pt.Status IS NULL OR pt.Status = '0') Company_idCompany = ?";
+      countParams = [req.branchId, req.companyId];
+      dataParams = [req.branchId, req.companyId];
+    }
+
+    // If branchId is provided in query and user is head branch, filter by that branch
+    if (req.isHeadBranch === true && branchId) {
+      baseWhereConditions =
+        "pt.Branch_idBranch = ? AND (pt.Status IS NULL OR pt.Status = '0') AND Company_idCompany = ?";
+      countParams = [branchId, req.companyId];
+      dataParams = [branchId, req.companyId];
     }
 
     // Add filter conditions dynamically
@@ -1353,11 +1364,12 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
     );
 
     // Build main data query
-    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, pt.Pawning_Advance_Amount, pt.Status, c.NIC, pp.Name AS ProductName
-                 FROM pawning_ticket pt
-          LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
-          LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product
-                WHERE ${baseWhereConditions}
+    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, pt.Pawning_Advance_Amount, pt.Status, c.NIC, pp.Name AS ProductName, b.Name AS BranchName
+             FROM pawning_ticket pt
+             LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
+             LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product
+             LEFT JOIN branch b ON pt.Branch_idBranch = b.idBranch
+             WHERE ${baseWhereConditions}
              ORDER BY pt.idPawning_Ticket DESC LIMIT ? OFFSET ?`;
 
     // Add pagination parameters

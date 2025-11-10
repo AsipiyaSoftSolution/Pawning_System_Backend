@@ -1296,30 +1296,27 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
     let dataParams = [];
 
     // Build base WHERE conditions for both count and data queries
-    let baseWhereConditions =
-      "(pt.Status IS NULL OR pt.Status = '0') AND Company_idCompany = ?";
-    countParams = [req.companyId];
-    dataParams = [req.companyId];
+    let baseWhereConditions = "(pt.Status IS NULL OR pt.Status = '0')";
 
     // Handle branch filtering
-    if (req.isHeadBranch === true) {
+    if (req.isHeadBranch === true && branchId) {
+      // Head branch filtering by specific branch - need to verify branch belongs to company
+      baseWhereConditions =
+        "pt.Branch_idBranch = ? AND (pt.Status IS NULL OR pt.Status = '0') AND pt.Branch_idBranch IN (SELECT idBranch FROM branch WHERE Company_idCompany = ?)";
+      countParams = [branchId, req.companyId];
+      dataParams = [branchId, req.companyId];
+    } else if (req.isHeadBranch === true) {
+      // Head branch - show all branches from company
       baseWhereConditions =
         "pt.Branch_idBranch IN (SELECT idBranch FROM branch WHERE Company_idCompany = ?) AND (pt.Status IS NULL OR pt.Status = '0')";
       countParams = [req.companyId];
       dataParams = [req.companyId];
     } else {
+      // Regular branch - only show tickets from this branch
       baseWhereConditions =
-        "pt.Branch_idBranch = ? AND (pt.Status IS NULL OR pt.Status = '0') Company_idCompany = ?";
-      countParams = [req.branchId, req.companyId];
-      dataParams = [req.branchId, req.companyId];
-    }
-
-    // If branchId is provided in query and user is head branch, filter by that branch
-    if (req.isHeadBranch === true && branchId) {
-      baseWhereConditions =
-        "pt.Branch_idBranch = ? AND (pt.Status IS NULL OR pt.Status = '0') AND Company_idCompany = ?";
-      countParams = [branchId, req.companyId];
-      dataParams = [branchId, req.companyId];
+        "pt.Branch_idBranch = ? AND (pt.Status IS NULL OR pt.Status = '0')";
+      countParams = [req.branchId];
+      dataParams = [req.branchId];
     }
 
     // Add filter conditions dynamically
@@ -1365,11 +1362,11 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
 
     // Build main data query
     let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, pt.Pawning_Advance_Amount, pt.Status, c.NIC, pp.Name AS ProductName, b.Name AS BranchName
-             FROM pawning_ticket pt
-             LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
-             LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product
-             LEFT JOIN branch b ON pt.Branch_idBranch = b.idBranch
-             WHERE ${baseWhereConditions}
+                 FROM pawning_ticket pt
+          LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
+          LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product
+          LEFT JOIN branch b ON pt.Branch_idBranch = b.idBranch
+                WHERE ${baseWhereConditions}
              ORDER BY pt.idPawning_Ticket DESC LIMIT ? OFFSET ?`;
 
     // Add pagination parameters
@@ -2389,6 +2386,24 @@ export const checkIfTicketsExistInCompany = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Error in checkIfTicketsExistInCompany:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// get company branches for ticket page filters
+export const getCompanyBranchesForTicketFilters = async (req, res, next) => {
+  try {
+    const [branches] = await pool.query(
+      "SELECT idBranch, Name, Branch_Code FROM branch WHERE Company_idCompany = ? AND Branch_Code NOT LIKE CONCAT('%', ?, '-HO') ORDER BY Name ASC",
+      [req.companyId, req.companyId]
+    );
+
+    return res.status(200).json({
+      success: true,
+      branches: branches,
+    });
+  } catch (error) {
+    console.error("Error in getCompanyBranchesForTicketFilters:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

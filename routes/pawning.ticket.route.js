@@ -26,6 +26,7 @@ import {
   markTicketAsPrinted,
   generatePawningTicketNumber,
   checkIfTicketsExistInCompany,
+  getCompanyBranchesForTicketFilters,
 } from "../controllers/pawning.ticket.controller.js";
 const router = express.Router();
 
@@ -194,4 +195,10 @@ router.get(
   checkUserBranchAccess,
   checkIfTicketsExistInCompany
 ); // Check if tickets exist in the company
+
+router.get(
+  "/company-branches-for-ticket-filters",
+  protectedRoute,
+  getCompanyBranchesForTicketFilters
+); // Get company branches for ticket page filters
 export default router;

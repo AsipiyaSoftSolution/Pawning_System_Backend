@@ -534,6 +534,8 @@ export const resetPassword = async (req, res, next) => {
 export const updateProfile = async (req, res, next) => {
   try {
     const { full_name, contact_no, email, profileImage } = req.body;
+    let isDeleted = false; // flag to indicate if the image was deleted
+
     if (!full_name || !contact_no || !email) {
       return next(
         errorHandler(400, "Full name, Contact number and Email are required")
@@ -577,9 +579,13 @@ export const updateProfile = async (req, res, next) => {
         const publicId = existingUser[0].Profile_Image.split("/")
           .slice(-1)[0]
           .split(".")[0];
-        await deleteImage(
+        const success = await deleteImage(
           `pawning_system/user_profiles/user_${req.userId}/${publicId}`
         );
+
+        if (success.result === "ok") {
+          isDeleted = true;
+        }
       }
     }
 
@@ -590,7 +596,7 @@ export const updateProfile = async (req, res, next) => {
         full_name,
         contact_no,
         email,
-        secureUrl || existingUser[0].Profile_Image,
+        isDeleted ? null : secureUrl || existingUser[0].Profile_Image,
         req.userId,
       ]
     );
@@ -605,7 +611,9 @@ export const updateProfile = async (req, res, next) => {
       updatedName: full_name,
       updatedEmail: email,
       updatedContactNo: contact_no,
-      updatedProfileImage: secureUrl || existingUser[0].Profile_Image,
+      updatedProfileImage: isDeleted
+        ? null
+        : secureUrl || existingUser[0].Profile_Image,
     });
   } catch (error) {
     console.error("Update profile error:", error);

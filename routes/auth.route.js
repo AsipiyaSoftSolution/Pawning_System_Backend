@@ -6,6 +6,7 @@ import {
   forgetPassword,
   resetPassword,
   verifyMobileOtpForPasswordReset,
+  updateProfile,
 } from "../controllers/auth.controller.js";
 import { protectedRoute } from "../middlewares/auth.middleware.js";
 import {
@@ -34,4 +35,6 @@ route.post(
 
 // reset password route
 route.post("/reset-password/:token/:userId", resetPassword);
+
+route.patch("/update-profile", protectedRoute, updateProfile);
 export default route;

@@ -4,6 +4,7 @@ import bcrypt from "bcrypt";
 import { getPaginationData, formatSearchPattern } from "../utils/helper.js";
 import { addAccountCreateLog } from "../utils/accounting.account.logs.js";
 import { sendWelcomeEmail } from "../utils/mailConfig.js";
+import { uploadImage, deleteImage } from "../utils/cloudinary.js";
 
 // Get COmpany Details
 export const getCompanyDetails = async (req, res, next) => {
@@ -16,13 +17,91 @@ export const getCompanyDetails = async (req, res, next) => {
       return next(errorHandler(404, "Company not found"));
     }
 
-    console.log("Company details fetched successfully:", companyData[0]);
     res.status(200).json({
       message: "Company details fetched successfully",
       company: companyData[0],
     });
   } catch (error) {
     console.error("Error fetching company details:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// update Company Details
+export const updateCompanyDetails = async (req, res, next) => {
+  try {
+    const { name, contact_no, address1, address2, address3, city, image } =
+      req.body;
+
+    let secureUrl = null;
+
+    const [existingCompany] = await pool.query(
+      "SELECT Logo FROM company WHERE idCompany = ?",
+      [req.companyId]
+    );
+
+    if (image && image !== null) {
+      // check if image is url or base64
+      let imageUrl = image;
+      if (!image.startsWith("http")) {
+        // upload to cloudinary
+        // uplaod with company id to organize images better
+        secureUrl = await uploadImage(
+          image,
+          `pawning_system/company_logos/company_${req.companyId}`
+        );
+
+        // delete the previous image from cloudinary if exists
+        if (existingCompany.length > 0 && existingCompany[0].Logo) {
+          // extract public id from the url
+          const publicId = existingCompany[0].Logo.split("/")
+            .slice(-1)[0]
+            .split(".")[0];
+          await deleteImage(
+            `pawning_system/company_logos/company_${req.companyId}/${publicId}`
+          );
+        }
+      }
+    } else {
+      // delete the image from cloudinary if exists
+      if (existingCompany.length > 0 && existingCompany[0].Logo) {
+        // extract public id from the url
+        const publicId = existingCompany[0].Logo.split("/")
+          .slice(-1)[0]
+          .split(".")[0];
+        await deleteImage(
+          `pawning_system/company_logos/company_${req.companyId}/${publicId}`
+        );
+      }
+    }
+
+    const [result] = await pool.query(
+      "UPDATE company SET Company_Name = ?, Contact_no = ?, Address01 = ?, Address02 = ?, Address03 = ?, City = ?, Logo = ? WHERE idCompany = ?",
+      [
+        name,
+        contact_no,
+        address1,
+        address2,
+        address3,
+        city,
+        secureUrl || image,
+        req.companyId,
+      ]
+    );
+
+    // SEND UPDATED DATA BACK
+    const [updatedCompanyData] = await pool.query(
+      "SELECT * FROM company WHERE idCompany = ?",
+      [req.companyId]
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Company details updated successfully",
+      company: updatedCompanyData[0],
+    });
+  } catch (error) {
+    console.error("Error updating company details:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

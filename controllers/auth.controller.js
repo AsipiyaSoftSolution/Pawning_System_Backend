@@ -56,7 +56,7 @@ const userWithoutPassword = async (userId) => {
     let userBranches = [];
     for (const branch of branchIds) {
       const [branchRows] = await pool.query(
-        "SELECT idBranch, Name FROM branch WHERE idBranch = ?",
+        "SELECT idBranch, Name,Branch_Code FROM branch WHERE idBranch = ?",
         [branch.Branch_idBranch]
       );
       if (branchRows.length > 0) {

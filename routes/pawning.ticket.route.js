@@ -1,6 +1,7 @@
 import express from "express";
 import { protectedRoute } from "../middlewares/auth.middleware.js";
 import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
+import { checkUserSelectedHeadBranch } from "../middlewares/headBranch.middleware.js";
 import {
   createPawningTicket,
   getGrandSeqNo,
@@ -25,6 +26,7 @@ import {
   markTicketAsPrinted,
   generatePawningTicketNumber,
   checkIfTicketsExistInCompany,
+  getCompanyBranchesForTicketFilters,
 } from "../controllers/pawning.ticket.controller.js";
 const router = express.Router();
 
@@ -120,6 +122,7 @@ router.get(
   "/:branchId/tickets-for-approval",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserSelectedHeadBranch,
   getPawningTicketsForApproval
 ); // Get pawning tickets for approval
 
@@ -155,6 +158,7 @@ router.get(
   "/:branchId/active-tickets",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserSelectedHeadBranch,
   sendActiveTickets
 ); // Get all active pawning tickets
 
@@ -162,6 +166,7 @@ router.get(
   "/:branchId/settled-tickets",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserSelectedHeadBranch,
   sendSettledTickets
 ); // Get all overdue pawning tickets
 
@@ -169,6 +174,7 @@ router.get(
   "/:branchId/tickets-for-printing",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserSelectedHeadBranch,
   sendTicketsForPrinting
 ); // Get all tickets for printing
 
@@ -192,4 +198,10 @@ router.get(
   checkUserBranchAccess,
   checkIfTicketsExistInCompany
 ); // Check if tickets exist in the company
+
+router.get(
+  "/company-branches-for-ticket-filters",
+  protectedRoute,
+  getCompanyBranchesForTicketFilters
+); // Get company branches for ticket page filters
 export default router;

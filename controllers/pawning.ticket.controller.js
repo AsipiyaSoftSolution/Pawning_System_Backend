@@ -1286,20 +1286,41 @@ export const createTicketComment = async (req, res, next) => {
 // send pawning tickets for ticket approval
 export const getPawningTicketsForApproval = async (req, res, next) => {
   try {
-    const { product, date, nic } = req.query;
+    const { product, date, nic, branchId } = req.query;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
 
+    // Initialize parameters arrays
+    let countParams = [];
+    let dataParams = [];
+
     // Build base WHERE conditions for both count and data queries
-    let baseWhereConditions =
-      "pt.Branch_idBranch = ? AND (pt.Status IS NULL OR pt.Status = '0')";
-    let countParams = [req.branchId];
-    let dataParams = [req.branchId];
+    let baseWhereConditions = "(pt.Status IS NULL OR pt.Status = '0')";
+
+    // Handle branch filtering
+    if (req.isHeadBranch === true && branchId) {
+      // Head branch filtering by specific branch - need to verify branch belongs to company
+      baseWhereConditions =
+        "pt.Branch_idBranch = ? AND (pt.Status IS NULL OR pt.Status = '0') AND pt.Branch_idBranch IN (SELECT idBranch FROM branch WHERE Company_idCompany = ?)";
+      countParams = [branchId, req.companyId];
+      dataParams = [branchId, req.companyId];
+    } else if (req.isHeadBranch === true) {
+      // Head branch - show all branches from company
+      baseWhereConditions =
+        "pt.Branch_idBranch IN (SELECT idBranch FROM branch WHERE Company_idCompany = ?) AND (pt.Status IS NULL OR pt.Status = '0')";
+      countParams = [req.companyId];
+      dataParams = [req.companyId];
+    } else {
+      // Regular branch - only show tickets from this branch
+      baseWhereConditions =
+        "pt.Branch_idBranch = ? AND (pt.Status IS NULL OR pt.Status = '0')";
+      countParams = [req.branchId];
+      dataParams = [req.branchId];
+    }
 
     // Add filter conditions dynamically
     if (product) {
-      // Sanitize product name for LIKE query
       const sanitizedProduct = `%${product.replace(/[%_\\]/g, "\\$&")}%`;
       baseWhereConditions += " AND pp.Name LIKE ?";
       countParams.push(sanitizedProduct);
@@ -1307,7 +1328,6 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
     }
 
     if (date) {
-      // Validate date format (YYYY-MM-DD)
       const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
       if (!dateRegex.test(date)) {
         return next(errorHandler(400, "Invalid date format. Use YYYY-MM-DD"));
@@ -1319,16 +1339,14 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
     }
 
     if (nic) {
-      // Sanitize and format NIC for SQL LIKE query
-      const sanitizedNIC = nic.replace(/[^a-zA-Z0-9]/g, ""); // Remove special characters
-
+      const sanitizedNIC = nic.replace(/[^a-zA-Z0-9]/g, "");
       const formattedNIC = formatSearchPattern(sanitizedNIC);
       baseWhereConditions += " AND c.NIC LIKE ?";
       countParams.push(formattedNIC);
       dataParams.push(formattedNIC);
     }
 
-    // Build count query with same conditions as main query
+    // Build count query
     const countQuery = `SELECT COUNT(*) AS total
                         FROM pawning_ticket pt
                  LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
@@ -1342,20 +1360,21 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
       limit
     );
 
-    // Build main data query - fetch ticket data with customer NIC and product name
-    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, pt.Pawning_Advance_Amount, pt.Status, c.NIC, pp.Name AS ProductName
+    // Build main data query
+    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, pt.Pawning_Advance_Amount, pt.Status, c.NIC, pp.Name AS ProductName, b.Name AS BranchName
                  FROM pawning_ticket pt
           LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
           LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product
+          LEFT JOIN branch b ON pt.Branch_idBranch = b.idBranch
                 WHERE ${baseWhereConditions}
              ORDER BY pt.idPawning_Ticket DESC LIMIT ? OFFSET ?`;
 
+    // Add pagination parameters
     dataParams.push(limit, offset);
 
     const [tickets] = await pool.query(query, dataParams);
-    console.log(tickets, "tickets for approval");
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       tickets: tickets || [],
       pagination: paginationData,
@@ -1830,15 +1849,36 @@ export const activatePawningTicket = async (req, res, next) => {
 // send active (1) pawning tickets
 export const sendActiveTickets = async (req, res, next) => {
   try {
-    const { product, start_date, end_date, nic } = req.query;
+    const { product, start_date, end_date, nic, branchId } = req.query;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
 
+    // Initialize parameters arrays
+    let countParams = [];
+    let dataParams = [];
+
     // Build base WHERE conditions for both count and data queries
-    let baseWhereConditions = "pt.Branch_idBranch = ? AND pt.Status = '1'";
-    let countParams = [req.branchId];
-    let dataParams = [req.branchId];
+    let baseWhereConditions = "pt.Status = '1'";
+
+    // Handle branch filtering
+    if (req.isHeadBranch === true && branchId) {
+      // Head branch filtering by specific branch - simplified approach
+      baseWhereConditions = "pt.Branch_idBranch = ? AND pt.Status = '1'";
+      countParams = [branchId];
+      dataParams = [branchId];
+    } else if (req.isHeadBranch === true) {
+      // Head branch - show all branches from company
+      baseWhereConditions =
+        "pt.Status = '1' AND pt.Branch_idBranch IN (SELECT idBranch FROM branch WHERE Company_idCompany = ?)";
+      countParams = [req.companyId];
+      dataParams = [req.companyId];
+    } else {
+      // Regular branch - only show tickets from this branch
+      baseWhereConditions = "pt.Branch_idBranch = ? AND pt.Status = '1'";
+      countParams = [req.branchId];
+      dataParams = [req.branchId];
+    }
 
     // Add filter conditions dynamically
     if (product) {
@@ -1900,6 +1940,7 @@ export const sendActiveTickets = async (req, res, next) => {
                  LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
                  LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product 
                        WHERE ${baseWhereConditions}`;
+
     const paginationData = await getPaginationData(
       countQuery,
       countParams,
@@ -1908,23 +1949,27 @@ export const sendActiveTickets = async (req, res, next) => {
     );
 
     // Build main data query - fetch ticket data with customer NIC and product name
-    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, pt.Pawning_Advance_Amount, pt.Status, c.Full_name, c.NIC, c.Mobile_No, pp.Name AS ProductName
-                  FROM pawning_ticket pt
+    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, 
+                        pt.Pawning_Advance_Amount, pt.Status, c.Full_name, c.NIC, c.Mobile_No, 
+                        pp.Name AS ProductName, b.Name AS BranchName
+                 FROM pawning_ticket pt
             LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
             LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product
-                  WHERE ${baseWhereConditions}
-               ORDER BY pt.idPawning_Ticket DESC LIMIT ? OFFSET ?`;
+            LEFT JOIN branch b ON pt.Branch_idBranch = b.idBranch
+                 WHERE ${baseWhereConditions}
+            ORDER BY pt.idPawning_Ticket DESC LIMIT ? OFFSET ?`;
+
     dataParams.push(limit, offset);
 
     const [tickets] = await pool.query(query, dataParams);
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       tickets: tickets || [],
       pagination: paginationData,
     });
   } catch (error) {
-    console.error("Error in getApprovedPawningTickets:", error);
+    console.error("Error in sendActiveTickets:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
@@ -1932,15 +1977,36 @@ export const sendActiveTickets = async (req, res, next) => {
 // send settled (2) pawning tickets
 export const sendSettledTickets = async (req, res, next) => {
   try {
-    const { product, start_date, end_date, nic } = req.query;
+    const { product, start_date, end_date, nic, branchId } = req.query;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
 
+    // Initialize parameters arrays
+    let countParams = [];
+    let dataParams = [];
+
     // Build base WHERE conditions for both count and data queries
-    let baseWhereConditions = "pt.Branch_idBranch = ? AND pt.Status = '2'";
-    let countParams = [req.branchId];
-    let dataParams = [req.branchId];
+    let baseWhereConditions = "pt.Status = '2'";
+
+    // Handle branch filtering
+    if (req.isHeadBranch === true && branchId) {
+      // Head branch filtering by specific branch
+      baseWhereConditions = "pt.Branch_idBranch = ? AND pt.Status = '2'";
+      countParams = [branchId];
+      dataParams = [branchId];
+    } else if (req.isHeadBranch === true) {
+      // Head branch - show all branches from company
+      baseWhereConditions =
+        "pt.Status = '2' AND pt.Branch_idBranch IN (SELECT idBranch FROM branch WHERE Company_idCompany = ?)";
+      countParams = [req.companyId];
+      dataParams = [req.companyId];
+    } else {
+      // Regular branch - only show tickets from this branch
+      baseWhereConditions = "pt.Branch_idBranch = ? AND pt.Status = '2'";
+      countParams = [req.branchId];
+      dataParams = [req.branchId];
+    }
 
     // Add filter conditions dynamically
     if (product) {
@@ -2002,6 +2068,7 @@ export const sendSettledTickets = async (req, res, next) => {
                  LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
                  LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product 
                        WHERE ${baseWhereConditions}`;
+
     const paginationData = await getPaginationData(
       countQuery,
       countParams,
@@ -2010,23 +2077,27 @@ export const sendSettledTickets = async (req, res, next) => {
     );
 
     // Build main data query - fetch ticket data with customer NIC and product name
-    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, pt.Pawning_Advance_Amount, pt.Status, c.Full_name, c.NIC, c.Mobile_No, pp.Name AS ProductName
-                  FROM pawning_ticket pt
+    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, 
+                        pt.Pawning_Advance_Amount, pt.Status, c.Full_name, c.NIC, c.Mobile_No, 
+                        pp.Name AS ProductName, b.Name AS BranchName
+                 FROM pawning_ticket pt
             LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
             LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product
-                  WHERE ${baseWhereConditions}
-               ORDER BY pt.idPawning_Ticket DESC LIMIT ? OFFSET ?`;
+            LEFT JOIN branch b ON pt.Branch_idBranch = b.idBranch
+                 WHERE ${baseWhereConditions}
+            ORDER BY pt.idPawning_Ticket DESC LIMIT ? OFFSET ?`;
+
     dataParams.push(limit, offset);
 
     const [tickets] = await pool.query(query, dataParams);
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       tickets: tickets || [],
       pagination: paginationData,
     });
   } catch (error) {
-    console.error("Error in getApprovedPawningTickets:", error);
+    console.error("Error in sendSettledTickets:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
@@ -2034,18 +2105,41 @@ export const sendSettledTickets = async (req, res, next) => {
 // send ticket which status '1' or '-1' for ticket print after ticket approve or ticket renewal (-1 after ticket approve and after renewal ticket goes to 1 which is active state)
 export const sendTicketsForPrinting = async (req, res, next) => {
   try {
-    const { product, start_date, end_date, nic, print_status } = req.query;
+    const { product, start_date, end_date, nic, print_status, branchId } =
+      req.query;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
 
-    // Build base WHERE conditions for both count and data queries
-    let baseWhereConditions =
-      "pt.Branch_idBranch = ? AND (pt.Status = '1' OR pt.Status = '-1')";
-    let countParams = [req.branchId];
-    let dataParams = [req.branchId];
+    // Initialize parameters arrays
+    let countParams = [];
+    let dataParams = [];
 
-    // decide original or duplicate print status filter
+    // Build base WHERE conditions for both count and data queries
+    let baseWhereConditions = "(pt.Status = '1' OR pt.Status = '-1')";
+
+    // Handle branch filtering
+    if (req.isHeadBranch === true && branchId) {
+      // Head branch filtering by specific branch - need to verify branch belongs to company
+      baseWhereConditions =
+        "pt.Branch_idBranch = ? AND (pt.Status = '1' OR pt.Status = '-1') AND pt.Branch_idBranch IN (SELECT idBranch FROM branch WHERE Company_idCompany = ?)";
+      countParams = [branchId, req.companyId];
+      dataParams = [branchId, req.companyId];
+    } else if (req.isHeadBranch === true) {
+      // Head branch - show all branches from company
+      baseWhereConditions =
+        "pt.Branch_idBranch IN (SELECT idBranch FROM branch WHERE Company_idCompany = ?) AND (pt.Status = '1' OR pt.Status = '-1')";
+      countParams = [req.companyId];
+      dataParams = [req.companyId];
+    } else {
+      // Regular branch - only show tickets from this branch
+      baseWhereConditions =
+        "pt.Branch_idBranch = ? AND (pt.Status = '1' OR pt.Status = '-1')";
+      countParams = [req.branchId];
+      dataParams = [req.branchId];
+    }
+
+    // Add print status filter
     if (print_status) {
       if (print_status === "0") {
         baseWhereConditions += " AND pt.Print_Status = '0'";
@@ -2114,6 +2208,7 @@ export const sendTicketsForPrinting = async (req, res, next) => {
                  LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
                  LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product 
                        WHERE ${baseWhereConditions}`;
+
     const paginationData = await getPaginationData(
       countQuery,
       countParams,
@@ -2130,17 +2225,22 @@ export const sendTicketsForPrinting = async (req, res, next) => {
       : "ORDER BY pt.updated_at DESC, pt.idPawning_Ticket DESC";
 
     // Build main data query - fetch ticket data with customer NIC and product name
-    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, pt.Pawning_Advance_Amount, pt.Status,pt.Print_Status, c.Full_name, c.NIC, c.Mobile_No, pp.Name AS ProductName
-                  FROM pawning_ticket pt
+    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, 
+                        pt.Pawning_Advance_Amount, pt.Status, pt.Print_Status, 
+                        c.Full_name, c.NIC, c.Mobile_No, pp.Name AS ProductName,
+                        b.Name AS BranchName
+                 FROM pawning_ticket pt
             LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
             LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product
-                  WHERE ${baseWhereConditions}
-               ${orderBy} LIMIT ? OFFSET ?`;
+            LEFT JOIN branch b ON pt.Branch_idBranch = b.idBranch
+                 WHERE ${baseWhereConditions}
+                 ${orderBy} LIMIT ? OFFSET ?`;
+
     dataParams.push(limit, offset);
 
     const [tickets] = await pool.query(query, dataParams);
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       tickets: tickets || [],
       pagination: paginationData,
@@ -2367,6 +2467,24 @@ export const checkIfTicketsExistInCompany = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Error in checkIfTicketsExistInCompany:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// get company branches for ticket page filters
+export const getCompanyBranchesForTicketFilters = async (req, res, next) => {
+  try {
+    const [branches] = await pool.query(
+      "SELECT idBranch, Name, Branch_Code FROM branch WHERE Company_idCompany = ? AND Branch_Code NOT LIKE CONCAT('%', ?, '-HO') ORDER BY Name ASC",
+      [req.companyId, req.companyId]
+    );
+
+    return res.status(200).json({
+      success: true,
+      branches: branches,
+    });
+  } catch (error) {
+    console.error("Error in getCompanyBranchesForTicketFilters:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

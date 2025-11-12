@@ -2420,3 +2420,498 @@ export const bulkUpdateAssessedValues = async (req, res, next) => {
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
+
+// create pawning ticket approval ranges with levels
+export const createPawningTicketApprovalRange = async (req, res, next) => {
+  try {
+    const { rangeWithLevels } = req.body;
+
+    // Basic validation
+    if (!rangeWithLevels) {
+      return next(errorHandler(400, "Range with levels data is required"));
+    }
+
+    console.log(rangeWithLevels.start_amount, "start amount");
+    console.log(rangeWithLevels.end_amount, "end amount");
+
+    if (
+      rangeWithLevels.start_amount === undefined ||
+      isNaN(rangeWithLevels.start_amount) ||
+      rangeWithLevels.start_amount < 0
+    ) {
+      return next(errorHandler(400, "Valid start amount is required"));
+    }
+
+    if (
+      rangeWithLevels.end_amount === undefined ||
+      isNaN(rangeWithLevels.end_amount) ||
+      rangeWithLevels.end_amount <= rangeWithLevels.start_amount
+    ) {
+      return next(
+        errorHandler(
+          400,
+          "Valid end amount is required and must be greater than start amount"
+        )
+      );
+    }
+
+    // validate designation id's inside levels
+    if (rangeWithLevels.levels && Array.isArray(rangeWithLevels.levels)) {
+      for (const level of rangeWithLevels.levels) {
+        for (const designation of level.designations) {
+          if (
+            designation.Designation_idDesignation === undefined ||
+            designation.Designation_idDesignation === null ||
+            designation.Designation_idDesignation === 0 ||
+            designation.Designation_idDesignation < 0
+          ) {
+            return next(
+              errorHandler(400, "Valid Designation ID is required in levels")
+            );
+          }
+
+          // Check if designation exists for this company
+          const [existingDesignation] = await pool.query(
+            "SELECT 1 FROM designation WHERE idDesignation = ? AND Company_idCompany = ?",
+            [designation.Designation_idDesignation, req.companyId]
+          );
+
+          if (existingDesignation.length === 0) {
+            return next(
+              errorHandler(
+                404,
+                "An designation in levels was not found for this company, please verify the designations provided"
+              )
+            );
+          }
+        }
+      }
+    }
+
+    // start the process of enter those range data and levels to 3 tables
+    const connection = await pool.getConnection();
+
+    try {
+      await connection.beginTransaction(); // Start transaction
+
+      const [insertResultoRangeTable] = await connection.query(
+        "INSERT INTO pawning_ticket_approval_range (companyid, start_amount, end_amount, last_updated_user) VALUES (?,?,?,?)",
+        [
+          req.companyId,
+          rangeWithLevels.start_amount,
+          rangeWithLevels.end_amount,
+          req.userId,
+        ]
+      );
+
+      if (insertResultoRangeTable.affectedRows === 0) {
+        throw new Error("Failed to create pawning ticket approval range");
+      }
+
+      const rangeId = insertResultoRangeTable.insertId;
+
+      for (const level of rangeWithLevels.levels) {
+        const [insertResultToRangesLevelsTable] = await connection.query(
+          "INSERT INTO pawning_ticket_approval_ranges_level (Approval_Range_idApproval_Range,level_name,is_head_office_level) VALUES (?,?,?)",
+          [rangeId, level.level_name, level.is_head_office_level ? 1 : 0]
+        );
+
+        if (insertResultToRangesLevelsTable.affectedRows === 0) {
+          throw new Error(
+            "Failed to create pawning ticket approval range level"
+          );
+        }
+
+        const rangeLevelId = insertResultToRangesLevelsTable.insertId;
+
+        for (const designation of level.designations) {
+          const [insertResultToLevelDesignationsTable] = await connection.query(
+            "INSERT INTO pawning_ticket_approval_levels_designations (ApprovalRangeLevel_idApprovalRangeLevel,Designation_idDesignation) VALUES (?,?)",
+            [rangeLevelId, designation.Designation_idDesignation]
+          );
+
+          if (insertResultToLevelDesignationsTable.affectedRows === 0) {
+            throw new Error(
+              "Failed to assign designation to pawning ticket approval range level"
+            );
+          }
+        }
+      }
+
+      await connection.commit(); // Commit transaction
+      // Fetch the created range with its levels and designations so frontend
+      // receives the same shape as getPawningTicketApprovalRanges
+      let createdRange = null;
+      try {
+        const [createdRanges] = await connection.query(
+          "SELECT * FROM pawning_ticket_approval_range WHERE idApproval_Range = ? AND companyid = ?",
+          [rangeId, req.companyId]
+        );
+        if (createdRanges && createdRanges.length > 0) {
+          createdRange = createdRanges[0];
+
+          const [levels] = await connection.query(
+            "SELECT * FROM pawning_ticket_approval_ranges_level WHERE Approval_Range_idApproval_Range = ?",
+            [createdRange.idApproval_Range]
+          );
+
+          for (let level of levels) {
+            const [designations] = await connection.query(
+              `SELECT d.idDesignation, d.Description 
+               FROM pawning_ticket_approval_levels_designations pad
+               JOIN designation d ON pad.Designation_idDesignation = d.idDesignation
+               WHERE pad.ApprovalRangeLevel_idApprovalRangeLevel = ?`,
+              [level.idApprovalRangeLevel]
+            );
+            level.designations = designations || [];
+          }
+
+          createdRange.levels = levels || [];
+        }
+      } catch (err) {
+        // If fetching the created range fails, still return the success message
+        console.error(
+          "Error fetching created pawning ticket approval range:",
+          err
+        );
+      }
+
+      return res.status(201).json({
+        success: true,
+        message: "Pawning ticket approval range created successfully",
+        range: createdRange || null,
+      });
+    } catch (error) {
+      await connection.rollback(); // Rollback transaction on error
+      throw error;
+    } finally {
+      connection.release(); // Release connection
+    }
+  } catch (error) {
+    console.error("Error creating pawning ticket approval range:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// get ticket ranges levels with designations
+export const getPawningTicketApprovalRanges = async (req, res, next) => {
+  try {
+    let [ranges] = await pool.query(
+      "SELECT * FROM pawning_ticket_approval_range WHERE companyid = ?",
+      [req.companyId]
+    );
+
+    if (ranges.length === 0) {
+      return res.status(200).json({
+        message: "No pawning ticket approval ranges found",
+        ranges: [],
+      });
+    }
+
+    for (let range of ranges) {
+      let [levels] = await pool.query(
+        "SELECT * FROM pawning_ticket_approval_ranges_level WHERE Approval_Range_idApproval_Range = ?",
+        [range.idApproval_Range]
+      );
+
+      for (let level of levels) {
+        const [designations] = await pool.query(
+          `SELECT d.idDesignation, d.Description 
+           FROM pawning_ticket_approval_levels_designations pad
+           JOIN designation d ON pad.Designation_idDesignation = d.idDesignation
+           WHERE pad.ApprovalRangeLevel_idApprovalRangeLevel = ?`,
+          [level.idApprovalRangeLevel]
+        );
+        level.designations = designations || [];
+      }
+
+      range.levels = levels || [];
+    }
+
+    res.status(200).json({
+      message: "Pawning ticket approval ranges fetched successfully",
+      ranges,
+    });
+  } catch (error) {
+    console.error("Error fetching pawning ticket approval ranges:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// delete pawning ticket approval range
+export const deletePawningTicketApprovalRange = async (req, res, next) => {
+  try {
+    const rangeId = req.params.id || req.params.rangeId;
+    if (!rangeId) {
+      return next(errorHandler(400, "Range ID is required"));
+    }
+
+    // Delete the pawning ticket approval range
+    const [deleteRange] = await pool.query(
+      "DELETE FROM pawning_ticket_approval_range WHERE idApproval_Range = ? AND companyid = ?",
+      [rangeId, req.companyId]
+    );
+
+    if (deleteRange.affectedRows === 0) {
+      return next(errorHandler(404, "Pawning ticket approval range not found"));
+    }
+
+    res.status(200).json({
+      success: true,
+      rangeId: rangeId,
+      message: "Pawning ticket approval range deleted successfully",
+    });
+  } catch (error) {
+    console.error("Error deleting pawning ticket approval range:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// helper function to update range level designations
+export const updatePawningTicketApprovalRange = async (req, res, next) => {
+  try {
+    const { rangeId } = req.params;
+    const { rangeWithLevels } = req.body;
+
+    // Basic validation
+    if (!rangeId || isNaN(rangeId) || rangeId <= 0) {
+      return next(errorHandler(400, "Valid range ID is required"));
+    }
+
+    if (!rangeWithLevels) {
+      return next(errorHandler(400, "Range with levels data is required"));
+    }
+
+    if (
+      rangeWithLevels.start_amount === undefined ||
+      isNaN(rangeWithLevels.start_amount) ||
+      rangeWithLevels.start_amount < 0
+    ) {
+      return next(errorHandler(400, "Valid start amount is required"));
+    }
+
+    if (
+      rangeWithLevels.end_amount === undefined ||
+      isNaN(rangeWithLevels.end_amount) ||
+      rangeWithLevels.end_amount <= rangeWithLevels.start_amount
+    ) {
+      return next(
+        errorHandler(
+          400,
+          "Valid end amount is required and must be greater than start amount"
+        )
+      );
+    }
+
+    // Validate designation IDs in levels
+    if (rangeWithLevels.levels && Array.isArray(rangeWithLevels.levels)) {
+      for (const level of rangeWithLevels.levels) {
+        // Validate level name
+        if (!level.level_name || level.level_name.trim() === "") {
+          return next(
+            errorHandler(400, "Level name is required for all levels")
+          );
+        }
+
+        for (const designation of level.designations) {
+          if (
+            designation.Designation_idDesignation === undefined ||
+            designation.Designation_idDesignation === null ||
+            designation.Designation_idDesignation === 0 ||
+            designation.Designation_idDesignation < 0
+          ) {
+            return next(
+              errorHandler(400, "Valid Designation ID is required in levels")
+            );
+          }
+
+          // Check if designation exists for this company
+          const [existingDesignation] = await pool.query(
+            "SELECT 1 FROM designation WHERE idDesignation = ? AND Company_idCompany = ?",
+            [designation.Designation_idDesignation, req.companyId]
+          );
+
+          if (existingDesignation.length === 0) {
+            return next(
+              errorHandler(
+                404,
+                `Designation with ID ${designation.Designation_idDesignation} was not found for this company`
+              )
+            );
+          }
+        }
+      }
+    }
+
+    // Check if the range exists and belongs to the company
+    const [existingRange] = await pool.query(
+      "SELECT idApproval_Range FROM pawning_ticket_approval_range WHERE idApproval_Range = ? AND companyid = ?",
+      [rangeId, req.companyId]
+    );
+
+    if (existingRange.length === 0) {
+      return next(errorHandler(404, "Pawning ticket approval range not found"));
+    }
+
+    const connection = await pool.getConnection();
+
+    try {
+      await connection.beginTransaction();
+
+      console.log("Updating main range...");
+      // Update the main range
+      const [updateRangeResult] = await connection.query(
+        "UPDATE pawning_ticket_approval_range SET start_amount = ?, end_amount = ?, last_updated_user = ? WHERE idApproval_Range = ? AND companyid = ?",
+        [
+          rangeWithLevels.start_amount,
+          rangeWithLevels.end_amount,
+          req.userId,
+          rangeId,
+          req.companyId,
+        ]
+      );
+
+      if (updateRangeResult.affectedRows === 0) {
+        throw new Error("Failed to update pawning ticket approval range");
+      }
+
+      // Delete all existing levels and designations first (simpler approach)
+      console.log("Deleting existing designations and levels...");
+      await connection.query(
+        "DELETE FROM pawning_ticket_approval_levels_designations WHERE ApprovalRangeLevel_idApprovalRangeLevel IN (SELECT idApprovalRangeLevel FROM pawning_ticket_approval_ranges_level WHERE Approval_Range_idApproval_Range = ?)",
+        [rangeId]
+      );
+
+      await connection.query(
+        "DELETE FROM pawning_ticket_approval_ranges_level WHERE Approval_Range_idApproval_Range = ?",
+        [rangeId]
+      );
+
+      // Insert new levels (same as create logic)
+      for (const [index, level] of rangeWithLevels.levels.entries()) {
+        console.log(`Inserting level ${index + 1}:`, level.level_name);
+
+        const [insertLevelResult] = await connection.query(
+          "INSERT INTO pawning_ticket_approval_ranges_level (Approval_Range_idApproval_Range, level_name, is_head_office_level) VALUES (?, ?, ?)",
+          [rangeId, level.level_name, level.is_head_office_level ? 1 : 0]
+        );
+
+        if (insertLevelResult.affectedRows === 0) {
+          throw new Error(`Failed to create level: ${level.level_name}`);
+        }
+
+        const levelId = insertLevelResult.insertId;
+
+        // Insert designations for this level
+        for (const designation of level.designations) {
+          const [insertDesignationResult] = await connection.query(
+            "INSERT INTO pawning_ticket_approval_levels_designations (ApprovalRangeLevel_idApprovalRangeLevel, Designation_idDesignation) VALUES (?, ?)",
+            [levelId, designation.Designation_idDesignation]
+          );
+
+          if (insertDesignationResult.affectedRows === 0) {
+            throw new Error(
+              `Failed to assign designation to level: ${level.level_name}`
+            );
+          }
+        }
+      }
+
+      await connection.commit();
+
+      // Fetch the updated range with its levels and designations
+      let updatedRange = null;
+      try {
+        console.log("Fetching updated range...");
+        const [updatedRanges] = await connection.query(
+          "SELECT * FROM pawning_ticket_approval_range WHERE idApproval_Range = ? AND companyid = ?",
+          [rangeId, req.companyId]
+        );
+
+        if (updatedRanges && updatedRanges.length > 0) {
+          updatedRange = updatedRanges[0];
+
+          const [levels] = await connection.query(
+            "SELECT * FROM pawning_ticket_approval_ranges_level WHERE Approval_Range_idApproval_Range = ?",
+            [updatedRange.idApproval_Range]
+          );
+
+          for (let level of levels) {
+            const [designations] = await connection.query(
+              `SELECT d.idDesignation, d.Description 
+               FROM pawning_ticket_approval_levels_designations pad
+               JOIN designation d ON pad.Designation_idDesignation = d.idDesignation
+               WHERE pad.ApprovalRangeLevel_idApprovalRangeLevel = ?`,
+              [level.idApprovalRangeLevel]
+            );
+            level.designations = designations || [];
+          }
+
+          updatedRange.levels = levels || [];
+        }
+      } catch (err) {
+        console.error(
+          "Error fetching updated pawning ticket approval range:",
+          err
+        );
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: "Pawning ticket approval range updated successfully",
+        range: updatedRange,
+      });
+    } catch (error) {
+      await connection.rollback();
+      console.error("Transaction rolled back due to error:", error);
+      throw error;
+    } finally {
+      connection.release();
+    }
+  } catch (error) {
+    console.error("Error updating pawning ticket approval range:", error);
+    return next(errorHandler(500, error.message || "Internal Server Error"));
+  }
+};
+
+// Helper function to update level designations ( to be used in updatePawningTicketApprovalRange)
+async function updateLevelDesignations(
+  connection,
+  levelId,
+  incomingDesignations
+) {
+  // Get existing designations
+  const [existingDesignations] = await connection.query(
+    "SELECT Designation_idDesignation FROM pawning_ticket_approval_levels_designations WHERE ApprovalRangeLevel_idApprovalRangeLevel = ?",
+    [levelId]
+  );
+
+  const existingDesIds = existingDesignations.map(
+    (d) => d.Designation_idDesignation
+  );
+  const incomingDesIds = incomingDesignations.map(
+    (d) => d.Designation_idDesignation
+  );
+
+  // Designations to delete
+  const designationsToDelete = existingDesIds.filter(
+    (id) => !incomingDesIds.includes(id)
+  );
+  if (designationsToDelete.length > 0) {
+    await connection.query(
+      "DELETE FROM pawning_ticket_approval_levels_designations WHERE ApprovalRangeLevel_idApprovalRangeLevel = ? AND Designation_idDesignation IN (?)",
+      [levelId, designationsToDelete]
+    );
+  }
+
+  // Designations to add
+  const designationsToAdd = incomingDesIds.filter(
+    (id) => !existingDesIds.includes(id)
+  );
+  for (const desId of designationsToAdd) {
+    await connection.query(
+      "INSERT INTO pawning_ticket_approval_levels_designations (ApprovalRangeLevel_idApprovalRangeLevel, Designation_idDesignation) VALUES (?, ?)",
+      [levelId, desId]
+    );
+  }
+}

@@ -1391,7 +1391,7 @@ async function getTicketApprovalProgress(ticketId, ticketAmount, companyId) {
   }
 }
 
-// Simplified version of checkUserCanApproveTicket with better error handling
+// Check if user can see and approve ticket
 async function checkUserCanApproveTicket(
   ticketId,
   ticketAmount,
@@ -1402,6 +1402,14 @@ async function checkUserCanApproveTicket(
   branchId
 ) {
   try {
+    console.log(`\n=== CHECKING TICKET ${ticketId} ===`);
+    console.log(
+      `User designation: ${userDesignationId}, isHeadBranch: ${isHeadBranch}, branchId filter: ${branchId}`
+    );
+    console.log(
+      `Ticket amount: ${ticketAmount}, Ticket branch: ${ticketBranchId}`
+    );
+
     // 1. Find the approval range that matches the ticket amount
     const [ranges] = await pool.query(
       `SELECT idApproval_Range 
@@ -1414,12 +1422,14 @@ async function checkUserCanApproveTicket(
     );
 
     if (ranges.length === 0) {
+      console.log(`No approval range found for amount ${ticketAmount}`);
       return { canView: false, canApprove: false };
     }
 
     const rangeId = ranges[0].idApproval_Range;
+    console.log(`Found approval range: ${rangeId}`);
 
-    // 2. Get all levels for this range
+    // 2. Get all levels for this range in order
     const [levels] = await pool.query(
       `SELECT idApprovalRangeLevel, level_name, is_head_office_level 
        FROM pawning_ticket_approval_ranges_level 
@@ -1429,12 +1439,21 @@ async function checkUserCanApproveTicket(
     );
 
     if (levels.length === 0) {
+      console.log(`No levels configured for range ${rangeId}`);
       return { canView: false, canApprove: false };
     }
 
+    console.log(
+      `Found ${levels.length} levels:`,
+      levels.map(
+        (l, i) =>
+          `${i}: ${l.level_name} (ID: ${l.idApprovalRangeLevel}, HeadOffice: ${l.is_head_office_level})`
+      )
+    );
+
     // 3. Get already approved levels for this ticket
     const [approvedLevels] = await pool.query(
-      `SELECT ApprovalRangeLevel_idApprovalRangeLevel 
+      `SELECT ApprovalRangeLevel_idApprovalRangeLevel
        FROM pawning_ticket_approval 
        WHERE Pawning_Ticket_idPawning_Ticket = ? 
          AND approval_status = 1`,
@@ -1445,73 +1464,114 @@ async function checkUserCanApproveTicket(
       (al) => al.ApprovalRangeLevel_idApprovalRangeLevel
     );
 
-    // 4. Find the next pending level
-    let nextPendingLevel = null;
-    for (const level of levels) {
-      if (!approvedLevelIds.includes(level.idApprovalRangeLevel)) {
-        nextPendingLevel = level;
+    console.log(`Already approved level IDs:`, approvedLevelIds);
+    console.log(`Number of approved levels: ${approvedLevelIds.length}`);
+
+    // 4. Find the CURRENT PENDING level (first level not approved yet)
+    let currentPendingLevel = null;
+    let currentPendingLevelIndex = -1;
+
+    for (let i = 0; i < levels.length; i++) {
+      console.log(
+        `Checking level ${i}: ${levels[i].level_name} (ID: ${levels[i].idApprovalRangeLevel})`
+      );
+      if (!approvedLevelIds.includes(levels[i].idApprovalRangeLevel)) {
+        currentPendingLevel = levels[i];
+        currentPendingLevelIndex = i;
+        console.log(
+          `✓ Found current pending level at index ${i}: ${levels[i].level_name}`
+        );
         break;
+      } else {
+        console.log(`  Level ${i} already approved`);
       }
     }
 
-    // If all levels approved, don't show
-    if (!nextPendingLevel) {
+    // If all levels are approved, don't show this ticket
+    if (!currentPendingLevel) {
+      console.log(`All levels approved, hiding ticket`);
       return { canView: false, canApprove: false };
     }
 
-    // 5. Check if user has authorization in ANY level (for viewing)
-    let userHasAccessInAnyLevel = false;
+    console.log(
+      `Current pending level: Index ${currentPendingLevelIndex}, Name: ${currentPendingLevel.level_name}, ID: ${currentPendingLevel.idApprovalRangeLevel}, is_head_office_level: ${currentPendingLevel.is_head_office_level}`
+    );
 
-    for (const level of levels) {
-      const [designations] = await pool.query(
-        `SELECT Designation_idDesignation 
-         FROM pawning_ticket_approval_levels_designations 
-         WHERE ApprovalRangeLevel_idApprovalRangeLevel = ?`,
-        [level.idApprovalRangeLevel]
+    // 5. CRITICAL CHECK: If current level is NOT head office level, but user IS head office, HIDE ticket
+    if (!currentPendingLevel.is_head_office_level && isHeadBranch) {
+      console.log(
+        `❌ Current level is NOT head office level, but user IS head office - HIDING ticket`
       );
-
-      const levelDesignations = designations.map(
-        (d) => d.Designation_idDesignation
-      );
-
-      if (levelDesignations.includes(userDesignationId)) {
-        userHasAccessInAnyLevel = true;
-        break;
-      }
-    }
-
-    // User must have access in at least one level to view
-    if (!userHasAccessInAnyLevel) {
       return { canView: false, canApprove: false };
     }
 
-    // 6. Check if user can approve the NEXT PENDING level
-    const [nextLevelDesignations] = await pool.query(
+    // 6. CRITICAL CHECK: If current level IS head office level, but user is NOT head office, HIDE ticket
+    if (currentPendingLevel.is_head_office_level && !isHeadBranch) {
+      console.log(
+        `❌ Current level IS head office level, but user is NOT head office - HIDING ticket`
+      );
+      return { canView: false, canApprove: false };
+    }
+
+    console.log(
+      `✓ Branch type matches level type (both head office OR both regular branch)`
+    );
+
+    // 7. Get designations authorized for the CURRENT PENDING level ONLY
+    const [currentLevelDesignations] = await pool.query(
       `SELECT Designation_idDesignation 
        FROM pawning_ticket_approval_levels_designations 
        WHERE ApprovalRangeLevel_idApprovalRangeLevel = ?`,
-      [nextPendingLevel.idApprovalRangeLevel]
+      [currentPendingLevel.idApprovalRangeLevel]
     );
 
-    const authorizedDesignations = nextLevelDesignations.map(
+    const authorizedDesignationIds = currentLevelDesignations.map(
       (d) => d.Designation_idDesignation
     );
 
-    const userCanApproveNextLevel =
-      authorizedDesignations.includes(userDesignationId);
+    console.log(
+      `Authorized designations for current level:`,
+      authorizedDesignationIds
+    );
 
-    // 7. Check head office requirement for approval
-    let canApprove = userCanApproveNextLevel;
+    // 8. Check if user's designation is authorized for THIS CURRENT level
+    const userIsAuthorizedForCurrentLevel =
+      authorizedDesignationIds.includes(userDesignationId);
 
-    if (nextPendingLevel.is_head_office_level) {
-      if (!isHeadBranch) {
-        canApprove = false;
-      }
-      // If branchId filter is provided, ticket must be from that branch
-      if (branchId && ticketBranchId !== parseInt(branchId)) {
-        canApprove = false;
+    console.log(
+      `User designation ${userDesignationId} authorized for current level? ${userIsAuthorizedForCurrentLevel}`
+    );
+
+    if (!userIsAuthorizedForCurrentLevel) {
+      console.log(`❌ User NOT authorized - HIDING ticket`);
+      return { canView: false, canApprove: false };
+    }
+
+    console.log(`✓ User IS authorized for current level`);
+
+    // 9. For head office levels, check branch filter
+    let canApprove = true;
+
+    if (currentPendingLevel.is_head_office_level) {
+      console.log(`Current level is HEAD OFFICE level`);
+
+      if (branchId) {
+        console.log(
+          `Branch filter provided: ${branchId}, Ticket branch: ${ticketBranchId}`
+        );
+        if (ticketBranchId !== parseInt(branchId)) {
+          console.log(`❌ Branch mismatch - canApprove = false`);
+          canApprove = false;
+        } else {
+          console.log(`✓ Branch matches`);
+        }
+      } else {
+        console.log(`No branch filter - can approve all branches`);
       }
     }
+
+    console.log(`FINAL RESULT: canView = true, canApprove = ${canApprove}`);
+    console.log(`=== END CHECK FOR TICKET ${ticketId} ===\n`);
 
     return { canView: true, canApprove };
   } catch (error) {
@@ -1532,18 +1592,15 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
     let dataParams = [];
     let baseWhereConditions = "(pt.Status IS NULL OR pt.Status = '0')";
 
-    // Handle branch filtering
-    if (req.isHeadBranch === true && branchId) {
-      baseWhereConditions =
-        "pt.Branch_idBranch = ? AND (pt.Status IS NULL OR pt.Status = '0') AND pt.Branch_idBranch IN (SELECT idBranch FROM branch WHERE Company_idCompany = ?)";
-      countParams = [branchId, req.companyId];
-      dataParams = [branchId, req.companyId];
-    } else if (req.isHeadBranch === true) {
+    // Simple branch filtering: Head office = all branches, Regular branch = own branch only
+    if (req.isHeadBranch === true) {
+      // Head office - get all company branches
       baseWhereConditions =
         "pt.Branch_idBranch IN (SELECT idBranch FROM branch WHERE Company_idCompany = ?) AND (pt.Status IS NULL OR pt.Status = '0')";
       countParams = [req.companyId];
       dataParams = [req.companyId];
     } else {
+      // Regular branch - only their branch
       baseWhereConditions =
         "pt.Branch_idBranch = ? AND (pt.Status IS NULL OR pt.Status = '0')";
       countParams = [req.branchId];
@@ -1634,8 +1691,6 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
 
     const [allTickets] = await pool.query(query, dataParams);
 
-    console.log(`Found ${allTickets.length} tickets before filtering`);
-
     // Filter and enrich tickets
     const filteredTickets = [];
 
@@ -1659,11 +1714,6 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
             req.companyId
           );
 
-          console.log(
-            `Ticket ${ticket.idPawning_Ticket} approval progress:`,
-            approvalProgress
-          );
-
           filteredTickets.push({
             ...ticket,
             can_approve: accessCheck.canApprove,
@@ -1678,8 +1728,6 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
         // Continue with next ticket
       }
     }
-
-    console.log(`Filtered to ${filteredTickets.length} tickets`);
 
     // Apply pagination
     const total = filteredTickets.length;

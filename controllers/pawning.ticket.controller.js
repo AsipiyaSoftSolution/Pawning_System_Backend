@@ -1931,7 +1931,7 @@ export const approvePawningTicket = async (req, res, next) => {
     // 9. Check if all levels are now approved
     const allLevelsApproved = approvedLevelIds.length + 1 === levels.length;
 
-    // 10. Update ticket status only if all levels are approved
+    // 10. Update ticket status and insert approval record if fully approved
     if (allLevelsApproved) {
       const [updateResult] = await pool.query(
         "UPDATE pawning_ticket SET Status = '-1' WHERE idPawning_Ticket = ?",
@@ -1941,28 +1941,28 @@ export const approvePawningTicket = async (req, res, next) => {
       if (updateResult.affectedRows === 0) {
         return next(errorHandler(500, "Failed to update ticket status"));
       }
-    }
 
-    // 11. Insert a record to ticket_has_approval table
-    const [ticketApprovalRecord] = await pool.query(
-      "INSERT INTO ticket_has_approval (Pawning_Ticket_idPawning_Ticket, User, Date_Time, Note, Type) VALUES (?, ?, NOW(), ?, ?)",
-      [ticketId, req.userId, req.body.note || null, "APPROVE"]
-    );
+      // 11. Insert a record to ticket_has_approval table
+      const [ticketApprovalRecord] = await pool.query(
+        "INSERT INTO ticket_has_approval (Pawning_Ticket_idPawning_Ticket, User, Date_Time, Note, Type) VALUES (?, ?, NOW(), ?, ?)",
+        [ticketId, req.userId, req.body.note || null, "APPROVE "]
+      );
 
-    if (ticketApprovalRecord.affectedRows === 0) {
-      return next(
-        errorHandler(500, "Failed to record the ticket approval action")
+      if (ticketApprovalRecord.affectedRows === 0) {
+        return next(
+          errorHandler(500, "Failed to record the ticket approval action")
+        );
+      }
+
+      // Create the log in ticket log after full approval
+      await createPawningTicketLogOnApprovalandLoanDisbursement(
+        ticketId,
+        ticketApprovalRecord.insertId,
+        "APPROVE-TICKET",
+        "Ticket fully approved",
+        req.userId
       );
     }
-
-    // 12. Create a log in ticket log for approval action
-    await createPawningTicketLogOnApprovalandLoanDisbursement(
-      ticketId,
-      ticketApprovalRecord.insertId,
-      "APPROVE-TICKET",
-      req.body.note || `Approved at level: ${nextPendingLevel.level_name}`,
-      req.userId
-    );
 
     // 13. Prepare response message
     let message = `Approval recorded for level: ${nextPendingLevel.level_name}`;

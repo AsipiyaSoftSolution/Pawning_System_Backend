@@ -1400,7 +1400,7 @@ async function checkUserCanApproveTicket(
   userDesignationId,
   isHeadBranch,
   branchId,
-  userId // ADD THIS PARAMETER - we need the actual user ID
+  userId // ADDED: we need the actual user ID
 ) {
   try {
     // 1. Find the approval range that matches the ticket amount
@@ -1552,13 +1552,24 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
     let dataParams = [];
     let baseWhereConditions = "(pt.Status IS NULL OR pt.Status = '0')";
 
-    // Simple branch filtering: Head office = all branches, Regular branch = own branch only
+    // Branch filtering with branchId filter support for head office
     if (req.isHeadBranch === true) {
-      baseWhereConditions =
-        "pt.Branch_idBranch IN (SELECT idBranch FROM branch WHERE Company_idCompany = ?) AND (pt.Status IS NULL OR pt.Status = '0')";
-      countParams = [req.companyId];
-      dataParams = [req.companyId];
+      // Head office user
+      if (branchId) {
+        // If branchId filter is provided, show only that specific branch
+        baseWhereConditions =
+          "pt.Branch_idBranch = ? AND (pt.Status IS NULL OR pt.Status = '0')";
+        countParams = [parseInt(branchId)];
+        dataParams = [parseInt(branchId)];
+      } else {
+        // No branchId filter, show all branches in the company
+        baseWhereConditions =
+          "pt.Branch_idBranch IN (SELECT idBranch FROM branch WHERE Company_idCompany = ?) AND (pt.Status IS NULL OR pt.Status = '0')";
+        countParams = [req.companyId];
+        dataParams = [req.companyId];
+      }
     } else {
+      // Regular branch user - always show only their own branch
       baseWhereConditions =
         "pt.Branch_idBranch = ? AND (pt.Status IS NULL OR pt.Status = '0')";
       countParams = [req.branchId];
@@ -1663,7 +1674,7 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
           req.designationId,
           req.isHeadBranch,
           branchId,
-          req.userId // ADD THIS
+          req.userId // ADDED THIS
         );
 
         if (accessCheck.canView) {
@@ -1712,7 +1723,7 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
   }
 };
 
-// ticket approve (remains the same as in document 5)
+// ticket approve
 export const approvePawningTicket = async (req, res, next) => {
   try {
     const ticketId = req.params.id || req.params.ticketId;

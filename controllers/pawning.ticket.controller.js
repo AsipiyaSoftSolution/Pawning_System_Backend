@@ -1399,7 +1399,8 @@ async function checkUserCanApproveTicket(
   companyId,
   userDesignationId,
   isHeadBranch,
-  branchId
+  branchId,
+  userId // ADD THIS PARAMETER - we need the actual user ID
 ) {
   try {
     // 1. Find the approval range that matches the ticket amount
@@ -1432,9 +1433,9 @@ async function checkUserCanApproveTicket(
       return { canView: false, canApprove: false };
     }
 
-    // 3. Get already approved levels for this ticket
+    // 3. Get already approved levels for this ticket WITH USER INFO
     const [approvedLevels] = await pool.query(
-      `SELECT ApprovalRangeLevel_idApprovalRangeLevel
+      `SELECT ApprovalRangeLevel_idApprovalRangeLevel, approved_by
        FROM pawning_ticket_approval 
        WHERE Pawning_Ticket_idPawning_Ticket = ? 
          AND approval_status = 1`,
@@ -1461,60 +1462,22 @@ async function checkUserCanApproveTicket(
     const allLevelsApproved = approvedLevelIds.length === levels.length;
 
     if (allLevelsApproved) {
-      // Check if user participated in ANY level
-      let userParticipatedInAnyLevel = false;
+      // Check if THIS USER actually approved ANY level (not just if they could have)
+      const userApprovedAnyLevel = approvedLevels.some(
+        (al) => al.approved_by === userId
+      );
 
-      for (let i = 0; i < levels.length; i++) {
-        const level = levels[i];
-
-        const [levelDesignations] = await pool.query(
-          `SELECT Designation_idDesignation 
-           FROM pawning_ticket_approval_levels_designations 
-           WHERE ApprovalRangeLevel_idApprovalRangeLevel = ?`,
-          [level.idApprovalRangeLevel]
-        );
-
-        const levelDesignationIds = levelDesignations.map(
-          (d) => d.Designation_idDesignation
-        );
-
-        if (levelDesignationIds.includes(userDesignationId)) {
-          userParticipatedInAnyLevel = true;
-          break;
-        }
-      }
-
-      if (userParticipatedInAnyLevel) {
-        return { canView: true, canApprove: false };
-      } else {
-        return { canView: false, canApprove: false };
-      }
+      return {
+        canView: userApprovedAnyLevel,
+        canApprove: false,
+      };
     }
 
-    // 6. Check if user participated in any PREVIOUS (already approved) levels
-    let userParticipatedInPreviousLevel = false;
-
-    if (currentPendingLevelIndex > 0) {
-      for (let i = 0; i < currentPendingLevelIndex; i++) {
-        const previousLevel = levels[i];
-
-        const [previousLevelDesignations] = await pool.query(
-          `SELECT Designation_idDesignation 
-           FROM pawning_ticket_approval_levels_designations 
-           WHERE ApprovalRangeLevel_idApprovalRangeLevel = ?`,
-          [previousLevel.idApprovalRangeLevel]
-        );
-
-        const previousLevelDesignationIds = previousLevelDesignations.map(
-          (d) => d.Designation_idDesignation
-        );
-
-        if (previousLevelDesignationIds.includes(userDesignationId)) {
-          userParticipatedInPreviousLevel = true;
-          break;
-        }
-      }
-    }
+    // 6. Check if THIS USER actually approved any PREVIOUS level
+    // CRITICAL FIX: Check actual approvals by this user, not just designation eligibility
+    const userApprovedPreviousLevel = approvedLevels.some(
+      (al) => al.approved_by === userId
+    );
 
     // 7. Get designations authorized for the CURRENT PENDING level
     const [currentLevelDesignations] = await pool.query(
@@ -1533,21 +1496,24 @@ async function checkUserCanApproveTicket(
       authorizedDesignationIds.includes(userDesignationId);
 
     // 9. Decision logic for VIEW access
+    // User can view if they:
+    // - Actually approved a previous level OR
+    // - Are authorized for the current level
     const canViewBasedOnParticipation =
-      userParticipatedInPreviousLevel || userIsAuthorizedForCurrentLevel;
+      userApprovedPreviousLevel || userIsAuthorizedForCurrentLevel;
 
     if (!canViewBasedOnParticipation) {
       return { canView: false, canApprove: false };
     }
 
-    // 10. PRIORITY: If user participated in previous level, they can VIEW but NOT approve
-    // This takes priority even if they're also authorized for current level
-    if (userParticipatedInPreviousLevel) {
+    // 10. CRITICAL FIX: If THIS USER actually approved a previous level,
+    // they can VIEW but NOT approve the current level
+    if (userApprovedPreviousLevel) {
       return { canView: true, canApprove: false };
     }
 
-    // 11. User can approve current level (and did NOT participate in previous levels)
-    // Check head office and branch restrictions
+    // 11. User is authorized for current level and did NOT actually approve any previous level
+    // Now check head office and branch restrictions
 
     // Check head office level restriction
     if (!currentPendingLevel.is_head_office_level && isHeadBranch) {
@@ -1688,6 +1654,7 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
 
     for (const ticket of allTickets) {
       try {
+        // PASS userId to the function
         const accessCheck = await checkUserCanApproveTicket(
           ticket.idPawning_Ticket,
           ticket.Pawning_Advance_Amount,
@@ -1695,7 +1662,8 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
           req.companyId,
           req.designationId,
           req.isHeadBranch,
-          branchId
+          branchId,
+          req.userId // ADD THIS
         );
 
         if (accessCheck.canView) {

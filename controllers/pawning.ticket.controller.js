@@ -2015,9 +2015,11 @@ export const rejectPawningTicket = async (req, res, next) => {
   try {
     const ticketId = req.params.id || req.params.ticketId;
     const { note } = req.body;
+
     if (!ticketId) {
       return next(errorHandler(400, "Ticket ID is required"));
     }
+
     if (!note) {
       return next(errorHandler(400, "Rejection note is required"));
     }
@@ -2026,47 +2028,209 @@ export const rejectPawningTicket = async (req, res, next) => {
       return next(errorHandler(400, "Note cannot exceed 500 characters"));
     }
 
-    if (note) {
-      const sanitizedNote = note.replace(/</g, "&lt;").replace(/>/g, "&gt;"); // basic sanitization
-      req.body.note = sanitizedNote;
-    }
+    const sanitizedNote = note.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    req.body.note = sanitizedNote;
 
     // Check if the ticket exists and is pending approval
     const [existingTicketRow] = await pool.query(
-      "SELECT Status,idPawning_Ticket FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
-      [ticketId, req.branchId]
+      "SELECT Status, idPawning_Ticket, Pawning_Advance_Amount, Branch_idBranch FROM pawning_ticket WHERE idPawning_Ticket = ?",
+      [ticketId]
     );
 
     if (existingTicketRow.length === 0) {
       return next(errorHandler(404, "No ticket found for the given ID"));
     }
 
-    // Check if ticket is already approved or in different status
-    const currentStatus = existingTicketRow[0].Status;
-    if (currentStatus !== null && currentStatus !== "0") {
+    const ticket = existingTicketRow[0];
+
+    // Check branch access
+    if (req.isHeadBranch === false && ticket.Branch_idBranch !== req.branchId) {
+      return next(errorHandler(403, "You don't have access to this ticket"));
+    }
+
+    // Check if ticket is in pending status
+    if (ticket.Status !== null && ticket.Status !== "0") {
       return next(
         errorHandler(400, "Only tickets with pending status can be rejected")
       );
     }
 
-    const ticketIdToUpdate = existingTicketRow[0].idPawning_Ticket;
-    // Update the ticket status to rejected (4)
-    const [result] = await pool.query(
-      "UPDATE pawning_ticket SET Status = '4' WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
-      [ticketIdToUpdate, req.branchId]
+    // Check if approval ranges are configured
+    const [rangesCheck] = await pool.query(
+      `SELECT COUNT(*) as count FROM pawning_ticket_approval_range WHERE companyid = ?`,
+      [req.companyId]
     );
 
-    if (result.affectedRows === 0) {
-      return next(errorHandler(500, "Failed to reject the ticket"));
+    const hasApprovalRanges = rangesCheck[0].count > 0;
+
+    // Simple approval mode (no ranges)
+    if (!hasApprovalRanges) {
+      // Update the ticket status to rejected (4)
+      const [result] = await pool.query(
+        "UPDATE pawning_ticket SET Status = '4' WHERE idPawning_Ticket = ?",
+        [ticketId]
+      );
+
+      if (result.affectedRows === 0) {
+        return next(errorHandler(500, "Failed to reject the ticket"));
+      }
+
+      // Insert a record to ticket_has_approval table
+      const [approvalResult] = await pool.query(
+        "INSERT INTO ticket_has_approval (Pawning_Ticket_idPawning_Ticket, User, Date_Time, Note, Type) VALUES (?, ?, NOW(), ?, ?)",
+        [ticketId, req.userId, req.body.note, "REJECT"]
+      );
+
+      if (approvalResult.affectedRows === 0) {
+        return next(
+          errorHandler(500, "Failed to record the ticket rejection action")
+        );
+      }
+
+      return res.status(200).json({
+        success: true,
+        ticketId: ticketId,
+        message: "Pawning ticket rejected successfully.",
+        approvalMode: "simple",
+      });
     }
 
-    // insert a record to ticket_has_approval table
-    const [approvalResult] = await pool.query(
-      "INSERT INTO ticket_has_approval (Pawning_Ticket_idPawning_Ticket, User, Date_Time, Note, Type) VALUES (?, ?, NOW(), ?, ?)",
-      [ticketIdToUpdate, req.userId, req.body.note, "REJECT"]
+    // Multi-level approval mode (with ranges)
+    // 1. Find the approval range for this ticket amount
+    const [ranges] = await pool.query(
+      `SELECT idApproval_Range 
+       FROM pawning_ticket_approval_range 
+       WHERE companyid = ? 
+         AND start_amount <= ? 
+         AND end_amount >= ?
+       LIMIT 1`,
+      [
+        req.companyId,
+        ticket.Pawning_Advance_Amount,
+        ticket.Pawning_Advance_Amount,
+      ]
     );
 
-    if (approvalResult.affectedRows === 0) {
+    if (ranges.length === 0) {
+      return next(
+        errorHandler(400, "No approval range configured for this ticket amount")
+      );
+    }
+
+    const rangeId = ranges[0].idApproval_Range;
+
+    // 2. Get all levels for this range
+    const [levels] = await pool.query(
+      `SELECT idApprovalRangeLevel, level_name, is_head_office_level 
+       FROM pawning_ticket_approval_ranges_level 
+       WHERE Approval_Range_idApproval_Range = ? 
+       ORDER BY idApprovalRangeLevel ASC`,
+      [rangeId]
+    );
+
+    if (levels.length === 0) {
+      return next(
+        errorHandler(400, "No approval levels configured for this range")
+      );
+    }
+
+    // 3. Get already approved levels for this ticket
+    const [approvedLevels] = await pool.query(
+      `SELECT ApprovalRangeLevel_idApprovalRangeLevel 
+       FROM pawning_ticket_approval 
+       WHERE Pawning_Ticket_idPawning_Ticket = ? 
+         AND approval_status = 1`,
+      [ticketId]
+    );
+
+    const approvedLevelIds = approvedLevels.map(
+      (al) => al.ApprovalRangeLevel_idApprovalRangeLevel
+    );
+
+    // 4. Find the next pending level
+    let nextPendingLevel = null;
+    for (const level of levels) {
+      if (!approvedLevelIds.includes(level.idApprovalRangeLevel)) {
+        nextPendingLevel = level;
+        break;
+      }
+    }
+
+    if (!nextPendingLevel) {
+      return next(errorHandler(400, "All approval levels already completed"));
+    }
+    console.log("Next pending level for rejection:", nextPendingLevel);
+
+    // 5. Verify user can reject at this level
+    // Check if this is a head office level
+    if (
+      nextPendingLevel.is_head_office_level === 1 &&
+      req.isHeadBranch === false
+    ) {
+      return next(
+        errorHandler(
+          403,
+          "This level requires head office access. You don't have permission to reject."
+        )
+      );
+    }
+
+    // 6. Check if user's designation is authorized for this level
+    const [designations] = await pool.query(
+      `SELECT Designation_idDesignation 
+       FROM pawning_ticket_approval_levels_designations 
+       WHERE ApprovalRangeLevel_idApprovalRangeLevel = ?`,
+      [nextPendingLevel.idApprovalRangeLevel]
+    );
+
+    const authorizedDesignations = designations.map(
+      (d) => d.Designation_idDesignation
+    );
+
+    if (!authorizedDesignations.includes(req.designationId)) {
+      return next(
+        errorHandler(
+          403,
+          `Your designation is not authorized to reject at level: ${nextPendingLevel.level_name}`
+        )
+      );
+    }
+
+    // 7. Record the rejection for this level
+    const [rejectionResult] = await pool.query(
+      `INSERT INTO pawning_ticket_approval 
+       (Pawning_Ticket_idPawning_Ticket, ApprovalRangeLevel_idApprovalRangeLevel, 
+        approved_by, approval_status, approval_date, remarks) 
+       VALUES (?, ?, ?, 2, NOW(), ?)`, // 2 indicates rejection in pawning_ticket_approval table.
+      [
+        ticketId,
+        nextPendingLevel.idApprovalRangeLevel,
+        req.userId,
+        req.body.note,
+      ]
+    );
+
+    if (rejectionResult.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to record the rejection"));
+    }
+
+    // 8. Update ticket status to rejected (4)
+    const [updateResult] = await pool.query(
+      "UPDATE pawning_ticket SET Status = '4' WHERE idPawning_Ticket = ?",
+      [ticketId]
+    );
+
+    if (updateResult.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to update ticket status"));
+    }
+
+    // 9. Insert a record to ticket_has_approval table
+    const [ticketRejectionRecord] = await pool.query(
+      "INSERT INTO ticket_has_approval (Pawning_Ticket_idPawning_Ticket, User, Date_Time, Note, Type) VALUES (?, ?, NOW(), ?, ?)",
+      [ticketId, req.userId, req.body.note, "REJECT"]
+    );
+
+    if (ticketRejectionRecord.affectedRows === 0) {
       return next(
         errorHandler(500, "Failed to record the ticket rejection action")
       );
@@ -2074,8 +2238,10 @@ export const rejectPawningTicket = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      ticketId: ticketIdToUpdate,
-      message: "Pawning ticket rejected successfully.",
+      ticketId: ticketId,
+      message: `Ticket rejected at level: ${nextPendingLevel.level_name}`,
+      approvalMode: "multi-level",
+      levelRejected: nextPendingLevel.level_name,
     });
   } catch (error) {
     console.error("Error in rejectPawningTicket:", error);

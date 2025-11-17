@@ -291,9 +291,23 @@ export const createPawningTicket = async (req, res, next) => {
       }
     }
 
+    // get is_Ticket_Approve_After_Create setting from company table
+    const [companySettings] = await pool.query(
+      "SELECT is_Ticket_Approve_After_Create FROM company WHERE idCompany = ?",
+      [req.companyId]
+    );
+
+    let status = null;
+
+    if (companySettings.length > 0) {
+      if (companySettings[0].is_Ticket_Approve_After_Create === 1) {
+        status = -1; // approved before loan disbursement
+      }
+    }
+
     // Insert into pawning_ticket table
     const [result] = await pool.query(
-      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_Date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount,Service_Charge_Type,Service_Charge_Rate,Early_Settlement_Charge_Balance,Additiona_Charges_Balance,Service_Charge_Balance,Late_Charge_Balance,Interest_Amount_Balance,Balance_Amount,Interest_Rate_Duration,stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_Date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount,Service_Charge_Type,Service_Charge_Rate,Early_Settlement_Charge_Balance,Additiona_Charges_Balance,Service_Charge_Balance,Late_Charge_Balance,Interest_Amount_Balance,Balance_Amount,Interest_Rate_Duration,stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,Status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [
         data.ticketData.ticketNo,
         data.ticketData.grantSeqNo,
@@ -336,6 +350,7 @@ export const createPawningTicket = async (req, res, next) => {
         productPlanStagesData[0]?.stage2Interest || 0,
         productPlanStagesData[0]?.stage3Interest || 0,
         productPlanStagesData[0]?.stage4Interest || 0,
+        status, // initial status (can be null or -1 based on company settings)
       ]
     );
 
@@ -452,6 +467,17 @@ export const createPawningTicket = async (req, res, next) => {
       data.ticketData.customerId,
       req.userId
     );
+
+    if (status === -1) {
+      // create log entry for ticket approval if ticket is auto approved after creation
+      await createPawningTicketLogOnApprovalandLoanDisbursement(
+        ticketId,
+        ticketId, // typeId is also the ticketId here
+        "APPROVE-TICKET",
+        "Ticket approved, according to company settings it is approved after creation.",
+        req.userId
+      );
+    }
 
     /*if (data.grantDate !== new Date().toISOString().split("T")[0]) {
       // If the grant date is not today, create logs for interest and penalty up to today

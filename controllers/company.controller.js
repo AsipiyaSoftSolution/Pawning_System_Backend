@@ -2915,3 +2915,75 @@ async function updateLevelDesignations(
     );
   }
 }
+
+// function to update (on or off Approve ticket after creation)
+export const updateApproveTicketAfterCreationSetting = async (
+  req,
+  res,
+  next
+) => {
+  try {
+    const { approveAfterCreation } = req.body;
+
+    if (approveAfterCreation === undefined) {
+      return next(
+        errorHandler(400, "approveAfterCreation field is required in body")
+      );
+    }
+
+    if (approveAfterCreation !== 0 && approveAfterCreation !== 1) {
+      return next(
+        errorHandler(400, "approveAfterCreation must be either 0 or 1")
+      );
+    }
+
+    const [updateResult] = await pool.query(
+      `UPDATE company 
+       SET is_Ticket_Approve_After_Create = ? 
+       WHERE idCompany = ?`,
+      [approveAfterCreation, req.companyId]
+    );
+
+    if (updateResult.affectedRows === 0) {
+      return next(
+        errorHandler(404, "Company not found or setting not updated")
+      );
+    }
+
+    res.status(200).json({
+      message: "Approve ticket after creation setting updated successfully",
+      success: true,
+      approveAfterCreation: approveAfterCreation,
+    });
+  } catch (error) {
+    console.error(
+      "Error updating approve ticket after creation setting:",
+      error
+    );
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// get approve ticket after creation status
+export const getApproveTicketAfterCreationSetting = async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT is_Ticket_Approve_After_Create 
+       FROM company 
+       WHERE idCompany = ?`,
+      [req.companyId]
+    );
+
+    res.status(200).json({
+      message: "Approve ticket after creation setting fetched successfully",
+      success: true,
+      approveAfterCreation: rows[0]?.is_Ticket_Approve_After_Create || 0,
+    });
+  } catch (error) {
+    console.error(
+      "Error fetching approve ticket after creation setting:",
+      error
+    );
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};

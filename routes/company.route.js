@@ -45,6 +45,8 @@ import {
   getPawningTicketApprovalRanges,
   deletePawningTicketApprovalRange,
   updatePawningTicketApprovalRange,
+  updateApproveTicketAfterCreationSetting,
+  getApproveTicketAfterCreationSetting,
 } from "../controllers/company.controller.js";
 const route = express.Router();
 
@@ -148,10 +150,25 @@ route.delete(
   deletePawningTicketApprovalRange
 ); // Delete pawning ticket approval range by ID
 
+// Update pawning ticket approval range by ID
 route.put(
   "/pawning-ticket-approval-range/:rangeId",
   protectedRoute,
   updatePawningTicketApprovalRange
+);
+
+// Update setting to approve ticket after creation
+route.patch(
+  "/approve-ticket-after-creation-setting",
+  protectedRoute,
+  updateApproveTicketAfterCreationSetting
+);
+
+// Get setting to approve ticket after creation
+route.get(
+  "/approve-ticket-after-creation-setting",
+  protectedRoute,
+  getApproveTicketAfterCreationSetting
 );
 
 // TEST USER - to be removed in production

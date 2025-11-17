@@ -2,6 +2,7 @@ import express from "express";
 import { protectedRoute } from "../middlewares/auth.middleware.js";
 import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
 import { checkUserSelectedHeadBranch } from "../middlewares/headBranch.middleware.js";
+import { checkCompanyTicketApprovalRanges } from "../middlewares/companyTicketApprovalRanges.js";
 import {
   createPawningTicket,
   getGrandSeqNo,
@@ -123,6 +124,7 @@ router.get(
   protectedRoute,
   checkUserBranchAccess,
   checkUserSelectedHeadBranch,
+  checkCompanyTicketApprovalRanges,
   getPawningTicketsForApproval
 ); // Get pawning tickets for approval
 
@@ -130,6 +132,8 @@ router.patch(
   "/:branchId/ticket-status-to-approve-before-loan-disbursement/:ticketId",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserSelectedHeadBranch,
+  checkCompanyTicketApprovalRanges,
   approvePawningTicket
 ); // Approve a pawning ticket status to -1 before loan disbursement
 

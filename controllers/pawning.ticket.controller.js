@@ -1153,8 +1153,6 @@ export const getTicketDataById = async (req, res, next) => {
     // attach images to ticket data
     ticketData[0].images = ticketImages || [];
 
-    delete ticketData[0].Branch_idBranch; // remove branch id from response
-
     // fetch the user name who created the ticket
     const [userData] = await pool.query(
       "SELECT full_name FROM user WHERE idUser = ?",

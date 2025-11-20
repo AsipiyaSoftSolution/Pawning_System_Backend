@@ -2431,9 +2431,6 @@ export const createPawningTicketApprovalRange = async (req, res, next) => {
       return next(errorHandler(400, "Range with levels data is required"));
     }
 
-    console.log(rangeWithLevels.start_amount, "start amount");
-    console.log(rangeWithLevels.end_amount, "end amount");
-
     if (
       rangeWithLevels.start_amount === undefined ||
       isNaN(rangeWithLevels.start_amount) ||
@@ -2484,6 +2481,32 @@ export const createPawningTicketApprovalRange = async (req, res, next) => {
               )
             );
           }
+        }
+      }
+    }
+
+    // Ensure the new range does not overlap existing ranges for this company
+    const [existingRanges] = await pool.query(
+      "SELECT start_amount, end_amount FROM pawning_ticket_approval_range WHERE companyid = ?",
+      [req.companyId]
+    );
+
+    if (existingRanges && existingRanges.length > 0) {
+      const newStart = Number(rangeWithLevels.start_amount);
+      const newEnd = Number(rangeWithLevels.end_amount);
+
+      for (const r of existingRanges) {
+        const existStart = Number(r.start_amount);
+        const existEnd = Number(r.end_amount);
+
+        // Check for any overlap (including touching ranges)
+        if (!(newEnd < existStart || newStart > existEnd)) {
+          return next(
+            errorHandler(
+              400,
+              `Provided range ${newStart} - ${newEnd} overlaps existing range ${existStart} - ${existEnd}`
+            )
+          );
         }
       }
     }

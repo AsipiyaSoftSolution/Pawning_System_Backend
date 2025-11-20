@@ -1517,33 +1517,17 @@ export const getArticlesConditions = async (req, res, next) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
-    const search = req.query.search || "";
-    let paginationData;
-    let conditions;
 
-    if (search && typeof search !== "string") {
-      const searchPattern = formatSearchPattern(search);
-      paginationData = await getPaginationData(
-        "SELECT COUNT(*) as total FROM article_conditions WHERE Company_idCompany = ? AND Description LIKE ?",
-        [req.companyId, searchPattern],
-        page,
-        limit
-      );
-
-      [conditions] = await pool.query(
-        "SELECT * FROM article_conditions WHERE Company_idCompany = ? AND Description LIKE ? LIMIT ? OFFSET ?",
-        [req.companyId, `%${searchPattern}%`, limit, offset]
-      );
-    }
-
-    paginationData = await getPaginationData(
+    // Pagination count (no search filtering)
+    const paginationData = await getPaginationData(
       "SELECT COUNT(*) as total FROM article_conditions WHERE Company_idCompany = ?",
       [req.companyId],
       page,
       limit
     );
 
-    [conditions] = await pool.query(
+    // Fetch paginated article conditions for the company
+    const [conditions] = await pool.query(
       "SELECT * FROM article_conditions WHERE Company_idCompany = ? LIMIT ? OFFSET ?",
       [req.companyId, limit, offset]
     );

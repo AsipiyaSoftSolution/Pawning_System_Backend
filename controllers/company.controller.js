@@ -1143,7 +1143,7 @@ export const createBranch = async (req, res, next) => {
       [
         `Pawning Plot Account`,
         "Charted Account",
-        "Current Assets",
+        "Cash and Bank", // pawning plot under cash and bank
         "Assets",
         result.insertId,
         1,

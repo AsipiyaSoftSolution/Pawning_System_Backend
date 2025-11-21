@@ -18,6 +18,7 @@ import {
   getArticleCategories,
   createUser,
   createBranch,
+  updateBranch,
   getAllBranches,
   assignUserToBranch,
   getBranchData,
@@ -92,12 +93,19 @@ route.get(
 ); // Get all users assigned to the branch of the logged-in user
 route.patch("/user/:id", protectedRoute, updateUser); // Update user by ID (assign/revoke branch, designation, status)
 route.post(
-  "/:branchId/branch",
+  "//branch",
   protectedRoute,
   checkUserBranchAccess,
   checkUserSelectedHeadBranch,
   createBranch
 ); // Create a new branch
+route.patch(
+  "/:branchId/branch/:id",
+  protectedRoute,
+  checkUserBranchAccess,
+  checkUserSelectedHeadBranch,
+  updateBranch
+); // Update branch by ID
 route.get("/branches", protectedRoute, getAllBranches); // Get all branches of the company
 route.post("/user/assign-to-branch", protectedRoute, assignUserToBranch); // Assign users to branches
 route.get("/branch/:id", protectedRoute, getBranchData); // Get branch data by ID (for users that have assigned to specific branch)

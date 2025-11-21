@@ -1198,6 +1198,78 @@ export const createBranch = async (req, res, next) => {
   }
 };
 
+// Update branch by ID
+export const updateBranch = async (req, res, next) => {
+  try {
+    const branchId = req.params.id;
+    const { address, contact_no, branchCode, branchName } = req.body;
+
+    if (!branchId) {
+      return next(errorHandler(400, "Branch ID is required"));
+    }
+
+    if (req.isHeadBranch === false) {
+      return next(errorHandler(403, "Only Head Office can update branches"));
+    }
+
+    const [existingBranch] = await pool.query(
+      "SELECT * FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
+      [branchId, req.companyId]
+    );
+
+    if (existingBranch.length === 0) {
+      return next(errorHandler(404, "Branch not found for this company"));
+    }
+
+    const [result] = await pool.query(
+      "UPDATE branch SET Name = ?, Address = ?, Contact_No = ?, Branch_Code = ? WHERE idBranch = ? AND Company_idCompany = ?",
+      [branchName, address, contact_no, branchCode, branchId, req.companyId]
+    );
+
+    if (result.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to update branch"));
+    }
+
+    // if branch name is updated, we may need to update related accounting accounts names
+    if (branchName && branchName !== existingBranch[0].Name) {
+      // Update related accounting accounts
+      // Get the account from accounting accounts table where Account's group of type 'Assets', branchId is req.branchId (head office) and Account_Name contains the old branch name
+      const [accountToUpdate] = await pool.query(
+        "SELECT * FROM accounting_accounts WHERE Branch_idBranch = ? AND Group_Of_Type = 'Assets' AND Account_Name LIKE ?",
+        [req.branchId, `%${existingBranch[0].Name}%`]
+      );
+
+      if (accountToUpdate.length > 0) {
+        const updatedAccountName = accountToUpdate[0].Account_Name.replace(
+          existingBranch[0].Name,
+          branchName
+        );
+        await pool.query(
+          "UPDATE accounting_accounts SET Account_Name = ? WHERE idAccounting_Accounts = ?",
+          [updatedAccountName, accountToUpdate[0].idAccounting_Accounts]
+        );
+      }
+    }
+
+    const [updatedBranch] = await pool.query(
+      "SELECT * FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
+      [branchId, req.companyId]
+    );
+
+    if (!updatedBranch[0]) {
+      return next(errorHandler(404, "Updated branch not found"));
+    }
+
+    res.status(200).json({
+      message: "Branch updated successfully",
+      branch: updatedBranch[0],
+    });
+  } catch (error) {
+    console.error("Error updating branch:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
 // Get all branches for the company
 export const getAllBranches = async (req, res, next) => {
   try {

@@ -1164,11 +1164,14 @@ export const createBranch = async (req, res, next) => {
     // Create a log entry for the new pawning plot account
     await createAccountingAccountLog(createdPawningPlotAccount[0], req.userId);
 
+    // trim the branch name to remove spaces for account naming
+    const trimmedBranchName = branchName.replace(/\s+/g, "");
+
     // NOW Create the account for head office side
     const [headOfficeTransferAccountHO] = await pool.query(
       "INSERT INTO accounting_accounts (Account_Name, Account_Type, Created_At,Type,Group_Of_Type,Account_Balance,Status,Branch_idBranch,User_idUser) VALUES (?,?,NOW(),?,?,?,?,?,?)",
       [
-        `${branchName}_Branch Transfer Account`,
+        `${trimmedBranchName}_Branch Transfer Account`,
         "Charted Account",
         "Current Assets",
         "Assets",

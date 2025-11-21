@@ -93,7 +93,7 @@ route.get(
 ); // Get all users assigned to the branch of the logged-in user
 route.patch("/user/:id", protectedRoute, updateUser); // Update user by ID (assign/revoke branch, designation, status)
 route.post(
-  "//branch",
+  "/:branchId/branch",
   protectedRoute,
   checkUserBranchAccess,
   checkUserSelectedHeadBranch,

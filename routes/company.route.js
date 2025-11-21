@@ -1,6 +1,7 @@
 import express from "express";
 import { protectedRoute } from "../middlewares/auth.middleware.js";
 import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
+import { checkUserSelectedHeadBranch } from "../middlewares/headBranch.middleware.js";
 import {
   getCompanyDetails,
   creteDesignation,
@@ -90,7 +91,13 @@ route.get(
   getAllUsersForTheBranch
 ); // Get all users assigned to the branch of the logged-in user
 route.patch("/user/:id", protectedRoute, updateUser); // Update user by ID (assign/revoke branch, designation, status)
-route.post("/branch", protectedRoute, createBranch); // Create a new branch
+route.post(
+  "/:branchId/branch",
+  protectedRoute,
+  checkUserBranchAccess,
+  checkUserSelectedHeadBranch,
+  createBranch
+); // Create a new branch
 route.get("/branches", protectedRoute, getAllBranches); // Get all branches of the company
 route.post("/user/assign-to-branch", protectedRoute, assignUserToBranch); // Assign users to branches
 route.get("/branch/:id", protectedRoute, getBranchData); // Get branch data by ID (for users that have assigned to specific branch)

@@ -126,3 +126,17 @@ export const getReportPaginationData = async (
     throw new Error("Failed to get pagination data");
   }
 };
+
+// get company branch id's
+export const getCompanyBranches = async (companyId) => {
+  try {
+    const [branches] = await pool.query(
+      "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
+      [companyId]
+    );
+    return branches.map((branch) => branch.idBranch);
+  } catch (error) {
+    console.error("Error in getCompanyBranches:", error);
+    throw new Error("Failed to get company branches");
+  }
+};

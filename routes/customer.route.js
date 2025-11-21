@@ -15,6 +15,7 @@ import {
   getCustomerCompleteDataById,
 } from "../controllers/customer.controller.js";
 import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
+import { checkUserSelectedHeadBranch } from "../middlewares/headBranch.middleware.js";
 
 const router = express.Router();
 
@@ -28,6 +29,7 @@ router.get(
   "/:branchId/customers",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserSelectedHeadBranch,
   getCustomersForTheBranch
 ); // Get customers for a specific branch | or search customers by NIC,Mobile NO, Customer Id or Name
 
@@ -35,6 +37,7 @@ router.get(
   "/:branchId/customer/:id",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserSelectedHeadBranch,
   getCustomerById
 );
 // Get a customer by ID for a specific branch

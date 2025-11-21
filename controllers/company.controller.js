@@ -1517,33 +1517,17 @@ export const getArticlesConditions = async (req, res, next) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
-    const search = req.query.search || "";
-    let paginationData;
-    let conditions;
 
-    if (search && typeof search !== "string") {
-      const searchPattern = formatSearchPattern(search);
-      paginationData = await getPaginationData(
-        "SELECT COUNT(*) as total FROM article_conditions WHERE Company_idCompany = ? AND Description LIKE ?",
-        [req.companyId, searchPattern],
-        page,
-        limit
-      );
-
-      [conditions] = await pool.query(
-        "SELECT * FROM article_conditions WHERE Company_idCompany = ? AND Description LIKE ? LIMIT ? OFFSET ?",
-        [req.companyId, `%${searchPattern}%`, limit, offset]
-      );
-    }
-
-    paginationData = await getPaginationData(
+    // Pagination count (no search filtering)
+    const paginationData = await getPaginationData(
       "SELECT COUNT(*) as total FROM article_conditions WHERE Company_idCompany = ?",
       [req.companyId],
       page,
       limit
     );
 
-    [conditions] = await pool.query(
+    // Fetch paginated article conditions for the company
+    const [conditions] = await pool.query(
       "SELECT * FROM article_conditions WHERE Company_idCompany = ? LIMIT ? OFFSET ?",
       [req.companyId, limit, offset]
     );
@@ -2431,9 +2415,6 @@ export const createPawningTicketApprovalRange = async (req, res, next) => {
       return next(errorHandler(400, "Range with levels data is required"));
     }
 
-    console.log(rangeWithLevels.start_amount, "start amount");
-    console.log(rangeWithLevels.end_amount, "end amount");
-
     if (
       rangeWithLevels.start_amount === undefined ||
       isNaN(rangeWithLevels.start_amount) ||
@@ -2484,6 +2465,32 @@ export const createPawningTicketApprovalRange = async (req, res, next) => {
               )
             );
           }
+        }
+      }
+    }
+
+    // Ensure the new range does not overlap existing ranges for this company
+    const [existingRanges] = await pool.query(
+      "SELECT start_amount, end_amount FROM pawning_ticket_approval_range WHERE companyid = ?",
+      [req.companyId]
+    );
+
+    if (existingRanges && existingRanges.length > 0) {
+      const newStart = Number(rangeWithLevels.start_amount);
+      const newEnd = Number(rangeWithLevels.end_amount);
+
+      for (const r of existingRanges) {
+        const existStart = Number(r.start_amount);
+        const existEnd = Number(r.end_amount);
+
+        // Check for any overlap (including touching ranges)
+        if (!(newEnd < existStart || newStart > existEnd)) {
+          return next(
+            errorHandler(
+              400,
+              `Provided range ${newStart} - ${newEnd} overlaps existing range ${existStart} - ${existEnd}`
+            )
+          );
         }
       }
     }

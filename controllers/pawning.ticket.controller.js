@@ -1118,14 +1118,31 @@ export const getTicketDataById = async (req, res, next) => {
     let paymentHistory;
     let ticketLogs;
 
-    [ticketData] = await pool.query(
-      "SELECT * FROM pawning_ticket WHERE idPawning_Ticket = ? AND  Branch_idBranch = ?",
-      [ticketId, req.branchId]
-    );
+    let ticketQuery = "";
+    let ticketQueryParams = [];
+
+    if (req.isHeadBranch === true) {
+      ticketQuery = "SELECT * FROM pawning_ticket WHERE idPawning_Ticket = ?";
+      ticketQueryParams = [ticketId];
+    } else {
+      ticketQuery =
+        "SELECT * FROM pawning_ticket WHERE idPawning_Ticket = ? AND  Branch_idBranch = ?";
+      ticketQueryParams = [ticketId, req.branchId];
+    }
+
+    [ticketData] = await pool.query(ticketQuery, ticketQueryParams);
 
     if (ticketData.length === 0) {
       return next(errorHandler(404, "No ticket found for the given ID"));
     }
+
+    // get the branch name for the ticket
+    const [branchData] = await pool.query(
+      "SELECT Name FROM branch WHERE idBranch = ?",
+      [ticketData[0].Branch_idBranch]
+    );
+
+    ticketData[0].branchName = branchData[0]?.Name || "Unknown Branch"; // attach branch name to ticket data
 
     // fetch ticket images
     const [ticketImages] = await pool.query(
@@ -1135,8 +1152,6 @@ export const getTicketDataById = async (req, res, next) => {
 
     // attach images to ticket data
     ticketData[0].images = ticketImages || [];
-
-    delete ticketData[0].Branch_idBranch; // remove branch id from response
 
     // fetch the user name who created the ticket
     const [userData] = await pool.query(

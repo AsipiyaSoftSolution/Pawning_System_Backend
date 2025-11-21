@@ -1,7 +1,7 @@
 import { errorHandler } from "../utils/errorHandler.js";
 import { pool } from "../utils/db.js";
 import { uploadImage } from "../utils/cloudinary.js";
-import { getPaginationData } from "../utils/helper.js";
+import { getPaginationData, getCompanyBranches } from "../utils/helper.js";
 import { parse } from "path";
 
 const customerLog = async (idCustomer, date, type, Description, userId) => {
@@ -233,22 +233,31 @@ export const getCustomersForTheBranch = async (req, res, next) => {
     const search = req.query.search || "";
     let paginationData;
     let customers;
-    console.log("search:", search);
 
-    // If search query is provided, filter customers based on search criteria and get pagination data
+    // Default to the current branch ID; if user is head branch, fetch all company branch IDs
+    let branchIds = [branchId];
+    if (req.isHeadBranch) {
+      // Get all branch IDs for the company
+      const companyBranchIds = await getCompanyBranches(req.companyId);
+      if (Array.isArray(companyBranchIds) && companyBranchIds.length > 0) {
+        branchIds = companyBranchIds;
+      }
+    }
+
+    // Use `IN (?)` so it works for single branch or multiple branches
     if (search) {
       paginationData = await getPaginationData(
-        "SELECT COUNT(*) as total FROM customer WHERE Branch_idBranch = ? AND (First_Name LIKE ? OR NIC LIKE ? OR Mobile_No LIKE ? OR idCustomer LIKE ?)",
-        [branchId, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`],
+        "SELECT COUNT(*) as total FROM customer WHERE Branch_idBranch IN (?) AND (First_Name LIKE ? OR NIC LIKE ? OR Mobile_No LIKE ? OR idCustomer LIKE ?)",
+        [branchIds, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`],
         page,
         limit
       );
 
-      // get customers for the branch with search - Fixed parameter order and MySQL LIMIT syntax
+      // get customers for the branch(es) with search
       [customers] = await pool.query(
-        "SELECT idCustomer,Full_Name,First_Name,NIC,Address1,Mobile_No,Work_Place,DOB,Status FROM customer WHERE Branch_idBranch = ? AND (First_Name LIKE ? OR NIC LIKE ? OR Mobile_No LIKE ? OR idCustomer LIKE ?) LIMIT ?, ?",
+        "SELECT idCustomer,Full_Name,First_Name,NIC,Address1,Mobile_No,Work_Place,DOB,Status FROM customer WHERE Branch_idBranch IN (?) AND (First_Name LIKE ? OR NIC LIKE ? OR Mobile_No LIKE ? OR idCustomer LIKE ?) LIMIT ?, ?",
         [
-          branchId,
+          branchIds,
           `%${search}%`,
           `%${search}%`,
           `%${search}%`,
@@ -257,21 +266,19 @@ export const getCustomersForTheBranch = async (req, res, next) => {
           limit,
         ]
       );
-    }
-    // If no search query is provided, get all customers for the branch and get pagination data
-    else {
-      // get pagination data
+    } else {
+      // get pagination data for branch(es)
       paginationData = await getPaginationData(
-        "SELECT COUNT(*) as total FROM customer WHERE Branch_idBranch = ?",
-        [branchId],
+        "SELECT COUNT(*) as total FROM customer WHERE Branch_idBranch IN (?)",
+        [branchIds],
         page,
         limit
       );
 
-      // get customers for the branch - Fixed MySQL LIMIT syntax
+      // get customers for the branch(es)
       [customers] = await pool.query(
-        "SELECT idCustomer,First_Name,Full_Name,NIC,Address1,Mobile_No,Work_Place,DOB,Status FROM customer WHERE Branch_idBranch = ? LIMIT ?, ?",
-        [branchId, offset, limit]
+        "SELECT idCustomer,First_Name,Full_Name,NIC,Address1,Mobile_No,Work_Place,DOB,Status FROM customer WHERE Branch_idBranch IN (?) LIMIT ?, ?",
+        [branchIds, offset, limit]
       );
     }
 
@@ -296,11 +303,22 @@ export const getCustomerById = async (req, res, next) => {
     }
 
     let customer;
+    let customerQuery;
+    let customerQueryParams;
+
+    if (req.isHeadBranch === true) {
+      customerQuery = "SELECT * FROM customer WHERE idCustomer = ?";
+      customerQueryParams = [customerId];
+    } else {
+      customerQuery =
+        "SELECT * FROM customer WHERE idCustomer = ? AND Branch_idBranch = ?";
+      customerQueryParams = [customerId, branchId];
+    }
 
     // Fetch customer all data by the customer Id and the branch Id
     const [customerResult] = await pool.query(
-      "SELECT * FROM customer WHERE idCustomer = ? AND Branch_idBranch = ?",
-      [customerId, branchId]
+      customerQuery,
+      customerQueryParams
     );
 
     if (customerResult.length === 0) {
@@ -316,6 +334,14 @@ export const getCustomerById = async (req, res, next) => {
     );
 
     customer.documents = documents || [];
+
+    // Fetch the branch name and code
+    const [branchRows] = await pool.query(
+      " SELECT Name, Branch_Code FROM branch WHERE idBranch = ? ",
+      [customer.Branch_idBranch]
+    );
+
+    customer.branchInfo = branchRows[0] || {};
 
     res.status(200).json({
       message: "Customer fetched successfully",

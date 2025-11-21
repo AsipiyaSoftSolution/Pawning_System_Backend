@@ -102,6 +102,7 @@ router.get(
   "/:branchId/ticket/:ticketId",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserSelectedHeadBranch,
   getTicketDataById
 ); // Get ticket all data by ID
 

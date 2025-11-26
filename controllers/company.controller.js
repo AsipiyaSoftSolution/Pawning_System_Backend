@@ -5,6 +5,7 @@ import { getPaginationData, formatSearchPattern } from "../utils/helper.js";
 import { addAccountCreateLog } from "../utils/accounting.account.logs.js";
 import { sendWelcomeEmail } from "../utils/mailConfig.js";
 import { uploadImage, deleteImage } from "../utils/cloudinary.js";
+import { createAccountingAccountLog } from "../utils/accounting.account.logs.js";
 
 // Get COmpany Details
 export const getCompanyDetails = async (req, res, next) => {
@@ -1072,8 +1073,13 @@ export const updateUser = async (req, res, next) => {
 // Create a new branch for the company
 export const createBranch = async (req, res, next) => {
   try {
-    const { branchName, address, contact_no } = req.body;
-    if (!branchName || !address || !contact_no) {
+    const { branchName, address, contact_no, branchCode } = req.body;
+
+    if (req.isHeadBranch === false) {
+      return next(errorHandler(403, "Only Head Office can create branches"));
+    }
+
+    if (!branchName || !address || !contact_no || !branchCode) {
       return next(errorHandler(400, "All fields are required"));
     }
 
@@ -1089,13 +1095,93 @@ export const createBranch = async (req, res, next) => {
     }
 
     const [result] = await pool.query(
-      "INSERT INTO branch (Name, Address, Contact_No, Company_idCompany,Status) VALUES (?, ?, ?, ?, ?)",
-      [branchName, address, contact_no, req.companyId, "active"]
+      "INSERT INTO branch (Name, Address, Contact_No, Company_idCompany,Status,Branch_Code) VALUES (?, ?, ?, ?, ?,?)",
+      [branchName, address, contact_no, req.companyId, 0, branchCode] // status to 0 - inactive by default
     );
 
     if (result.affectedRows === 0) {
       return next(errorHandler(500, "Failed to create branch"));
     }
+
+    // create accounts for branch side (head office transfer and pawning plot account)
+
+    // Head Office Transfer Account
+    const [headOfficeTransferAccount] = await pool.query(
+      "INSERT INTO accounting_accounts (Account_Name, Account_Type, Created_At,Type,Group_Of_Type,Branch_idBranch,Account_Balance,Status,User_idUser) VALUES (?,?,NOW(),?,?,?,0,?,?)",
+      [
+        `Head Office Transfer Account`,
+        "Charted Account",
+        "Current Assets",
+        "Assets",
+        result.insertId,
+        1,
+        req.userId,
+      ]
+    );
+
+    // get the created head office transfer account data
+    const [createdHeadOfficeTransferAccount] = await pool.query(
+      "SELECT ac.* , u.full_name AS Created_by, (SELECT Account_Name FROM accounting_accounts WHERE idAccounting_Accounts = ac.Parent_Account) AS Parent_Account_Name FROM accounting_accounts ac LEFT JOIN user u ON ac.User_idUser = u.idUser WHERE ac.idAccounting_Accounts = ?",
+      [headOfficeTransferAccount.insertId]
+    );
+
+    if (!createdHeadOfficeTransferAccount[0]) {
+      return next(
+        errorHandler(404, "Created Head Office Transfer account not found")
+      );
+    }
+
+    // Create a log entry for the new head office transfer account
+    await createAccountingAccountLog(
+      createdHeadOfficeTransferAccount[0],
+      req.userId
+    );
+
+    // Pawning Plot Account
+    const [pawningPlotAccount] = await pool.query(
+      "INSERT INTO accounting_accounts (Account_Name, Account_Type, Created_At,Type,Group_Of_Type,Branch_idBranch,Account_Balance,Status,User_idUser) VALUES (?,?,NOW(),?,?,?,0,?,?)",
+      [
+        `Pawning Plot Account`,
+        "Charted Account",
+        "Cash and Bank", // pawning plot under cash and bank
+        "Assets",
+        result.insertId,
+        1,
+        req.userId,
+      ]
+    );
+
+    // get the created pawning plot account data
+    const [createdPawningPlotAccount] = await pool.query(
+      "SELECT ac.* , u.full_name AS Created_by, (SELECT Account_Name FROM accounting_accounts WHERE idAccounting_Accounts = ac.Parent_Account) AS Parent_Account_Name FROM accounting_accounts ac LEFT JOIN user u ON ac.User_idUser = u.idUser WHERE ac.idAccounting_Accounts = ?",
+      [pawningPlotAccount.insertId]
+    );
+
+    if (!createdPawningPlotAccount[0]) {
+      return next(errorHandler(404, "Created Pawning Plot account not found"));
+    }
+
+    // Create a log entry for the new pawning plot account
+    await createAccountingAccountLog(createdPawningPlotAccount[0], req.userId);
+
+    // trim the branch name to remove spaces for account naming
+    const trimmedBranchName = branchName.replace(/\s+/g, "");
+
+    // NOW Create the account for head office side
+    const [headOfficeTransferAccountHO] = await pool.query(
+      "INSERT INTO accounting_accounts (Account_Name, Account_Type, Created_At,Type,Group_Of_Type,Account_Balance,Status,Branch_idBranch,User_idUser) VALUES (?,?,NOW(),?,?,?,?,?,?)",
+      [
+        `${trimmedBranchName}_Branch Transfer Account`,
+        "Charted Account",
+        "Current Assets",
+        "Assets",
+        0,
+        1,
+        req.branchId, // head office branch id
+        req.userId,
+      ]
+    );
+
     const [newBranch] = await pool.query(
       "SELECT * FROM branch WHERE idBranch = ?",
       [result.insertId]
@@ -1111,6 +1197,78 @@ export const createBranch = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Error creating branch:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// Update branch by ID
+export const updateBranch = async (req, res, next) => {
+  try {
+    const branchId = req.params.id;
+    const { address, contact_no, branchCode, branchName } = req.body;
+
+    if (!branchId) {
+      return next(errorHandler(400, "Branch ID is required"));
+    }
+
+    if (req.isHeadBranch === false) {
+      return next(errorHandler(403, "Only Head Office can update branches"));
+    }
+
+    const [existingBranch] = await pool.query(
+      "SELECT * FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
+      [branchId, req.companyId]
+    );
+
+    if (existingBranch.length === 0) {
+      return next(errorHandler(404, "Branch not found for this company"));
+    }
+
+    const [result] = await pool.query(
+      "UPDATE branch SET Name = ?, Address = ?, Contact_No = ?, Branch_Code = ? WHERE idBranch = ? AND Company_idCompany = ?",
+      [branchName, address, contact_no, branchCode, branchId, req.companyId]
+    );
+
+    if (result.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to update branch"));
+    }
+
+    // if branch name is updated, we may need to update related accounting accounts names
+    if (branchName && branchName !== existingBranch[0].Name) {
+      // Update related accounting accounts
+      // Get the account from accounting accounts table where Account's group of type 'Assets', branchId is req.branchId (head office) and Account_Name contains the old branch name
+      const [accountToUpdate] = await pool.query(
+        "SELECT * FROM accounting_accounts WHERE Branch_idBranch = ? AND Group_Of_Type = 'Assets' AND Account_Name LIKE ?",
+        [req.branchId, `%${existingBranch[0].Name}%`]
+      );
+
+      if (accountToUpdate.length > 0) {
+        const updatedAccountName = accountToUpdate[0].Account_Name.replace(
+          existingBranch[0].Name,
+          branchName
+        );
+        await pool.query(
+          "UPDATE accounting_accounts SET Account_Name = ? WHERE idAccounting_Accounts = ?",
+          [updatedAccountName, accountToUpdate[0].idAccounting_Accounts]
+        );
+      }
+    }
+
+    const [updatedBranch] = await pool.query(
+      "SELECT * FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
+      [branchId, req.companyId]
+    );
+
+    if (!updatedBranch[0]) {
+      return next(errorHandler(404, "Updated branch not found"));
+    }
+
+    res.status(200).json({
+      message: "Branch updated successfully",
+      branch: updatedBranch[0],
+    });
+  } catch (error) {
+    console.error("Error updating branch:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

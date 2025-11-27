@@ -132,6 +132,21 @@ export const createPawningTicket = async (req, res, next) => {
       );
     }
 
+    // check if customer is blacklisted, if so block ticket creation
+    const [customerStatusRows] = await pool.query(
+      "SELECT Status FROM customer WHERE idCustomer = ?",
+      [data.ticketData.customerId]
+    );
+
+    if (
+      customerStatusRows.length > 0 &&
+      Number(customerStatusRows[0].Status) === 0
+    ) {
+      return next(
+        errorHandler(400, "Cannot create ticket. Customer is blacklisted.")
+      );
+    }
+
     // get the ticket's product service charge type and other data
     const [productData] = await pool.query(
       "SELECT Service_Charge_Create_As,Interest_Method,Service_Charge_Value,Service_Charge_Value_Type FROM pawning_product WHERE idPawning_Product = ?",

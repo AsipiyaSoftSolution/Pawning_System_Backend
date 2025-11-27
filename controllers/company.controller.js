@@ -1096,80 +1096,275 @@ export const createBranch = async (req, res, next) => {
 
     const [result] = await pool.query(
       "INSERT INTO branch (Name, Address, Contact_No, Company_idCompany,Status,Branch_Code) VALUES (?, ?, ?, ?, ?,?)",
-      [branchName, address, contact_no, req.companyId, 0, branchCode] // status to 0 - inactive by default
+      [branchName, address, contact_no, req.companyId, 0, branchCode]
     );
 
     if (result.affectedRows === 0) {
       return next(errorHandler(500, "Failed to create branch"));
     }
 
-    // create accounts for branch side (head office transfer and pawning plot account)
+    const branchId = result.insertId;
 
-    // Head Office Transfer Account
-    const [headOfficeTransferAccount] = await pool.query(
-      "INSERT INTO accounting_accounts (Account_Name, Account_Type, Created_At,Type,Group_Of_Type,Branch_idBranch,Account_Balance,Status,User_idUser) VALUES (?,?,NOW(),?,?,?,0,?,?)",
-      [
-        `Head Office Transfer Account`,
-        "Charted Account",
-        "Current Assets",
-        "Assets",
-        result.insertId,
-        1,
-        req.userId,
-      ]
-    );
-
-    // get the created head office transfer account data
-    const [createdHeadOfficeTransferAccount] = await pool.query(
-      "SELECT ac.* , u.full_name AS Created_by, (SELECT Account_Name FROM accounting_accounts WHERE idAccounting_Accounts = ac.Parent_Account) AS Parent_Account_Name FROM accounting_accounts ac LEFT JOIN user u ON ac.User_idUser = u.idUser WHERE ac.idAccounting_Accounts = ?",
-      [headOfficeTransferAccount.insertId]
-    );
-
-    if (!createdHeadOfficeTransferAccount[0]) {
-      return next(
-        errorHandler(404, "Created Head Office Transfer account not found")
+    // Helper function to create account with log
+    const createAccountWithLog = async (accountData) => {
+      const [accountResult] = await pool.query(
+        "INSERT INTO accounting_accounts (Account_Name, Account_Type, Created_At, Type, Group_Of_Type, Branch_idBranch, Account_Balance, Status, User_idUser, Account_Code, Parent_Account) VALUES (?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?)",
+        accountData
       );
-    }
 
-    // Create a log entry for the new head office transfer account
-    await createAccountingAccountLog(
-      createdHeadOfficeTransferAccount[0],
-      req.userId
-    );
+      const [createdAccount] = await pool.query(
+        "SELECT ac.*, u.full_name AS Created_by, (SELECT Account_Name FROM accounting_accounts WHERE idAccounting_Accounts = ac.Parent_Account) AS Parent_Account_Name FROM accounting_accounts ac LEFT JOIN user u ON ac.User_idUser = u.idUser WHERE ac.idAccounting_Accounts = ?",
+        [accountResult.insertId]
+      );
 
-    // Pawning Plot Account
-    const [pawningPlotAccount] = await pool.query(
-      "INSERT INTO accounting_accounts (Account_Name, Account_Type, Created_At,Type,Group_Of_Type,Branch_idBranch,Account_Balance,Status,User_idUser) VALUES (?,?,NOW(),?,?,?,0,?,?)",
-      [
-        `Pawning Plot Account`,
-        "Charted Account",
-        "Cash and Bank", // pawning plot under cash and bank
-        "Assets",
-        result.insertId,
-        1,
-        req.userId,
-      ]
-    );
+      if (!createdAccount[0]) {
+        throw new Error(`Failed to create account: ${accountData[0]}`);
+      }
 
-    // get the created pawning plot account data
-    const [createdPawningPlotAccount] = await pool.query(
-      "SELECT ac.* , u.full_name AS Created_by, (SELECT Account_Name FROM accounting_accounts WHERE idAccounting_Accounts = ac.Parent_Account) AS Parent_Account_Name FROM accounting_accounts ac LEFT JOIN user u ON ac.User_idUser = u.idUser WHERE ac.idAccounting_Accounts = ?",
-      [pawningPlotAccount.insertId]
-    );
+      await createAccountingAccountLog(createdAccount[0], req.userId);
+      return accountResult.insertId;
+    };
 
-    if (!createdPawningPlotAccount[0]) {
-      return next(errorHandler(404, "Created Pawning Plot account not found"));
-    }
+    // =====================================================
+    // BRANCH SIDE ACCOUNTS - Charted Accounts
+    // =====================================================
 
-    // Create a log entry for the new pawning plot account
-    await createAccountingAccountLog(createdPawningPlotAccount[0], req.userId);
+    // Head Office Transfer Account (Liabilities)
+    await createAccountWithLog([
+      "Head Office Transfer Account",
+      "Charted Account",
+      "Current Liabilities",
+      "Liabilities",
+      branchId,
+      0,
+      1,
+      req.userId,
+      null,
+      null,
+    ]);
 
-    // trim the branch name to remove spaces for account naming
+    // Pawning Plot Account (Assets - Cash and Bank)
+    await createAccountWithLog([
+      "Pawning Plot Account",
+      "Charted Account",
+      "Cash and Bank",
+      "Assets",
+      branchId,
+      0,
+      1,
+      req.userId,
+      null,
+      null,
+    ]);
+
+    // =====================================================
+    // ASSETS ACCOUNTS (System Default)
+    // =====================================================
+
+    // 1000 - Cash / Bank (Parent Account)
+    const cashBankAccountId = await createAccountWithLog([
+      "Cash / Bank",
+      "System Default",
+      "Assets",
+      "Assets",
+      branchId,
+      0,
+      1,
+      req.userId,
+      1000,
+      null,
+    ]);
+
+    // 1100 - Pawned Items Inventory (Gold Stock)
+    await createAccountWithLog([
+      "Pawned Items Inventory (Gold Stock)",
+      "System Default",
+      "Assets",
+      "Assets",
+      branchId,
+      0,
+      1,
+      req.userId,
+      1100,
+      null,
+    ]);
+
+    // 1200 - Pawn Loan Principal Outstanding
+    await createAccountWithLog([
+      "Pawn Loan Principal Outstanding",
+      "System Default",
+      "Assets",
+      "Assets",
+      branchId,
+      0,
+      1,
+      req.userId,
+      1200,
+      null,
+    ]);
+
+    // 1300 - Pawning Interest Receivable
+    await createAccountWithLog([
+      "Pawning Interest Receivable",
+      "System Default",
+      "Assets",
+      "Assets",
+      branchId,
+      0,
+      1,
+      req.userId,
+      1300,
+      null,
+    ]);
+
+    // 1400 - Auction Receivables
+    await createAccountWithLog([
+      "Auction Receivables",
+      "System Default",
+      "Assets",
+      "Assets",
+      branchId,
+      0,
+      1,
+      req.userId,
+      1400,
+      null,
+    ]);
+
+    // =====================================================
+    // LIABILITIES ACCOUNTS (System Default)
+    // =====================================================
+
+    // 2000 - Customer Payable - Excess Auction Proceeds
+    await createAccountWithLog([
+      "Customer Payable - Excess Auction Proceeds",
+      "System Default",
+      "Liabilities",
+      "Liabilities",
+      branchId,
+      0,
+      1,
+      req.userId,
+      2000,
+      null,
+    ]);
+
+    // 2100 - Other Payables
+    await createAccountWithLog([
+      "Other Payables",
+      "System Default",
+      "Liabilities",
+      "Liabilities",
+      branchId,
+      0,
+      1,
+      req.userId,
+      2100,
+      null,
+    ]);
+
+    // =====================================================
+    // INCOME ACCOUNTS (System Default)
+    // =====================================================
+
+    // 4000 - Pawning Interest Income
+    await createAccountWithLog([
+      "Pawning Interest Income",
+      "System Default",
+      "Income",
+      "Income",
+      branchId,
+      0,
+      1,
+      req.userId,
+      4000,
+      null,
+    ]);
+
+    // 4100 - Pawn Service Charge / Handling Fee Income
+    await createAccountWithLog([
+      "Pawn Service Charge / Handling Fee Income",
+      "System Default",
+      "Income",
+      "Income",
+      branchId,
+      0,
+      1,
+      req.userId,
+      4100,
+      null,
+    ]);
+
+    // 4200 - Pawn Auction Profit Income
+    await createAccountWithLog([
+      "Pawn Auction Profit Income",
+      "System Default",
+      "Income",
+      "Income",
+      branchId,
+      0,
+      1,
+      req.userId,
+      4200,
+      null,
+    ]);
+
+    // 4300 - Penalty / Overdue Charges Income
+    await createAccountWithLog([
+      "Penalty / Overdue Charges Income",
+      "System Default",
+      "Income",
+      "Income",
+      branchId,
+      0,
+      1,
+      req.userId,
+      4300,
+      null,
+    ]);
+
+    // =====================================================
+    // EXPENSE ACCOUNTS (System Default)
+    // =====================================================
+
+    // 5000 - Auction Expense
+    await createAccountWithLog([
+      "Auction Expense",
+      "System Default",
+      "Expense",
+      "Expense",
+      branchId,
+      0,
+      1,
+      req.userId,
+      5000,
+      null,
+    ]);
+
+    // 5100 - Gold Testing / Valuation Expense
+    await createAccountWithLog([
+      "Gold Testing / Valuation Expense",
+      "System Default",
+      "Expense",
+      "Expense",
+      branchId,
+      0,
+      1,
+      req.userId,
+      5100,
+      null,
+    ]);
+
+    // =====================================================
+    // HEAD OFFICE SIDE ACCOUNT
+    // =====================================================
+
+    // Trim the branch name to remove spaces for account naming
     const trimmedBranchName = branchName.replace(/\s+/g, "");
 
-    // NOW Create the account for head office side
-    const [headOfficeTransferAccountHO] = await pool.query(
-      "INSERT INTO accounting_accounts (Account_Name, Account_Type, Created_At,Type,Group_Of_Type,Account_Balance,Status,Branch_idBranch,User_idUser) VALUES (?,?,NOW(),?,?,?,?,?,?)",
+    // Create the corresponding account on head office side
+    const [headOfficeAccount] = await pool.query(
+      "INSERT INTO accounting_accounts (Account_Name, Account_Type, Created_At, Type, Group_Of_Type, Account_Balance, Status, Branch_idBranch, User_idUser) VALUES (?, ?, NOW(), ?, ?, ?, ?, ?, ?)",
       [
         `${trimmedBranchName}_Branch Transfer Account`,
         "Charted Account",
@@ -1182,9 +1377,25 @@ export const createBranch = async (req, res, next) => {
       ]
     );
 
+    // Get the created head office account and create log
+    const [createdHeadOfficeAccount] = await pool.query(
+      "SELECT ac.*, u.full_name AS Created_by, (SELECT Account_Name FROM accounting_accounts WHERE idAccounting_Accounts = ac.Parent_Account) AS Parent_Account_Name FROM accounting_accounts ac LEFT JOIN user u ON ac.User_idUser = u.idUser WHERE ac.idAccounting_Accounts = ?",
+      [headOfficeAccount.insertId]
+    );
+
+    if (!createdHeadOfficeAccount[0]) {
+      return next(errorHandler(404, "Created Head Office account not found"));
+    }
+
+    await createAccountingAccountLog(createdHeadOfficeAccount[0], req.userId);
+
+    // =====================================================
+    // RETURN RESPONSE
+    // =====================================================
+
     const [newBranch] = await pool.query(
       "SELECT * FROM branch WHERE idBranch = ?",
-      [result.insertId]
+      [branchId]
     );
 
     if (!newBranch[0]) {

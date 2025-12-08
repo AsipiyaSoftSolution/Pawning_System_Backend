@@ -1355,6 +1355,20 @@ export const createBranch = async (req, res, next) => {
       null,
     ]);
 
+    // 5200 - Cashier Excess & Shortage acc
+    await createAccountWithLog([
+      "Cashier Excess & Shortage",
+      "System Default",
+      "Expense",
+      "Expense",
+      branchId,
+      0,
+      1,
+      req.userId,
+      5200,
+      null,
+    ]);
+
     // =====================================================
     // HEAD OFFICE SIDE ACCOUNT
     // =====================================================

@@ -1,5 +1,201 @@
 import { pool } from "../utils/db.js";
 import { createCustomerLogOnTicketPenality } from "./customer.logs.js";
+
+// Helper: record accounting entries for accrued interest
+const recordInterestAccountingEntries = async (
+  ticket,
+  interestAmount,
+  note
+) => {
+  if (!interestAmount || interestAmount <= 0) return;
+
+  const branchId = ticket?.Branch_idBranch;
+  if (!branchId) return;
+
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    // Fetch required accounts for this branch
+    const [[pawningInterestReceivableAccount]] = await connection.query(
+      "SELECT idAccounting_Accounts, Account_Balance FROM accounting_accounts WHERE Account_Type = 'Pawning Interest Receivable' AND Group_Of_Type = 'Assets' AND Branch_idBranch = ? LIMIT 1",
+      [branchId]
+    );
+
+    const [[pawningInterestRevenueAccount]] = await connection.query(
+      "SELECT idAccounting_Accounts, Account_Balance FROM accounting_accounts WHERE Account_Type = 'Pawning Interest Revenue' AND Group_Of_Type = 'Revenue' AND Branch_idBranch = ? LIMIT 1",
+      [branchId]
+    );
+
+    if (!pawningInterestReceivableAccount || !pawningInterestRevenueAccount) {
+      await connection.rollback();
+      throw new Error(
+        "Missing required accounting accounts for interest accrual"
+      );
+    }
+
+    const ticketLabel = ticket?.Ticket_No
+      ? `Ticket No: ${ticket.Ticket_No}`
+      : `Ticket ID: ${ticket.idPawning_Ticket}`;
+    const descriptionText =
+      note || `Interest accrued for ${ticketLabel} (Daily process)`;
+
+    // Debit Pawning Interest Receivable (Assets)
+    const currentReceivableBalance =
+      parseFloat(pawningInterestReceivableAccount.Account_Balance) || 0;
+    const newReceivableBalance = currentReceivableBalance + interestAmount;
+
+    await connection.query(
+      "UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ?",
+      [
+        newReceivableBalance,
+        pawningInterestReceivableAccount.idAccounting_Accounts,
+      ]
+    );
+
+    await connection.query(
+      "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts, Date_Time, Type, Description, Debit, Credit, Balance, Contra_Account, User_idUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        pawningInterestReceivableAccount.idAccounting_Accounts,
+        new Date(),
+        "Pawning Interest Accrual",
+        descriptionText,
+        interestAmount,
+        0,
+        newReceivableBalance,
+        pawningInterestRevenueAccount.idAccounting_Accounts,
+        null,
+      ]
+    );
+
+    // Credit Pawning Interest Revenue (Revenue)
+    const currentRevenueBalance =
+      parseFloat(pawningInterestRevenueAccount.Account_Balance) || 0;
+    const newRevenueBalance = currentRevenueBalance + interestAmount;
+
+    await connection.query(
+      "UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ?",
+      [newRevenueBalance, pawningInterestRevenueAccount.idAccounting_Accounts]
+    );
+
+    await connection.query(
+      "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts, Date_Time, Type, Description, Debit, Credit, Balance, Contra_Account, User_idUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        pawningInterestRevenueAccount.idAccounting_Accounts,
+        new Date(),
+        "Pawning Interest Accrual",
+        descriptionText,
+        0,
+        interestAmount,
+        newRevenueBalance,
+        pawningInterestReceivableAccount.idAccounting_Accounts,
+        null,
+      ]
+    );
+
+    await connection.commit();
+  } catch (err) {
+    await connection.rollback();
+    console.error("Failed to record interest accounting entries:", err);
+  } finally {
+    connection.release();
+  }
+};
+
+// Helper: record accounting entries for accrued penalties/overdue charges
+const recordPenaltyAccountingEntries = async (ticket, penaltyAmount, note) => {
+  if (!penaltyAmount || penaltyAmount <= 0) return;
+
+  const branchId = ticket?.Branch_idBranch;
+  if (!branchId) return;
+
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [[penaltyReceivableAccount]] = await connection.query(
+      "SELECT idAccounting_Accounts, Account_Balance FROM accounting_accounts WHERE Account_Type = 'Penalty / Overdue Charges Receivable' AND Group_Of_Type = 'Assets' AND Branch_idBranch = ? LIMIT 1",
+      [branchId]
+    );
+
+    const [[penaltyRevenueAccount]] = await connection.query(
+      "SELECT idAccounting_Accounts, Account_Balance FROM accounting_accounts WHERE Account_Type = 'Penalty / Overdue Charges Revenue' AND Group_Of_Type = 'Revenue' AND Branch_idBranch = ? LIMIT 1",
+      [branchId]
+    );
+
+    if (!penaltyReceivableAccount || !penaltyRevenueAccount) {
+      await connection.rollback();
+      throw new Error(
+        "Missing required accounting accounts for penalty accrual"
+      );
+    }
+
+    const ticketLabel = ticket?.Ticket_No
+      ? `Ticket No: ${ticket.Ticket_No}`
+      : `Ticket ID: ${ticket.idPawning_Ticket}`;
+    const descriptionText =
+      note || `Penalty accrued for ${ticketLabel} (Daily process)`;
+
+    // Debit Penalty / Overdue Charges Receivable (Assets)
+    const currentReceivableBalance =
+      parseFloat(penaltyReceivableAccount.Account_Balance) || 0;
+    const newReceivableBalance = currentReceivableBalance + penaltyAmount;
+
+    await connection.query(
+      "UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ?",
+      [newReceivableBalance, penaltyReceivableAccount.idAccounting_Accounts]
+    );
+
+    await connection.query(
+      "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts, Date_Time, Type, Description, Debit, Credit, Balance, Contra_Account, User_idUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        penaltyReceivableAccount.idAccounting_Accounts,
+        new Date(),
+        "Penalty Accrual",
+        descriptionText,
+        penaltyAmount,
+        0,
+        newReceivableBalance,
+        penaltyRevenueAccount.idAccounting_Accounts,
+        null,
+      ]
+    );
+
+    // Credit Penalty / Overdue Charges Revenue (Revenue)
+    const currentRevenueBalance =
+      parseFloat(penaltyRevenueAccount.Account_Balance) || 0;
+    const newRevenueBalance = currentRevenueBalance + penaltyAmount;
+
+    await connection.query(
+      "UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ?",
+      [newRevenueBalance, penaltyRevenueAccount.idAccounting_Accounts]
+    );
+
+    await connection.query(
+      "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts, Date_Time, Type, Description, Debit, Credit, Balance, Contra_Account, User_idUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        penaltyRevenueAccount.idAccounting_Accounts,
+        new Date(),
+        "Penalty Accrual",
+        descriptionText,
+        0,
+        penaltyAmount,
+        newRevenueBalance,
+        penaltyReceivableAccount.idAccounting_Accounts,
+        null,
+      ]
+    );
+
+    await connection.commit();
+  } catch (err) {
+    await connection.rollback();
+    console.error("Failed to record penalty accounting entries:", err);
+  } finally {
+    connection.release();
+  }
+};
 // this runs when a new pawning ticket is created
 export const createPawningTicketLogOnCreate = async (
   ticketId,
@@ -193,6 +389,12 @@ export const addDailyTicketLog = async () => {
                   null,
                 ]
               );
+
+              await recordInterestAccountingEntries(
+                ticket,
+                interestAmount,
+                `${stageStartDateString} - Stage ${stage.num} interest accrual`
+              );
             }
           }
         }
@@ -273,6 +475,12 @@ export const addDailyTicketLog = async () => {
                 totalBalance,
                 null,
               ]
+            );
+
+            await recordInterestAccountingEntries(
+              ticket,
+              interestAmount,
+              `${dateString} - Stage 4 interest accrual`
             );
           }
         }
@@ -366,6 +574,12 @@ export const addDailyTicketLog = async () => {
                   null,
                 ]
               );
+
+              await recordInterestAccountingEntries(
+                ticket,
+                interestAmount,
+                `${interestDescription} accrual`
+              );
             }
 
             // SECOND: Add penalty log for the day (after interest)
@@ -419,6 +633,12 @@ export const addDailyTicketLog = async () => {
                 totalBalance,
                 null,
               ]
+            );
+
+            await recordPenaltyAccountingEntries(
+              ticket,
+              penaltyAmount,
+              `${dateString} penalty accrual`
             );
           }
 
@@ -535,6 +755,12 @@ export const addDailyTicketLog = async () => {
                   `Failed to add interest ticket log for ${dateString}`
                 );
               }
+
+              await recordInterestAccountingEntries(
+                ticket,
+                interestAmount,
+                `${dateString} interest accrual`
+              );
             }
           }
 
@@ -611,6 +837,12 @@ export const addDailyTicketLog = async () => {
                   );
                 }
               }
+
+              await recordPenaltyAccountingEntries(
+                ticket,
+                penaltyAmount,
+                `${dateString} penalty accrual`
+              );
             }
           }
         }
@@ -804,6 +1036,12 @@ export const addTicketLogsByTicketId = async (ticketId) => {
               `Failed to add penalty ticket log for ${dateString}`
             );
           }
+
+          await recordPenaltyAccountingEntries(
+            ticket,
+            penaltyAmount,
+            `${dateString} penalty accrual`
+          );
 
           if (ticket.Status !== "3") {
             // Update ticket status to '3' which stand for overdue

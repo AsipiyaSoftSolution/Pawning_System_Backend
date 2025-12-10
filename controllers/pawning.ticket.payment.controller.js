@@ -675,6 +675,182 @@ export const createPaymentForTicket = async (req, res, next) => {
         req.userId,
       ]
     );
+
+    // CREDIT LOAN RECEIVABLE ACCOUNT WITH PAID ADVANCE AMOUNT
+    // find the Pawn Loan Receivable and credit paid advance amount
+    const [pawnLoanReceivableAccount] = await pool.query(
+      "SELECT idAccounting_Accounts FROM accounting_accounts WHERE Account_Type = 'Pawn Loan Receivable' AND Branch_idBranch = ? AND Group_Of_Type = 'Assets'",
+      [req.branchId]
+    );
+    if (pawnLoanReceivableAccount.length === 0) {
+      return next(errorHandler(500, "Pawn Loan Receivable account not found"));
+    }
+    // now add a credit entry to the Pawn Loan Receivable account
+    const [addCreditEntryResult] = await pool.query(
+      "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts, Date_Time, Type, Description, Debit, Credit, Balance, Contra_Account, User_idUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        pawnLoanReceivableAccount[0].idAccounting_Accounts,
+        new Date(),
+        "Ticket Part Payment",
+        `Customer Part Payment (Ticket No: ${existingTicket[0].Ticket_No})`,
+        0,
+        paidAdvance,
+        currentBalance,
+        null,
+        req.userId,
+      ]
+    );
+    if (addCreditEntryResult.affectedRows === 0) {
+      return next(
+        errorHandler(
+          500,
+          "Failed to add credit entry to Pawn Loan Receivable account"
+        )
+      );
+    }
+
+    // CREDIT PANNING INTEREST REVENUE ACCOUNT WITH PAID INTEREST AMOUNT
+    // find the Pawning Interest Revenue account and credit paid interest amount
+    const [pawningInterestRevenueAccount] = await pool.query(
+      "SELECT idAccounting_Accounts FROM accounting_accounts WHERE Account_Type = 'Pawning Interest Revenue' AND Branch_idBranch = ? AND Group_Of_Type = 'Revenue'",
+      [req.branchId]
+    );
+    if (pawningInterestRevenueAccount.length === 0) {
+      return next(
+        errorHandler(500, "Pawning Interest Revenue account not found")
+      );
+    }
+    // now add a credit entry to the Pawning Interest Revenue account
+    const [addCreditEntryResult2] = await pool.query(
+      "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts, Date_Time, Type, Description, Debit, Credit, Balance, Contra_Account, User_idUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        pawningInterestRevenueAccount[0].idAccounting_Accounts,
+        new Date(),
+        "Ticket Part Payment",
+        `Customer Part Payment (Ticket No: ${existingTicket[0].Ticket_No}) Interest Payment`,
+        0,
+        paidInterest,
+        currentBalance,
+        null,
+        req.userId,
+      ]
+    );
+    if (addCreditEntryResult2.affectedRows === 0) {
+      return next(
+        errorHandler(
+          500,
+          "Failed to add credit entry to Pawning Interest Revenue account"
+        )
+      );
+    }
+    // CREDIT Penalty / Overdue Charges Revenue WITH PAID LATE CHARGES AMOUNT
+    const [penaltyOverdueChargesRevenueAccount] = await pool.query(
+      "SELECT idAccounting_Accounts FROM accounting_accounts WHERE Account_Type = 'Penalty / Overdue Charges Revenue' AND Branch_idBranch = ? AND Group_Of_Type = 'Revenue'",
+      [req.branchId]
+    );
+    if (penaltyOverdueChargesRevenueAccount.length === 0) {
+      return next(
+        errorHandler(500, "Penalty / Overdue Charges Revenue account not found")
+      );
+    }
+    // now add a credit entry to the Penalty / Overdue Charges Revenue account
+    const [addCreditEntryResult3] = await pool.query(
+      "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts, Date_Time, Type, Description, Debit, Credit, Balance, Contra_Account, User_idUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        penaltyOverdueChargesRevenueAccount[0].idAccounting_Accounts,
+        new Date(),
+        "Ticket Part Payment",
+        `Customer Part Payment (Ticket No: ${existingTicket[0].Ticket_No}) Late Charges Payment`,
+        0,
+        paidLateCharges,
+        currentBalance,
+        null,
+        req.userId,
+      ]
+    );
+    if (addCreditEntryResult3.affectedRows === 0) {
+      return next(
+        errorHandler(
+          500,
+          "Failed to add credit entry to Penalty / Overdue Charges Revenue account"
+        )
+      );
+    }
+
+    // CREDIT Pawn Service Charge / Handling Fee Revenue WITH PAID SERVICE CHARGE AMOUNT
+    const [pawnServiceChargeHandlingFeeRevenueAccount] = await pool.query(
+      "SELECT idAccounting_Accounts FROM accounting_accounts WHERE Account_Type = 'Pawn Service Charge / Handling Fee Revenue' AND Branch_idBranch = ? AND Group_Of_Type = 'Revenue'",
+      [req.branchId]
+    );
+    if (pawnServiceChargeHandlingFeeRevenueAccount.length === 0) {
+      return next(
+        errorHandler(
+          500,
+          "Pawn Service Charge / Handling Fee Revenue account not found"
+        )
+      );
+    }
+    // now add a credit entry to the Pawn Service Charge / Handling Fee Revenue account
+    const [addCreditEntryResult4] = await pool.query(
+      "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts, Date_Time, Type, Description, Debit, Credit, Balance, Contra_Account, User_idUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        pawnServiceChargeHandlingFeeRevenueAccount[0].idAccounting_Accounts,
+        new Date(),
+        "Ticket Part Payment",
+        `Customer Part Payment (Ticket No: ${existingTicket[0].Ticket_No}) Service Charge Payment`,
+        0,
+        paidServiceCharge,
+        currentBalance,
+        null,
+        req.userId,
+      ]
+    );
+    if (addCreditEntryResult4.affectedRows === 0) {
+      return next(
+        errorHandler(
+          500,
+          "Failed to add credit entry to Pawn Service Charge / Handling Fee Revenue account"
+        )
+      );
+    }
+
+    // CREDIT Pawn Service Charge / Handling Fee Revenue WITH PAID ADDITIONAL CHARGES AMOUNT
+    const [pawnServiceChargeHandlingFeeRevenueAccount2] = await pool.query(
+      "SELECT idAccounting_Accounts FROM accounting_accounts WHERE Account_Type = 'Pawn Service Charge / Handling Fee Revenue' AND Branch_idBranch = ? AND Group_Of_Type = 'Revenue'",
+      [req.branchId]
+    );
+    if (pawnServiceChargeHandlingFeeRevenueAccount2.length === 0) {
+      return next(
+        errorHandler(
+          500,
+          "Pawn Service Charge / Handling Fee Revenue account not found"
+        )
+      );
+    }
+    // now add a credit entry to the Pawn Service Charge / Handling Fee Revenue account
+    const [addCreditEntryResult5] = await pool.query(
+      "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts, Date_Time, Type, Description, Debit, Credit, Balance, Contra_Account, User_idUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [
+        pawnServiceChargeHandlingFeeRevenueAccount2[0].idAccounting_Accounts,
+        new Date(),
+        "Ticket Part Payment",
+        `Customer Part Payment (Ticket No: ${existingTicket[0].Ticket_No}) Additional Charges Payment`,
+        0,
+        paidAdditionalCharges,
+        currentBalance,
+        null,
+        req.userId,
+      ]
+    );
+    if (addCreditEntryResult5.affectedRows === 0) {
+      return next(
+        errorHandler(
+          500,
+          "Failed to add credit entry to Pawn Service Charge / Handling Fee Revenue account"
+        )
+      );
+    }
+
     res.status(201).json({
       success: true,
       message: "Part payment created successfully.",

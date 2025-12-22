@@ -1189,9 +1189,9 @@ export const createBranch = async (req, res, next) => {
       null,
     ]);
 
-    // 1200 - Pawn Loan Principal Outstanding
+    // 1200 - Pawn Loan Receivable
     await createAccountWithLog([
-      "Pawn Loan Principal Outstanding",
+      "Pawn Loan Receivable",
       "System Default",
       "Assets",
       "Assets",
@@ -1231,6 +1231,20 @@ export const createBranch = async (req, res, next) => {
       null,
     ]);
 
+    // 1500 - Penalty / Overdue Charges Income
+    await createAccountWithLog([
+      "Penalty / Overdue Charges Receivable",
+      "System Default",
+      "Assets",
+      "Assets",
+      branchId,
+      0,
+      1,
+      req.userId,
+      1500,
+      null,
+    ]);
+
     // =====================================================
     // LIABILITIES ACCOUNTS (System Default)
     // =====================================================
@@ -1263,16 +1277,44 @@ export const createBranch = async (req, res, next) => {
       null,
     ]);
 
+    // 2200 - Deferred Service Charge
+    await createAccountWithLog([
+      "Deferred Service Charge",
+      "System Default",
+      "Liabilities",
+      "Liabilities",
+      branchId,
+      0,
+      1,
+      req.userId,
+      2200,
+      null,
+    ]);
+
+    // 2300 - Stamp Duty Payable
+    await createAccountWithLog([
+      "Stamp Duty Payable",
+      "System Default",
+      "Liabilities",
+      "Liabilities",
+      branchId,
+      0,
+      1,
+      req.userId,
+      2300,
+      null,
+    ]);
+
     // =====================================================
-    // INCOME ACCOUNTS (System Default)
+    // REVENUE ACCOUNTS (System Default)
     // =====================================================
 
-    // 4000 - Pawning Interest Income
+    // 4000 - Pawning Interest Revenue
     await createAccountWithLog([
-      "Pawning Interest Income",
+      "Pawning Interest Revenue",
       "System Default",
-      "Income",
-      "Income",
+      "Revenue",
+      "Revenue",
       branchId,
       0,
       1,
@@ -1281,12 +1323,12 @@ export const createBranch = async (req, res, next) => {
       null,
     ]);
 
-    // 4100 - Pawn Service Charge / Handling Fee Income
+    // 4100 - Pawn Service Charge / Handling Fee Revenue
     await createAccountWithLog([
-      "Pawn Service Charge / Handling Fee Income",
+      "Pawn Service Charge / Handling Fee Revenue",
       "System Default",
-      "Income",
-      "Income",
+      "Revenue",
+      "Revenue",
       branchId,
       0,
       1,
@@ -1295,12 +1337,12 @@ export const createBranch = async (req, res, next) => {
       null,
     ]);
 
-    // 4200 - Pawn Auction Profit Income
+    // 4200 - Pawn Auction Profit Revenue
     await createAccountWithLog([
-      "Pawn Auction Profit Income",
+      "Pawn Auction Profit Revenue",
       "System Default",
-      "Income",
-      "Income",
+      "Revenue",
+      "Revenue",
       branchId,
       0,
       1,
@@ -1309,17 +1351,31 @@ export const createBranch = async (req, res, next) => {
       null,
     ]);
 
-    // 4300 - Penalty / Overdue Charges Income
+    // 4300 - Penalty / Overdue Charges Revenue
     await createAccountWithLog([
-      "Penalty / Overdue Charges Income",
+      "Penalty / Overdue Charges Revenue",
       "System Default",
-      "Income",
-      "Income",
+      "Revenue",
+      "Revenue",
       branchId,
       0,
       1,
       req.userId,
       4300,
+      null,
+    ]);
+
+    // 4400 - Early Settlement Charge Revenue
+    await createAccountWithLog([
+      "Early Settlement Charge Revenue",
+      "System Default",
+      "Revenue",
+      "Revenue",
+      branchId,
+      0,
+      1,
+      req.userId,
+      4400,
       null,
     ]);
 
@@ -1352,6 +1408,34 @@ export const createBranch = async (req, res, next) => {
       1,
       req.userId,
       5100,
+      null,
+    ]);
+
+    // 5200 - Cashier Excess & Shortage acc
+    await createAccountWithLog([
+      "Cashier Excess & Shortage",
+      "System Default",
+      "Expense",
+      "Expense",
+      branchId,
+      0,
+      1,
+      req.userId,
+      5200,
+      null,
+    ]);
+
+    // 5300 -  Stamp Duty Expense
+    await createAccountWithLog([
+      " Stamp Duty Expense",
+      "System Default",
+      "Expense",
+      "Expense",
+      branchId,
+      0,
+      1,
+      req.userId,
+      5300,
       null,
     ]);
 

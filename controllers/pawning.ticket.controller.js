@@ -2504,6 +2504,43 @@ export const activatePawningTicket = async (req, res, next) => {
           req.userId,
         ]
       );
+      // now get the Pawn Loan Receivable account that is linked to the branch
+      const [pawnLoanReceivableAccount] = await connection.query(
+        "SELECT idAccounting_Accounts FROM accounting_accounts WHERE Account_Type = 'Pawn Loan Receivable' AND Branch_idBranch = ? AND Group_Of_Type = 'Assets'",
+        [req.branchId]
+      );
+      if (pawnLoanReceivableAccount.length === 0) {
+        await connection.rollback();
+        connection.release();
+        return next(
+          errorHandler(500, "Pawn Loan Receivable account not found")
+        );
+      }
+      // now add a debit entry to the Pawn Loan Receivable account
+      const [addDebitEntryResult] = await connection.query(
+        "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts, Date_Time, Type, Description, Debit, Credit, Balance, Contra_Account, User_idUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+          pawnLoanReceivableAccount[0].idAccounting_Accounts,
+          new Date(),
+          "Ticket Loan Disbursement",
+          `Loan disbursement for ticket #${ticketIdToUpdate}`,
+          amount,
+          0,
+          balanceAfterDisbursement,
+          null,
+          req.userId,
+        ]
+      );
+      if (addDebitEntryResult.affectedRows === 0) {
+        await connection.rollback();
+        connection.release();
+        return next(
+          errorHandler(
+            500,
+            "Failed to add debit entry to Pawn Loan Receivable account"
+          )
+        );
+      }
     } else {
       // check if the specific branch has the permission to use non-cashier accounts for disbursements
       if (fromAccount[0].Branch_idBranch !== req.branchId) {

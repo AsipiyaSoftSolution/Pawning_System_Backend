@@ -58,23 +58,23 @@ route.get("/privileges", protectedRoute, getAllPrivilages); // Get all privilege
 route.post(
   "/designation-with-privileges",
   protectedRoute,
-  creteDesignationWithPrivilages
+  creteDesignationWithPrivilages,
 ); // create designation with privileges
 route.get("/designations", protectedRoute, getDesignations); // Get all designations of the company
 route.get(
   "/designations-with-privileges",
   protectedRoute,
-  getDesignationsWithPrivilages
+  getDesignationsWithPrivilages,
 ); // Get all designations of the company with privileges
 route.patch(
   "/designation-with-privileges/:designationId",
   protectedRoute,
-  updateDesignationWithPrivilages
+  updateDesignationWithPrivilages,
 ); // Update designation and its privileges by ID
 route.delete(
   "/designation/:designationId",
   protectedRoute,
-  deleteDesignationWithPrivilages
+  deleteDesignationWithPrivilages,
 ); // Delete designation and its privileges by ID
 route.post("/article-type", protectedRoute, createArticleType); // Create article type
 route.get("/article-types", protectedRoute, getArticleTypes); // Get all article types
@@ -89,7 +89,7 @@ route.get(
   "/:branchId/users",
   protectedRoute,
   checkUserBranchAccess,
-  getAllUsersForTheBranch
+  getAllUsersForTheBranch,
 ); // Get all users assigned to the branch of the logged-in user
 route.patch("/user/:id", protectedRoute, updateUser); // Update user by ID (assign/revoke branch, designation, status)
 route.post(
@@ -97,14 +97,14 @@ route.post(
   protectedRoute,
   checkUserBranchAccess,
   checkUserSelectedHeadBranch,
-  createBranch
+  createBranch,
 ); // Create a new branch
 route.patch(
   "/:branchId/branch/:id",
   protectedRoute,
   checkUserBranchAccess,
   checkUserSelectedHeadBranch,
-  updateBranch
+  updateBranch,
 ); // Update branch by ID
 route.get("/branches", protectedRoute, getAllBranches); // Get all branches of the company
 route.post("/user/assign-to-branch", protectedRoute, assignUserToBranch); // Assign users to branches
@@ -112,12 +112,12 @@ route.get("/branch/:id", protectedRoute, getBranchData); // Get branch data by I
 route.patch(
   "/update-customer-no-format",
   protectedRoute,
-  updateCustomerNumberFormat
+  updateCustomerNumberFormat,
 ); // Update customer and pawning ticket number formats for the company
 route.patch(
   "/update-pawning-ticket-no-format",
   protectedRoute,
-  updatePawningTicketNumberFormat
+  updatePawningTicketNumberFormat,
 ); // Update pawning ticket number format for the company
 route.get("/pawning-ticket-format", protectedRoute, getPawningTicketFormat);
 route.post("/article-condition", protectedRoute, createArticleCondition); // Create article condition
@@ -129,7 +129,7 @@ route.post("/sms-template", protectedRoute, SMSTemplateSaveOrUpdate); // Save or
 route.patch(
   "/sms-template/:templateId/status",
   protectedRoute,
-  updateSMSTemplateStatus
+  updateSMSTemplateStatus,
 ); // Update SMS template status (active/inactive)
 route.get("/sms-template", protectedRoute, getAllSMSTemplates); // Get all SMS templates
 
@@ -138,52 +138,52 @@ route.get(
   "/:branchId/assessed-values",
   protectedRoute,
   checkUserBranchAccess,
-  getAssessedValues
+  getAssessedValues,
 );
 route.post(
   "/:branchId/assessed-values-bulk",
   protectedRoute,
   checkUserBranchAccess,
-  bulkUpdateAssessedValues
+  bulkUpdateAssessedValues,
 );
 
 route.post(
   "/pawning-ticket-approval-range",
   protectedRoute,
-  createPawningTicketApprovalRange
+  createPawningTicketApprovalRange,
 ); // Create pawning ticket approval range with levels
 
 route.get(
   "/pawning-ticket-approval-ranges",
   protectedRoute,
-  getPawningTicketApprovalRanges
+  getPawningTicketApprovalRanges,
 ); // Get all pawning ticket approval ranges
 
 route.delete(
   "/pawning-ticket-approval-range/:rangeId",
   protectedRoute,
-  deletePawningTicketApprovalRange
+  deletePawningTicketApprovalRange,
 ); // Delete pawning ticket approval range by ID
 
 // Update pawning ticket approval range by ID
 route.put(
   "/pawning-ticket-approval-range/:rangeId",
   protectedRoute,
-  updatePawningTicketApprovalRange
+  updatePawningTicketApprovalRange,
 );
 
 // Update setting to approve ticket after creation
 route.patch(
   "/approve-ticket-after-creation-setting",
   protectedRoute,
-  updateApproveTicketAfterCreationSetting
+  updateApproveTicketAfterCreationSetting,
 );
 
 // Get setting to approve ticket after creation
 route.get(
   "/approve-ticket-after-creation-setting",
   protectedRoute,
-  getApproveTicketAfterCreationSetting
+  getApproveTicketAfterCreationSetting,
 );
 
 // TEST USER - to be removed in production

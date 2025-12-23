@@ -1991,7 +1991,7 @@ export const updateCustomerNumberFormat = async (req, res, next) => {
       try {
         // Get all existing customers for this company
         const [existingCustomers] = await pool.query(
-          `SELECT c.idCustomer, c.Branch_idBranch
+          `SELECT c.idCustomer, c.Branch_idBranch, c.created_at
            FROM customer c
            JOIN branch b ON c.Branch_idBranch = b.idBranch
            WHERE b.Company_idCompany = ?
@@ -2027,9 +2027,73 @@ export const updateCustomerNumberFormat = async (req, res, next) => {
                   newCustomerNo += branch[0]?.Branch_Code || "00";
                 }
 
+                if (part === "Branch's Customer Count") {
+                  const [customerCount] = await pool.query(
+                    "SELECT COUNT(*) AS count FROM customer WHERE Branch_idBranch = ? AND idCustomer <= ?",
+                    [customer.Branch_idBranch, customer.idCustomer],
+                  );
+                  newCustomerNo += customerCount[0].count
+                    .toString()
+                    .padStart(4, "0");
+                }
+
                 if (part === "Auto Create Number") {
                   newCustomerNo += autoNumberCounter.toString();
                   autoNumberCounter++;
+                }
+
+                if (part === "Day") {
+                  // Use the customer creation date if available, otherwise current date
+                  const customerDate = customer.created_at
+                    ? new Date(customer.created_at)
+                    : new Date();
+                  const currentDay = customerDate.getDate();
+                  newCustomerNo += currentDay.toString().padStart(2, "0");
+                }
+
+                if (part === "Month") {
+                  // Use the customer creation date if available, otherwise current date
+                  const customerDate = customer.created_at
+                    ? new Date(customer.created_at)
+                    : new Date();
+                  const currentMonth = customerDate.getMonth() + 1;
+                  newCustomerNo += currentMonth.toString().padStart(2, "0");
+                }
+
+                if (part === "Year") {
+                  // Use the customer creation date if available, otherwise current date
+                  const customerDate = customer.created_at
+                    ? new Date(customer.created_at)
+                    : new Date();
+                  const currentYear = customerDate.getFullYear();
+                  newCustomerNo += currentYear.toString();
+                }
+
+                if (part === "Monthly Count") {
+                  // Get count of customers created in same month for this branch
+                  const customerDate = customer.created_at
+                    ? new Date(customer.created_at)
+                    : new Date();
+                  const currentYear = customerDate.getFullYear();
+                  const currentMonth = customerDate.getMonth() + 1;
+
+                  const [monthlyCount] = await pool.query(
+                    `SELECT COUNT(*) AS count FROM customer 
+                     WHERE Branch_idBranch = ? 
+                     AND idCustomer <= ?
+                     AND YEAR(STR_TO_DATE(created_at, '%Y-%m-%d %H:%i:%s')) = ? 
+                     AND MONTH(STR_TO_DATE(created_at, '%Y-%m-%d %H:%i:%s')) = ?`,
+                    [
+                      customer.Branch_idBranch,
+                      customer.idCustomer,
+                      currentYear,
+                      currentMonth,
+                    ],
+                  );
+
+                  newCustomerNo += monthlyCount[0].count
+                    .toString()
+                    .padStart(4, "0");
                 }
               }
             } else {
@@ -2040,14 +2104,10 @@ export const updateCustomerNumberFormat = async (req, res, next) => {
 
             // Update the customer with the new customer number
             await pool.query(
-              "UPDATE customer SET Customer_No = ? WHERE idCustomer = ?",
+              "UPDATE customer SET Customer_Number = ? WHERE idCustomer = ?",
               [newCustomerNo, customer.idCustomer],
             );
           }
-
-          console.log(
-            `Updated ${existingCustomers.length} existing customers with new format`,
-          );
         }
       } catch (updateError) {
         console.error("Error updating existing customers:", updateError);
@@ -3579,6 +3639,131 @@ export const getApproveTicketAfterCreationSetting = async (req, res, next) => {
       "Error fetching approve ticket after creation setting:",
       error,
     );
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// Save or update letter template
+export const saveLetterTemplate = async (req, res, next) => {
+  try {
+    const { templateName, templateContent } = req.body;
+
+    if (!templateName || !templateContent) {
+      return next(errorHandler(400, "Template name and content are required"));
+    }
+
+    // Valid template names
+    const validTemplates = [
+      "Template 01",
+      "Template 02",
+      "Template 03",
+      "Template 04",
+      "Template 05",
+    ];
+
+    if (!validTemplates.includes(templateName)) {
+      return next(errorHandler(400, "Invalid template name"));
+    }
+
+    // Check if template already exists for this company
+    const [existingTemplate] = await pool.query(
+      "SELECT id FROM letter_templates WHERE company_id = ? AND template_name = ?",
+      [req.companyId, templateName],
+    );
+
+    let result;
+    if (existingTemplate.length > 0) {
+      // Update existing template
+      [result] = await pool.query(
+        "UPDATE letter_templates SET template_content = ?, updated_at = NOW() WHERE company_id = ? AND template_name = ?",
+        [templateContent, req.companyId, templateName],
+      );
+    } else {
+      // Insert new template
+      [result] = await pool.query(
+        "INSERT INTO letter_templates (company_id, template_name, template_content) VALUES (?, ?, ?)",
+        [req.companyId, templateName, templateContent],
+      );
+    }
+
+    if (result.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to save template"));
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `${templateName} saved successfully`,
+    });
+  } catch (error) {
+    console.error("Error saving letter template:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+/*
+// Get a specific letter template
+export const getLetterTemplate = async (req, res, next) => {
+  try {
+    const { templateName } = req.params;
+
+    if (!templateName) {
+      return next(errorHandler(400, "Template name is required"));
+    }
+
+    const [template] = await pool.query(
+      "SELECT template_name, template_content, created_at, updated_at FROM letter_templates WHERE company_id = ? AND template_name = ?",
+      [req.companyId, templateName],
+    );
+
+    if (template.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: "Template not found",
+        template: null,
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Template fetched successfully",
+      template: template[0],
+    });
+  } catch (error) {
+    console.error("Error fetching letter template:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+*/
+
+// Get all letter templates for the company
+export const getAllLetterTemplates = async (req, res, next) => {
+  try {
+    const [templates] = await pool.query(
+      "SELECT template_name, template_content, created_at, updated_at FROM letter_templates WHERE company_id = ? ORDER BY template_name ASC",
+      [req.companyId],
+    );
+
+    // Create an object with all 5 template slots
+    const allTemplates = {
+      "Template 01": null,
+      "Template 02": null,
+      "Template 03": null,
+      "Template 04": null,
+      "Template 05": null,
+    };
+
+    // Fill in existing templates
+    templates.forEach((template) => {
+      allTemplates[template.template_name] = template;
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Templates fetched successfully",
+      templates: allTemplates,
+    });
+  } catch (error) {
+    console.error("Error fetching all letter templates:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

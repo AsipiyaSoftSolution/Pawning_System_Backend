@@ -50,6 +50,9 @@ import {
   updateApproveTicketAfterCreationSetting,
   getApproveTicketAfterCreationSetting,
   getCustomerNumberFormat,
+  saveLetterTemplate,
+  getLetterTemplate,
+  getAllLetterTemplates,
 } from "../controllers/company.controller.js";
 const route = express.Router();
 
@@ -188,6 +191,11 @@ route.get(
   protectedRoute,
   getApproveTicketAfterCreationSetting,
 );
+
+// Letter Templates
+route.post("/letter-template", protectedRoute, saveLetterTemplate); // Save or update letter template
+//route.get("/letter-template/:templateName", protectedRoute, getLetterTemplate); // Get a specific letter template
+route.get("/letter-templates", protectedRoute, getAllLetterTemplates); // Get all letter templates
 
 // TEST USER - to be removed in production
 route.post("/create-test-user", createTESTUser); // Create a test user

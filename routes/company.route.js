@@ -49,6 +49,7 @@ import {
   updatePawningTicketApprovalRange,
   updateApproveTicketAfterCreationSetting,
   getApproveTicketAfterCreationSetting,
+  getCustomerNumberFormat,
 } from "../controllers/company.controller.js";
 const route = express.Router();
 
@@ -113,7 +114,9 @@ route.patch(
   "/update-customer-no-format",
   protectedRoute,
   updateCustomerNumberFormat,
-); // Update customer and pawning ticket number formats for the company
+); // Update customer and  number formats for the company
+// get customer number format
+route.get("/customer-no-format", protectedRoute, getCustomerNumberFormat);
 route.patch(
   "/update-pawning-ticket-no-format",
   protectedRoute,

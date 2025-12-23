@@ -1683,56 +1683,6 @@ export const getBranchData = async (req, res, next) => {
   }
 };
 
-// Format type for customer number and pawning ticket number
-const availableFormatTypes = ["Custom Format", "Format"];
-
-// Create or update company customer number fomats and pawning ticket number formats in the company
-export const updateCustomerNumberFormat = async (req, res, next) => {
-  try {
-    const {
-      customerNumberFormat,
-      customerNumberFormatType,
-      customerNumberAutoGenerateStartFrom,
-    } = req.body;
-
-    if (!customerNumberFormatType && !pawningTicketNumberFormatType) {
-      return next(errorHandler(400, "Format type must be provided"));
-    }
-
-    if (
-      customerNumberFormatType &&
-      !availableFormatTypes.includes(customerNumberFormatType)
-    ) {
-      return next(errorHandler(400, "Invalid Customer Number Format Type"));
-    }
-
-    const [result] = await pool.query(
-      "UPDATE company SET Customer_No_Format_Type = ? , Customer_No_Format = ?,Customer_No_Auto_Generate_Number_Start_From = ? WHERE idCompany = ?",
-      [
-        customerNumberFormatType,
-        customerNumberFormat,
-        customerNumberAutoGenerateStartFrom,
-        req.companyId,
-      ],
-    );
-
-    if (result.affectedRows === 0) {
-      return next(errorHandler(500, "Failed to update number formats"));
-    }
-
-    res.status(200).json({
-      message: "Customer number format updated successfully.",
-      success: true,
-    });
-  } catch (error) {
-    console.error(
-      "Error updating customer and pawning ticket number formats:",
-      error,
-    );
-    return next(errorHandler(500, "Internal Server Error"));
-  }
-};
-
 export const getPawningTicketFormat = async (req, res, next) => {
   try {
     const [formatData] = await pool.query(
@@ -1764,6 +1714,38 @@ export const getPawningTicketFormat = async (req, res, next) => {
   }
 };
 
+export const getCustomerNumberFormat = async (req, res, next) => {
+  try {
+    const [formatData] = await pool.query(
+      "SELECT format_type, format, auto_generate_start_from FROM customer_number_formats WHERE company_id = ?",
+      [req.companyId],
+    );
+
+    if (formatData.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: "No customer number format found",
+        format: null,
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Customer number format fetched successfully",
+      format: {
+        customerNumberFormatType: formatData[0].format_type,
+        customerNumberFormat: formatData[0].format,
+        customerNumberAutoGenerateStartFrom:
+          formatData[0].auto_generate_start_from,
+      },
+    });
+  } catch (error) {
+    console.error("Error fetching customer number format:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// ticket number format
 export const updatePawningTicketNumberFormat = async (req, res, next) => {
   try {
     const {
@@ -1932,6 +1914,152 @@ export const updatePawningTicketNumberFormat = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Error updating pawning ticket number format:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// Format type for customer number and pawning ticket number
+const availableFormatTypes = ["Custom Format", "Format"];
+
+// Create or update company customer number formats
+export const updateCustomerNumberFormat = async (req, res, next) => {
+  try {
+    const {
+      customerNumberFormat,
+      customerNumberFormatType,
+      customerNumberAutoGenerateStartFrom,
+      selectedOption,
+    } = req.body;
+
+    if (!customerNumberFormatType) {
+      return next(
+        errorHandler(400, "Customer Number Format Type must be provided"),
+      );
+    }
+
+    if (
+      customerNumberFormatType &&
+      !availableFormatTypes.includes(customerNumberFormatType)
+    ) {
+      return next(errorHandler(400, "Invalid Customer Number Format Type"));
+    }
+
+    // Check if a record already exists for this company
+    const [existingFormat] = await pool.query(
+      "SELECT id FROM customer_number_formats WHERE company_id = ?",
+      [req.companyId],
+    );
+
+    let result;
+    if (existingFormat.length > 0) {
+      // Update existing record
+      if (customerNumberFormatType === "Custom Format") {
+        [result] = await pool.query(
+          "UPDATE customer_number_formats SET format_type = ?, format = ?, auto_generate_start_from = ? WHERE company_id = ?",
+          [customerNumberFormatType, null, null, req.companyId],
+        );
+      } else {
+        [result] = await pool.query(
+          "UPDATE customer_number_formats SET format_type = ?, format = ?, auto_generate_start_from = ? WHERE company_id = ?",
+          [
+            customerNumberFormatType,
+            customerNumberFormat,
+            customerNumberAutoGenerateStartFrom || 1,
+            req.companyId,
+          ],
+        );
+      }
+    } else {
+      // Insert new record
+      [result] = await pool.query(
+        "INSERT INTO customer_number_formats (company_id, format_type, format, auto_generate_start_from) VALUES (?, ?, ?, ?)",
+        [
+          req.companyId,
+          customerNumberFormatType,
+          customerNumberFormat,
+          customerNumberAutoGenerateStartFrom || 1,
+        ],
+      );
+    }
+
+    if (result.affectedRows === 0) {
+      return next(errorHandler(500, "Failed to update customer number format"));
+    }
+
+    if (selectedOption === "updateAll") {
+      // Update all existing customers to match the new format
+      try {
+        // Get all existing customers for this company
+        const [existingCustomers] = await pool.query(
+          `SELECT c.idCustomer, c.Branch_idBranch
+           FROM customer c
+           JOIN branch b ON c.Branch_idBranch = b.idBranch
+           WHERE b.Company_idCompany = ?
+           ORDER BY c.idCustomer ASC`,
+          [req.companyId],
+        );
+
+        if (existingCustomers.length > 0) {
+          let autoNumberCounter = customerNumberAutoGenerateStartFrom || 1;
+
+          for (const customer of existingCustomers) {
+            let newCustomerNo = "";
+
+            if (customerNumberFormatType === "Format") {
+              const formatPartsWithSeparators =
+                customerNumberFormat.split(/([-.\/])/);
+
+              for (let i = 0; i < formatPartsWithSeparators.length; i++) {
+                const part = formatPartsWithSeparators[i].trim();
+
+                // If it's a separator, add it to newCustomerNo
+                if (["-", ".", "/"].includes(part)) {
+                  newCustomerNo += part;
+                  continue;
+                }
+
+                // Process format components
+                if (part === "Branch Number") {
+                  const [branch] = await pool.query(
+                    "SELECT Branch_Code FROM branch WHERE idBranch = ?",
+                    [customer.Branch_idBranch],
+                  );
+                  newCustomerNo += branch[0]?.Branch_Code || "00";
+                }
+
+                if (part === "Auto Create Number") {
+                  newCustomerNo += autoNumberCounter.toString();
+                  autoNumberCounter++;
+                }
+              }
+            } else {
+              // For "Custom Format" type, use simple auto-increment
+              newCustomerNo = autoNumberCounter.toString();
+              autoNumberCounter++;
+            }
+
+            // Update the customer with the new customer number
+            await pool.query(
+              "UPDATE customer SET Customer_No = ? WHERE idCustomer = ?",
+              [newCustomerNo, customer.idCustomer],
+            );
+          }
+
+          console.log(
+            `Updated ${existingCustomers.length} existing customers with new format`,
+          );
+        }
+      } catch (updateError) {
+        console.error("Error updating existing customers:", updateError);
+      }
+    }
+
+    res.status(200).json({
+      message: "Customer number format updated successfully.",
+      success: true,
+    });
+  } catch (error) {
+    console.error("Error updating customer number format:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

@@ -2,10 +2,12 @@ import { errorHandler } from "../utils/errorHandler.js";
 import { pool } from "../utils/db.js";
 import bcrypt from "bcrypt";
 import { getPaginationData, formatSearchPattern } from "../utils/helper.js";
-import { addAccountCreateLog } from "../utils/accounting.account.logs.js";
 import { sendWelcomeEmail } from "../utils/mailConfig.js";
 import { uploadImage, deleteImage } from "../utils/cloudinary.js";
-import { createAccountingAccountLog } from "../utils/accounting.account.logs.js";
+import {
+  createAccountingAccountLog,
+  addAccountCreateLog,
+} from "../utils/accounting.account.logs.js";
 
 // Get COmpany Details
 export const getCompanyDetails = async (req, res, next) => {

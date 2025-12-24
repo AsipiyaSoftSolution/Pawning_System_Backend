@@ -14,7 +14,7 @@ export const createAccountingAccountLog = async (createdAccount, userId) => {
       // Fetch parent account name and type
       const [parentAccountRows] = await pool.query(
         "SELECT Account_Name, Account_Type FROM accounting_accounts WHERE idAccounting_Accounts = ?",
-        [parentAccountId]
+        [parentAccountId],
       );
 
       description += `, Parent Account: ${
@@ -38,7 +38,7 @@ export const createAccountingAccountLog = async (createdAccount, userId) => {
         new Date(),
         userId,
         type,
-      ]
+      ],
     );
 
     if (result.affectedRows === 0) {
@@ -50,7 +50,6 @@ export const createAccountingAccountLog = async (createdAccount, userId) => {
   }
 };
 
-// Get logs for a specific account
 // export const getAccountLogsById = async (accountId, page = 1, limit = 10) => {
 //   try {
 //     const offset = (page - 1) * limit;
@@ -98,12 +97,12 @@ export const addAccountCreateLog = async (
   credit,
   balance,
   contra_account,
-  user
+  user,
 ) => {
   try {
     const [userName] = await pool.query(
       "SELECT full_name FROM user WHERE idUser = ?",
-      [user]
+      [user],
     );
 
     const descriptionText = ` Account Created: ${description} by ${
@@ -123,7 +122,7 @@ export const addAccountCreateLog = async (
         balance,
         contra_account,
         user,
-      ]
+      ],
     );
 
     if (result.affectedRows === 0) {
@@ -132,133 +131,5 @@ export const addAccountCreateLog = async (
   } catch (error) {
     console.error("Error creating account creation log:", error);
     throw new Error("Failed to create account creation log");
-  }
-};
-
-// create transfer logs for both accounts (from and to)
-export const addAccountTransferLogs = async (
-  connection,
-  fromAccountId,
-  toAccountId,
-  fromAccountName,
-  toAccountName,
-  transferAmount,
-  newFromBalance,
-  newToBalance,
-  reason,
-  userId,
-  transferDate = new Date()
-) => {
-  try {
-    // Log for FROM account (debit)
-    await connection.query(
-      "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts, Date_Time, Type, Description, Debit, Credit, Balance, Contra_Account, User_idUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      [
-        fromAccountId,
-        transferDate,
-        "Internal Account Transfer Out",
-        `To ${toAccountName}${reason ? ` | Reason: ${reason}` : ""}`,
-        0,
-        transferAmount,
-        newFromBalance,
-        toAccountId,
-        userId,
-      ]
-    );
-
-    // Log for TO account (credit)
-    await connection.query(
-      "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts, Date_Time, Type, Description, Debit, Credit, Balance, Contra_Account, User_idUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      [
-        toAccountId,
-        transferDate,
-        "Internal Account Transfer In",
-        `From ${fromAccountName}${reason ? ` | Reason: ${reason}` : ""}`,
-        transferAmount,
-        0,
-        newToBalance,
-        fromAccountId,
-        userId,
-      ]
-    );
-  } catch (error) {
-    console.error("Error creating account transfer logs:", error);
-    throw new Error("Failed to create account transfer logs");
-  }
-};
-
-// create a log to accounting_accounts_log when a cashier registry is started for the day
-export const addCashierRegistryStartEndLog = async (
-  connection,
-  accountId,
-  type,
-  description,
-  debit,
-  credit,
-  balance,
-  contra_account,
-  userId
-) => {
-  try {
-    const [result] = await connection.query(
-      "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts,Date_Time,Type,Description,Debit,Credit,Balance,Contra_Account,User_idUser) VALUES(?,?,?,?,?,?,?,?,?)",
-      [
-        accountId,
-        new Date(),
-        type,
-        description,
-        debit,
-        credit,
-        balance,
-        contra_account,
-        userId,
-      ]
-    );
-
-    if (result.affectedRows === 0) {
-      throw new Error("Failed to create cashier registry start | end log");
-    }
-  } catch (error) {
-    console.error("Error creating cashier registry start | end log:", error);
-    throw new Error("Failed to create cashier registry start | end log");
-  }
-};
-
-// Manual journal logs
-
-// Manual Journal Credit & Debit log
-export const addManualJournalCreditDebitLog = async (
-  accountId,
-  credit,
-  debit,
-  type,
-  description,
-  userId,
-  balance,
-  contra_account,
-  connection = null
-) => {
-  try {
-    const dbConnection = connection || pool;
-    const [result] = await dbConnection.query(
-      "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts,Date_Time,Type,Description,Debit,Credit,Balance,User_idUser,Contra_Account) VALUES(?,?,?,?,?,?,?,?,?)",
-      [
-        accountId,
-        new Date(),
-        type,
-        description,
-        debit || 0,
-        credit || 0,
-        balance,
-        userId,
-        contra_account,
-      ]
-    );
-    if (result.affectedRows === 0) {
-      throw new Error("Failed to create manual journal credit debit log");
-    }
-  } catch (error) {
-    console.error("Error creating manual journal credit debit  log:", error);
-    throw new Error("Failed to create manual journal credit debit  log");
   }
 };

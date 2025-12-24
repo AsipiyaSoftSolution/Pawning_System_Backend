@@ -8,7 +8,7 @@ const customerLog = async (idCustomer, date, type, Description, userId) => {
   try {
     const [result] = await pool.query(
       "INSERT INTO customer_log (Customer_idCustomer, Date_Time, Type, Description, User_idUser) VALUES (?, ?, ?, ?, ?)",
-      [idCustomer, date, type, Description, userId]
+      [idCustomer, date, type, Description, userId],
     );
 
     if (result.affectedRows === 0) {
@@ -33,7 +33,7 @@ export const createCustomer = async (req, res, next) => {
       "Work_Place",
     ];
     const missingFields = requiredFields.filter(
-      (field) => !req.body.data[field]
+      (field) => !req.body.data[field],
     );
 
     // Validate required fields
@@ -41,23 +41,23 @@ export const createCustomer = async (req, res, next) => {
       return next(
         errorHandler(
           400,
-          `Missing required fields: ${missingFields.join(", ")}`
-        )
+          `Missing required fields: ${missingFields.join(", ")}`,
+        ),
       );
     }
 
     // Check for existing customer with same NIC
     const [existingCustomer] = await pool.query(
       "SELECT 1 FROM customer WHERE NIC = ? AND Branch_idBranch = ? LIMIT 1",
-      [req.body.data.NIC, req.branchId]
+      [req.body.data.NIC, req.branchId],
     );
 
     if (existingCustomer.length > 0) {
       return next(
         errorHandler(
           409, // Server error code for conflict
-          "Customer with this NIC already exists in this branch"
-        )
+          "Customer with this NIC already exists in this branch",
+        ),
       );
     }
 
@@ -74,7 +74,7 @@ export const createCustomer = async (req, res, next) => {
     // Insert customer record to the db
     const [result] = await pool.query(
       "INSERT INTO customer SET ?",
-      customerData
+      customerData,
     );
 
     if (!result.insertId) {
@@ -93,7 +93,7 @@ export const createCustomer = async (req, res, next) => {
 
             if (
               !req.company_documents?.some(
-                (d) => d.idDocument === doc.idDocument
+                (d) => d.idDocument === doc.idDocument,
               )
             ) {
               return `Invalid document type for id ${doc.idDocument}`;
@@ -110,7 +110,7 @@ export const createCustomer = async (req, res, next) => {
                 Customer_idCustomer: result.insertId,
                 Document_Name: doc.Document_Type,
                 Path: secureUrl,
-              }
+              },
             );
 
             return docResult.affectedRows > 0
@@ -120,7 +120,7 @@ export const createCustomer = async (req, res, next) => {
             console.error(`Document upload error:`, error);
             return `Error processing document ${doc.Document_Type}`;
           }
-        })
+        }),
       );
     }
 
@@ -130,7 +130,7 @@ export const createCustomer = async (req, res, next) => {
       new Date(),
       "CREATE",
       "Customer created",
-      req.userId
+      req.userId,
     );
 
     res.status(201).json({
@@ -154,7 +154,7 @@ export const checkCustomerByNICWhenCreating = async (req, res, next) => {
     // Get all the branches for this company
     const [branches] = await pool.query(
       "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
-      [req.companyId]
+      [req.companyId],
     );
 
     if (branches.length === 0) {
@@ -165,7 +165,7 @@ export const checkCustomerByNICWhenCreating = async (req, res, next) => {
 
     const [customer] = await pool.query(
       "SELECT * FROM customer WHERE NIC = ? AND Branch_idBranch IN (?)",
-      [NIC, branches.map((b) => b.idBranch)]
+      [NIC, branches.map((b) => b.idBranch)],
     );
 
     if (customer.length > 0) {
@@ -197,7 +197,7 @@ export const getCustomerDataByNIC = async (req, res, next) => {
     // Fetch customer by NIC
     const [customerRows] = await pool.query(
       "SELECT * FROM customer WHERE NIC = ?",
-      [NIC]
+      [NIC],
     );
 
     if (!customerRows || customerRows.length === 0) {
@@ -209,7 +209,7 @@ export const getCustomerDataByNIC = async (req, res, next) => {
     // Fetch documents for this customer
     const [customerDocuments] = await pool.query(
       "SELECT * FROM customer_documents WHERE Customer_idCustomer = ?",
-      [customer.idCustomer]
+      [customer.idCustomer],
     );
     customer.documents = customerDocuments || [];
 
@@ -250,7 +250,7 @@ export const getCustomersForTheBranch = async (req, res, next) => {
         "SELECT COUNT(*) as total FROM customer WHERE Branch_idBranch IN (?) AND (First_Name LIKE ? OR NIC LIKE ? OR Mobile_No LIKE ? OR idCustomer LIKE ?)",
         [branchIds, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`],
         page,
-        limit
+        limit,
       );
 
       // get customers for the branch(es) with search
@@ -264,7 +264,7 @@ export const getCustomersForTheBranch = async (req, res, next) => {
           `%${search}%`,
           offset,
           limit,
-        ]
+        ],
       );
     } else {
       // get pagination data for branch(es)
@@ -272,13 +272,13 @@ export const getCustomersForTheBranch = async (req, res, next) => {
         "SELECT COUNT(*) as total FROM customer WHERE Branch_idBranch IN (?)",
         [branchIds],
         page,
-        limit
+        limit,
       );
 
       // get customers for the branch(es)
       [customers] = await pool.query(
         "SELECT idCustomer,First_Name,Full_Name,NIC,Address1,Mobile_No,Work_Place,DOB,Status FROM customer WHERE Branch_idBranch IN (?) LIMIT ?, ?",
-        [branchIds, offset, limit]
+        [branchIds, offset, limit],
       );
     }
 
@@ -318,7 +318,7 @@ export const getCustomerById = async (req, res, next) => {
     // Fetch customer all data by the customer Id and the branch Id
     const [customerResult] = await pool.query(
       customerQuery,
-      customerQueryParams
+      customerQueryParams,
     );
 
     if (customerResult.length === 0) {
@@ -330,7 +330,7 @@ export const getCustomerById = async (req, res, next) => {
     // Then Fetch customer documents
     const [documents] = await pool.query(
       "SELECT * FROM customer_documents WHERE Customer_idCustomer = ?",
-      [customerId]
+      [customerId],
     );
 
     customer.documents = documents || [];
@@ -338,7 +338,7 @@ export const getCustomerById = async (req, res, next) => {
     // Fetch the branch name and code
     const [branchRows] = await pool.query(
       " SELECT Name, Branch_Code FROM branch WHERE idBranch = ? ",
-      [customer.Branch_idBranch]
+      [customer.Branch_idBranch],
     );
 
     customer.branchInfo = branchRows[0] || {};
@@ -399,7 +399,7 @@ export const editCustomer = async (req, res, next) => {
     if (Object.keys(updateFields).length > 0) {
       const [result] = await pool.query(
         "UPDATE customer SET ? WHERE idCustomer = ? AND Branch_idBranch = ?",
-        [updateFields, customerId, req.branchId]
+        [updateFields, customerId, req.branchId],
       );
 
       if (result.affectedRows === 0) {
@@ -426,7 +426,7 @@ export const editCustomer = async (req, res, next) => {
             // Check if the user has an existing document of this type
             const [existingDoc] = await pool.query(
               "SELECT * FROM customer_documents WHERE Document_Name = ? AND Customer_idCustomer = ?",
-              [doc.Document_Type, customerId]
+              [doc.Document_Type, customerId],
             );
             const secureUrl = await uploadImage(doc.file);
             if (!secureUrl) {
@@ -436,7 +436,7 @@ export const editCustomer = async (req, res, next) => {
               // UPDATE the existing document
               const [docResult] = await pool.query(
                 "UPDATE customer_documents SET Path = ? WHERE idCustomer_Documents = ?",
-                [secureUrl, existingDoc[0].idCustomer_Documents]
+                [secureUrl, existingDoc[0].idCustomer_Documents],
               );
               return docResult.affectedRows > 0
                 ? `Document ${doc.Document_Type} updated successfully`
@@ -449,7 +449,7 @@ export const editCustomer = async (req, res, next) => {
                   Customer_idCustomer: customerId,
                   Document_Name: doc.Document_Type,
                   Path: secureUrl,
-                }
+                },
               );
               return docResult.affectedRows > 0
                 ? `Document ${doc.Document_Type} uploaded successfully`
@@ -468,7 +468,7 @@ export const editCustomer = async (req, res, next) => {
     // Get updated customer details
     const [updatedCustomerRows] = await pool.query(
       "SELECT idCustomer,First_Name,Full_Name,NIC,Address1,Mobile_No,Work_Place,DOB,Status FROM customer  WHERE idCustomer = ? ",
-      [customerId]
+      [customerId],
     );
 
     // Log the update
@@ -477,7 +477,7 @@ export const editCustomer = async (req, res, next) => {
       new Date(),
       "UPDATE",
       "Customer updated",
-      req.userId
+      req.userId,
     );
 
     res.status(200).json({
@@ -485,7 +485,7 @@ export const editCustomer = async (req, res, next) => {
       message:
         fileUploadMessages.length > 0
           ? `Customer updated successfully. Document results: ${fileUploadMessages.join(
-              " ; "
+              " ; ",
             )}`
           : "Customer updated successfully.",
       customer: updatedCustomerRows[0] || [],
@@ -508,7 +508,7 @@ export const deleteDocuments = async (req, res, next) => {
     // Find the document that belongs to this customer
     const [existingDocs] = await pool.query(
       `SELECT * FROM customer_documents WHERE idCustomer_Documents = ? AND Customer_idCustomer = ?`,
-      [documentId, customerId]
+      [documentId, customerId],
     );
 
     if (!existingDocs || existingDocs.length === 0) {
@@ -535,7 +535,7 @@ export const deleteDocuments = async (req, res, next) => {
     // Delete from database
     const [deleteResult] = await pool.query(
       `DELETE FROM customer_documents WHERE idCustomer_Documents = ?`,
-      [documentId]
+      [documentId],
     );
 
     await customerLog(
@@ -543,7 +543,7 @@ export const deleteDocuments = async (req, res, next) => {
       new Date(),
       "DELETE",
       `Customer document deleted. Deleted document: ${documentTypeDeleted}`,
-      req.userId
+      req.userId,
     );
 
     res.status(200).json({
@@ -572,7 +572,7 @@ export const getCustomerLogsDataById = async (req, res, next) => {
        LEFT JOIN user u ON cl.User_idUser = u.idUser
        WHERE cl.Customer_idCustomer = ?
        ORDER BY STR_TO_DATE(cl.Date_Time, '%Y-%m-%d %H:%i:%s') ASC `,
-      [customerId]
+      [customerId],
     );
     res.status(200).json({
       success: true,
@@ -605,7 +605,7 @@ export const getCustomerPaymentHistory = async (req, res, next) => {
     // validate start date is before end date
     if (start_date && end_date && new Date(start_date) > new Date(end_date)) {
       return next(
-        errorHandler(400, "Start date must be before or equal to end date.")
+        errorHandler(400, "Start date must be before or equal to end date."),
       );
     }
 
@@ -615,7 +615,7 @@ export const getCustomerPaymentHistory = async (req, res, next) => {
 
     const [ticketNumbers] = await pool.query(
       "SELECT Ticket_No FROM pawning_ticket WHERE Customer_idCustomer = ?",
-      [customerId]
+      [customerId],
     );
     if (ticketNumbers.length === 0) {
       return res.status(200).json({
@@ -674,7 +674,7 @@ export const getCustomerPaymentHistory = async (req, res, next) => {
       countQuery,
       queryParams,
       page,
-      limit
+      limit,
     );
 
     const [payments] = await pool.query(dataQuery + " LIMIT ? OFFSET ?", [
@@ -719,7 +719,7 @@ export const getCustomerTickets = async (req, res, next) => {
     // validate start date is before end date
     if (start_date && end_date && new Date(start_date) > new Date(end_date)) {
       return next(
-        errorHandler(400, "Start date must be before or equal to end date.")
+        errorHandler(400, "Start date must be before or equal to end date."),
       );
     }
 
@@ -735,8 +735,8 @@ export const getCustomerTickets = async (req, res, next) => {
       return next(
         errorHandler(
           400,
-          `Invalid status. Valid statuses are: ${validStatuses.join(", ")}`
-        )
+          `Invalid status. Valid statuses are: ${validStatuses.join(", ")}`,
+        ),
       );
     }
 
@@ -788,7 +788,7 @@ export const getCustomerTickets = async (req, res, next) => {
       countQuery,
       queryParams,
       page,
-      limit
+      limit,
     );
 
     const [tickets] = await pool.query(dataQuery + " LIMIT ? OFFSET ?", [
@@ -825,7 +825,7 @@ export const blacklistCustomer = async (req, res, next) => {
     // Check if the customer exists
     const [isExitingCustomer] = await pool.query(
       "SELECT Status, NIC, Branch_idBranch FROM customer WHERE idCustomer = ? AND Branch_idBranch = ?",
-      [customerId, req.branchId]
+      [customerId, req.branchId],
     );
 
     if (isExitingCustomer.length === 0) {
@@ -840,7 +840,7 @@ export const blacklistCustomer = async (req, res, next) => {
     // if exist check this customer NIC in all company branches
     const [companyBranches] = await pool.query(
       "SELECT DISTINCT idBranch FROM branch WHERE Company_idCompany = ?",
-      [req.companyId]
+      [req.companyId],
     );
 
     if (companyBranches.length === 0) {
@@ -850,7 +850,7 @@ export const blacklistCustomer = async (req, res, next) => {
     // get the branch code of the branch where the customer is being blacklisted
     const [branchData] = await pool.query(
       "SELECT Branch_Code, Name FROM branch WHERE idBranch = ?",
-      [req.branchId]
+      [req.branchId],
     );
 
     const blacklistDate = new Date();
@@ -861,7 +861,7 @@ export const blacklistCustomer = async (req, res, next) => {
       // Check if this branch has customers with this NIC - get ALL of them
       const [customersInBranch] = await pool.query(
         "SELECT idCustomer FROM customer WHERE NIC = ? AND Branch_idBranch = ?",
-        [isExitingCustomer[0].NIC, branch.idBranch]
+        [isExitingCustomer[0].NIC, branch.idBranch],
       );
 
       // Only update and log if customers exist in this branch
@@ -869,7 +869,7 @@ export const blacklistCustomer = async (req, res, next) => {
         // update status to 0 (blacklist) for ALL customers with this NIC in this branch
         await pool.query(
           "UPDATE customer SET Status = 0, Blacklist_Reason = ?, Blacklist_Date = ? WHERE NIC = ? AND Branch_idBranch = ?",
-          [reason, blacklistDate, isExitingCustomer[0].NIC, branch.idBranch]
+          [reason, blacklistDate, isExitingCustomer[0].NIC, branch.idBranch],
         );
 
         // Log ONCE per branch, using the first customer ID found in that branch
@@ -878,7 +878,7 @@ export const blacklistCustomer = async (req, res, next) => {
           blacklistDate,
           "BLACKLIST",
           `Customer blacklisted from Company. By Branch: ${branchData[0].Name} | Branch Code: ${branchData[0].Branch_Code} | Reason: ${reason}`,
-          req.userId
+          req.userId,
         );
 
         logsCreated++;
@@ -912,7 +912,7 @@ export const getCustomerCompleteDataById = async (req, res, next) => {
     //Fetch Customer Basic Data
     const [customerResult] = await pool.query(
       "SELECT * FROM customer WHERE idCustomer = ? AND Branch_idBranch = ?",
-      [customerId, branchId]
+      [customerId, branchId],
     );
 
     if (customerResult.length === 0) {
@@ -924,7 +924,7 @@ export const getCustomerCompleteDataById = async (req, res, next) => {
     //Fetch Customer Documents
     const [documents] = await pool.query(
       "SELECT * FROM customer_documents WHERE Customer_idCustomer = ?",
-      [customerId]
+      [customerId],
     );
 
     // Fetch All Customer Tickets including product name and latest comment
@@ -965,7 +965,7 @@ export const getCustomerCompleteDataById = async (req, res, next) => {
          ) tcc ON tcc.Pawning_Ticket_idPawning_Ticket = pt.idPawning_Ticket
          WHERE pt.Customer_idCustomer = ?
          ORDER BY STR_TO_DATE(pt.Date_Time, '%Y-%m-%d') DESC`,
-      [customerId]
+      [customerId],
     );
 
     //  Fetch All Payment History
@@ -981,7 +981,7 @@ export const getCustomerCompleteDataById = async (req, res, next) => {
          LEFT JOIN user u ON p.User = u.idUser 
          WHERE CAST(p.Ticket_No AS UNSIGNED) IN (?)
          ORDER BY STR_TO_DATE(p.Date_Time, '%Y-%m-%d %H:%i:%s') DESC`,
-        [ticketNos]
+        [ticketNos],
       );
 
       payments = paymentResults;
@@ -993,7 +993,7 @@ export const getCustomerCompleteDataById = async (req, res, next) => {
       LEFT JOIN user u ON tc.User_idUser = u.idUser
           WHERE tc.Pawning_Ticket_idPawning_Ticket IN (?)
        ORDER BY tc.idTicket_Comment ASC`,
-        [ticketIds]
+        [ticketIds],
       );
 
       // Group comments by ticket id
@@ -1031,6 +1031,183 @@ export const getCustomerCompleteDataById = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Error fetching customer complete data:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// Generate customer number
+export const generateCustomerNumber = async (req, res, next) => {
+  try {
+    const formatComponents = [
+      "Branch Number",
+      "Auto Create Number",
+      "Day",
+      "Month",
+      "Year",
+      "Monthly Count",
+      "Branch's Customer Count",
+    ];
+    let customerNo = "";
+
+    const [customerFormat] = await pool.query(
+      "SELECT * FROM customer_number_formats WHERE company_id = ?",
+      [req.companyId],
+    );
+
+    if (customerFormat.length === 0) {
+      // No format configured, return simple count for the branch
+      const [customerCount] = await pool.query(
+        "SELECT COUNT(*) AS count FROM customer WHERE Branch_idBranch = ?",
+        [req.branchId],
+      );
+
+      const customerNo = (customerCount[0].count + 1).toString();
+
+      return res.status(200).json({
+        success: true,
+        customerNumber: customerNo,
+        message: "Customer number generated successfully.",
+      });
+    }
+
+    // Check if the customer format type is custom format
+    if (customerFormat[0].format_type === "Format") {
+      const formatString = customerFormat[0].format; // e.g: "Branch Number-Auto Create Number-Year"
+
+      // Split the format string but preserve separators
+      const formatPartsWithSeparators = formatString.split(/([-.\/])/);
+
+      for (let i = 0; i < formatPartsWithSeparators.length; i++) {
+        const part = formatPartsWithSeparators[i].trim();
+
+        // If it's a separator, add it to customerNo
+        if (["-", ".", "/"].includes(part)) {
+          customerNo += part;
+          continue;
+        }
+
+        // Process format components
+        if (part === "Branch Number") {
+          // Get the branch number
+          const [branch] = await pool.query(
+            "SELECT Branch_Code FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
+            [req.branchId, req.companyId],
+          );
+
+          if (branch.length === 0) {
+            return next(errorHandler(404, "Branch not found"));
+          }
+
+          customerNo += branch[0].Branch_Code || "00";
+        }
+
+        if (part === "Branch's Customer Count") {
+          const [customerCount] = await pool.query(
+            "SELECT COUNT(*) AS count FROM customer WHERE Branch_idBranch = ?",
+            [req.branchId],
+          );
+
+          customerNo += (customerCount[0].count + 1)
+            .toString()
+            .padStart(4, "0");
+        }
+
+        if (part === "Auto Create Number") {
+          let autoNumber = customerFormat[0].auto_generate_start_from;
+          if (autoNumber !== undefined && autoNumber !== null) {
+            // Calculate the total customers in the company
+            let customerCount = 0;
+            // Find all the branches for this specific company
+            const [branches] = await pool.query(
+              "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
+              [req.companyId],
+            );
+
+            if (branches.length === 0) {
+              return next(
+                errorHandler(404, "No branches found for the company"),
+              );
+            }
+
+            // Loop through each branch and count customers
+            for (const branch of branches) {
+              const [branchCustomerCount] = await pool.query(
+                "SELECT COUNT(*) AS count FROM customer WHERE Branch_idBranch = ?",
+                [branch.idBranch],
+              );
+              customerCount += branchCustomerCount[0].count;
+            }
+
+            autoNumber += customerCount;
+            customerNo += autoNumber.toString();
+          } else {
+            customerNo += "1"; // default auto number
+          }
+        }
+
+        if (part === "Day") {
+          const currentDay = new Date().getDate();
+          customerNo += currentDay.toString().padStart(2, "0");
+        }
+
+        if (part === "Month") {
+          const currentMonth = new Date().getMonth() + 1; // getMonth() returns 0-11
+          customerNo += currentMonth.toString().padStart(2, "0");
+        }
+
+        if (part === "Year") {
+          const currentYear = new Date().getFullYear();
+          customerNo += currentYear.toString();
+        }
+
+        if (part === "Monthly Count") {
+          // Get count of customers created in current month for this branch
+          const currentYear = new Date().getFullYear();
+          const currentMonth = new Date().getMonth() + 1;
+
+          const [monthlyCount] = await pool.query(
+            `SELECT COUNT(*) AS count FROM customer 
+             WHERE Branch_idBranch = ? 
+             AND YEAR(STR_TO_DATE(created_at, '%Y-%m-%d %H:%i:%s')) = ? 
+             AND MONTH(STR_TO_DATE(created_at, '%Y-%m-%d %H:%i:%s')) = ?`,
+            [req.branchId, currentYear, currentMonth],
+          );
+
+          customerNo += (monthlyCount[0].count + 1).toString().padStart(4, "0");
+        }
+      }
+    } else {
+      // For "Custom Format" type, use simple auto-increment
+      let customerCount = 0;
+      // Find all the branches for this specific company
+      const [branches] = await pool.query(
+        "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
+        [req.companyId],
+      );
+
+      if (branches.length === 0) {
+        return next(errorHandler(404, "No branches found for the company"));
+      }
+
+      // Loop through each branch and count customers
+      for (const branch of branches) {
+        const [branchCustomerCount] = await pool.query(
+          "SELECT COUNT(*) AS count FROM customer WHERE Branch_idBranch = ?",
+          [branch.idBranch],
+        );
+        customerCount += branchCustomerCount[0].count;
+      }
+
+      customerNo = (customerCount + 1).toString();
+    }
+
+    res.status(200).json({
+      success: true,
+      customerNumber: customerNo,
+      message: "Customer number generated successfully.",
+    });
+  } catch (error) {
+    console.error("Error in generateCustomerNumber:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

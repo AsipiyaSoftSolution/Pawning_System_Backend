@@ -35,28 +35,28 @@ router.post(
   "/:branchId/create",
   protectedRoute,
   checkUserBranchAccess,
-  createPawningTicket
+  createPawningTicket,
 );
 // Get Grand SEQ.No for today
 router.get(
   "/:branchId/grant-seq-no",
   protectedRoute,
   checkUserBranchAccess,
-  getGrandSeqNo
+  getGrandSeqNo,
 );
 // Get products and their interest methods
 router.get(
   "/:branchId/products-and-interest-method",
   protectedRoute,
   checkUserBranchAccess,
-  getProductsAndInterestMethod
+  getProductsAndInterestMethod,
 );
 // Get unique period types of a specific pawning product's product plans to frontend
 router.get(
   "/:branchId/period-types-and-data/:productId",
   protectedRoute,
   checkUserBranchAccess,
-  getProductPlanPeriods
+  getProductPlanPeriods,
 );
 
 // Get max and min period of a specific pawning product's product plans to frontend
@@ -64,14 +64,14 @@ router.get(
   "/:branchId/max-min-period/:productId/:periodType",
   protectedRoute,
   checkUserBranchAccess,
-  getMaxMinPeriod
+  getMaxMinPeriod,
 );
 // Search customer by NIC and get their details
 router.get(
   "/:branchId/search-customer/:nic",
   protectedRoute,
   checkUserBranchAccess,
-  searchCustomerByNIC
+  searchCustomerByNIC,
 );
 
 // Get caratage amount and selected product item data
@@ -79,7 +79,7 @@ router.get(
   "/:branchId/get-caratage-and-data",
   protectedRoute,
   checkUserBranchAccess,
-  sendCaratageAmountForSelectedProductItem
+  sendCaratageAmountForSelectedProductItem,
 );
 
 // Send assessed values to frontend based on caratage amount
@@ -87,7 +87,7 @@ router.get(
   "/:branchId/assessed-value",
   protectedRoute,
   checkUserBranchAccess,
-  sendAssessedValues
+  sendAssessedValues,
 );
 
 // Get ticket grant summary data
@@ -95,7 +95,7 @@ router.get(
   "/:branchId/grant-summary-data",
   protectedRoute,
   checkUserBranchAccess,
-  getTicketGrantSummaryData
+  getTicketGrantSummaryData,
 );
 
 router.get(
@@ -103,21 +103,21 @@ router.get(
   protectedRoute,
   checkUserBranchAccess,
   checkUserSelectedHeadBranch,
-  getTicketDataById
+  getTicketDataById,
 ); // Get ticket all data by ID
 
 router.get(
   "/:branchId/ticket-comments/:ticketId",
   protectedRoute,
   checkUserBranchAccess,
-  getTicketComments
+  getTicketComments,
 ); // Get ticket comments by ticket ID
 
 router.post(
   "/:branchId/ticket-comment",
   protectedRoute,
   checkUserBranchAccess,
-  createTicketComment
+  createTicketComment,
 ); // Create a new ticket comment
 
 router.get(
@@ -126,7 +126,7 @@ router.get(
   checkUserBranchAccess,
   checkUserSelectedHeadBranch,
   checkCompanyTicketApprovalRanges,
-  getPawningTicketsForApproval
+  getPawningTicketsForApproval,
 ); // Get pawning tickets for approval
 
 router.patch(
@@ -135,36 +135,37 @@ router.patch(
   checkUserBranchAccess,
   checkUserSelectedHeadBranch,
   checkCompanyTicketApprovalRanges,
-  approvePawningTicket
+  approvePawningTicket,
 ); // Approve a pawning ticket status to -1 before loan disbursement
 
 router.patch(
   "/:branchId/ticket-status-to-reject/:ticketId",
   protectedRoute,
   checkUserBranchAccess,
-  rejectPawningTicket
+  rejectPawningTicket,
 ); // Reject a pawning ticket
 
 router.get(
   "/:branchId/approved-tickets",
   protectedRoute,
   checkUserBranchAccess,
-  getApprovedPawningTickets
+  getApprovedPawningTickets,
 ); // Get all approved pawning tickets
 
+// here we disburse the loan to the customer and activate the ticket
 router.patch(
   "/:branchId/mark-ticket-as-active/:ticketId",
   protectedRoute,
   checkUserBranchAccess,
-  activatePawningTicket
-); // Activate a pawning ticket
+  activatePawningTicket,
+);
 
 router.get(
   "/:branchId/active-tickets",
   protectedRoute,
   checkUserBranchAccess,
   checkUserSelectedHeadBranch,
-  sendActiveTickets
+  sendActiveTickets,
 ); // Get all active pawning tickets
 
 router.get(
@@ -172,7 +173,7 @@ router.get(
   protectedRoute,
   checkUserBranchAccess,
   checkUserSelectedHeadBranch,
-  sendSettledTickets
+  sendSettledTickets,
 ); // Get all overdue pawning tickets
 
 router.get(
@@ -180,33 +181,33 @@ router.get(
   protectedRoute,
   checkUserBranchAccess,
   checkUserSelectedHeadBranch,
-  sendTicketsForPrinting
+  sendTicketsForPrinting,
 ); // Get all tickets for printing
 
 router.patch(
   "/:branchId/mark-ticket-as-printed/:ticketId",
   protectedRoute,
   checkUserBranchAccess,
-  markTicketAsPrinted
+  markTicketAsPrinted,
 ); // Mark a ticket as printed (make Print_Status = '1')
 
 router.get(
   "/:branchId/generate-ticket-number",
   protectedRoute,
   checkUserBranchAccess,
-  generatePawningTicketNumber
+  generatePawningTicketNumber,
 ); // Generate pawning ticket number
 
 router.get(
   "/:branchId/check-if-tickets-exist",
   protectedRoute,
   checkUserBranchAccess,
-  checkIfTicketsExistInCompany
+  checkIfTicketsExistInCompany,
 ); // Check if tickets exist in the company
 
 router.get(
   "/company-branches-for-ticket-filters",
   protectedRoute,
-  getCompanyBranchesForTicketFilters
+  getCompanyBranchesForTicketFilters,
 ); // Get company branches for ticket page filters
 export default router;

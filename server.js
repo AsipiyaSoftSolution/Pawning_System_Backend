@@ -14,11 +14,8 @@ import customerRoutes from "./routes/customer.route.js";
 import uiSettingRoutes from "./routes/ui.setting.route.js";
 import pawningProductRoutes from "./routes/pawning.product.route.js";
 import pawningTicketRoutes from "./routes/pawning.ticket.route.js";
-import chartAccountRoutes from "./routes/chart.account.route.js";
 import pawningTicketPaymentRoutes from "./routes/pawning.ticket.payment.route.js";
-import manualJournalRoutes from "./routes/manual.journal.route.js";
 import accountRoutes from "./routes/account.route.js";
-import cashierRoutes from "./routes/cashier.route.js";
 import reportRoutes from "./routes/report.route.js";
 
 // Shedule cron jobs
@@ -48,7 +45,7 @@ app.use(
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
     optionsSuccessStatus: 204,
-  })
+  }),
 );
 
 app.use(express.json({ limit: "10mb" }));
@@ -61,11 +58,8 @@ app.use("/api/customer", customerRoutes);
 app.use("/api/ui-settings", uiSettingRoutes);
 app.use("/api/pawning-product", pawningProductRoutes);
 app.use("/api/pawning-ticket", pawningTicketRoutes);
-app.use("/api/chart-account", chartAccountRoutes);
 app.use("/api/pawning-ticket-payment", pawningTicketPaymentRoutes);
-app.use("/api/manual-journal", manualJournalRoutes);
 app.use("/api/account", accountRoutes);
-app.use("/api/cashier", cashierRoutes);
 app.use("/api/report", reportRoutes);
 
 const PORT = process.env.PORT || 3000;

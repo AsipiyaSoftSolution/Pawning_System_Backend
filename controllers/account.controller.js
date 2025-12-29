@@ -1,11 +1,11 @@
 import { errorHandler } from "../utils/errorHandler.js";
-import { pool } from "../utils/db.js";
+import { pool, pool2 } from "../utils/db.js";
 import { getPaginationData } from "../utils/helper.js";
 
 // Get Cash and Bank Accounts for the branch
 export const getCashAndBankAccounts = async (req, res, next) => {
   try {
-    const [accounts] = await pool.query(
+    const [accounts] = await pool2.query(
       `SELECT idAccounting_Accounts, Account_Name, Account_Code, Account_Balance, Account_Type,Account_Number
              FROM accounting_accounts 
              WHERE Branch_idBranch = ? AND Status = '1' AND Group_Of_Type = 'Assets' AND Type = 'Cash and Bank'

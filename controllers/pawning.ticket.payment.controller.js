@@ -872,6 +872,8 @@ export const createPaymentForTicket = async (req, res, next) => {
 
 // make a payment for ticket renewal
 export const createTicketRenewalPayment = async (req, res, next) => {
+  let connection;
+  let connection2;
   try {
     const ticketId = req.params.id || req.params.ticketId;
     const { paymentAmount, toAccountId } = req.body;
@@ -886,265 +888,308 @@ export const createTicketRenewalPayment = async (req, res, next) => {
       return next(errorHandler(400, "To Account ID is required"));
     }
 
-    // validate toAccountId exists in the accounts table
-    const [accountData] = await pool.query(
-      "SELECT * FROM accounting_accounts WHERE idAccounting_Accounts = ?",
-      [toAccountId],
-    );
+    // Get connections from both pools
+    connection = await pool.getConnection();
+    connection2 = await pool2.getConnection();
 
-    if (accountData.length === 0) {
-      return next(errorHandler(400, "Invalid To Account ID"));
-    }
+    // Start transactions on both connections
+    await connection.beginTransaction();
+    await connection2.beginTransaction();
 
-    // check if the ticket exists and belongs to the branch
-    const [existingTicket] = await pool.query(
-      "SELECT Interest_apply_on,Maturity_date,Date_Time,Ticket_No,Period_Type,Period FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
-      [ticketId, req.branchId],
-    );
-    if (existingTicket.length === 0) {
-      return next(errorHandler(404, "No ticket found for the given ID"));
-    }
-
-    // get the lastest ticket log entry for the ticket
-    const [ticketLog] = await pool.query(
-      "SELECT * FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? ORDER BY idTicket_Log DESC LIMIT 1",
-      [ticketId],
-    );
-
-    if (ticketLog.length === 0) {
-      return next(
-        errorHandler(500, "No ticket log found for the given ticket"),
+    try {
+      // validate toAccountId exists in the accounts table (pool2)
+      const [accountData] = await connection2.query(
+        "SELECT * FROM accounting_accounts WHERE idAccounting_Accounts = ?",
+        [toAccountId],
       );
-    }
 
-    // First check payment amount is equal or greater than the ticket's other charges sum
-    const otherChargesTotal =
-      (parseFloat(ticketLog[0].Interest_Balance) || 0) +
-      (parseFloat(ticketLog[0].Service_Charge_Balance) || 0) +
-      (parseFloat(ticketLog[0].Late_Charges_Balance) || 0) +
-      (parseFloat(ticketLog[0].Aditional_Charge_Balance) || 0);
-
-    if (paymentAmount < otherChargesTotal) {
-      return next(
-        errorHandler(
-          400,
-          `Payment amount should be at least ${otherChargesTotal} to cover all other charges.`,
-        ),
-      );
-    }
-
-    // update the ticket's maturity date from today to new maturity date based on ticket's Period_Type and Period
-    let newMaturityDate = new Date(); // start from today
-    if (existingTicket[0].Period_Type === "days") {
-      newMaturityDate.setDate(
-        newMaturityDate.getDate() + parseInt(existingTicket[0].Period),
-      );
-    }
-    if (existingTicket[0].Period_Type === "months") {
-      newMaturityDate.setMonth(
-        newMaturityDate.getMonth() + parseInt(existingTicket[0].Period),
-      );
-    }
-
-    if (existingTicket[0].Period_Type === "years") {
-      newMaturityDate.setFullYear(
-        newMaturityDate.getFullYear() + parseInt(existingTicket[0].Period),
-      );
-    }
-
-    if (existingTicket[0].Period_Type === "weeks") {
-      newMaturityDate.setDate(
-        newMaturityDate.getDate() + 7 * parseInt(existingTicket[0].Period),
-      );
-    }
-
-    // update the ticket's maturity date and Status to active (1) with grant date to today | update the ticket Print_Status to 0 again to allow printing
-    const [updateMaturityResult] = await pool.query(
-      "UPDATE pawning_ticket SET Maturity_date = ? , Status = '1',Date_Time = ?, Print_Status = '0' WHERE idPawning_Ticket = ?",
-      [newMaturityDate, new Date(), ticketId],
-    );
-
-    if (updateMaturityResult.affectedRows === 0) {
-      return next(errorHandler(500, "Failed to update ticket maturity date"));
-    }
-
-    // Insert into the payment table (date_time,description,ticket_no,amount,user,ticket_date,maturity_date,day_count,type)
-    // maturity date should be today date
-
-    // get the day count by from today date to ticket Date_Time
-    const today = new Date();
-    const ticketDate = new Date(existingTicket[0].Date_Time);
-    const timeDiff = Math.abs(today - ticketDate);
-    const dayCount = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
-
-    const [ticketPaymentResult] = await pool.query(
-      "INSERT INTO payment(Date_time,Description,Ticket_no,Amount,User,Ticket_Date,Maturity_Date,Day_Count,Type) VALUES(NOW(),?,?,?,?,?,?,?,?)",
-      [
-        `Customer Payment(Ticket No:${existingTicket[0].Ticket_No})`,
-        existingTicket[0].Ticket_No,
-        paymentAmount,
-        req.userId,
-        existingTicket[0].Date_Time,
-        new Date(), // maturity date is today
-        dayCount,
-        "RENEWAL PAYMENT",
-      ],
-    );
-
-    if (ticketPaymentResult.affectedRows === 0) {
-      return next(errorHandler(500, "Failed to create part payment"));
-    }
-
-    const createdTicketPaymentId = ticketPaymentResult.insertId; // get the created payment record to update payment amounts later
-
-    // now we have to update the ticket log balances by reducing the part payment amount
-    let remainingPayment = paymentAmount;
-    let {
-      Interest_Balance,
-      Service_Charge_Balance,
-      Late_Charges_Balance,
-      Aditional_Charge_Balance,
-      Advance_Balance,
-    } = ticketLog[0];
-
-    // to store in payment table
-    let paidInterest = 0;
-    let paidServiceCharge = 0;
-    let paidLateCharges = 0;
-    let paidAdditionalCharges = 0;
-    let paidAdvance = 0;
-
-    // pay the balances in order
-    // first pay additonal charges.
-    // penalty charges
-    // interest charges
-    // service charges
-    // advance balance
-
-    // Always pay as much as possible to each balance in order
-    function safePay(balance, remaining) {
-      balance = parseFloat(balance);
-      balance = isNaN(balance) ? 0 : balance;
-      let paid = 0;
-      if (remaining > 0 && balance > 0) {
-        paid = Math.min(remaining, balance);
-        remaining -= paid;
-        balance -= paid;
+      if (accountData.length === 0) {
+        await connection.rollback();
+        await connection2.rollback();
+        connection.release();
+        connection2.release();
+        return next(errorHandler(400, "Invalid To Account ID"));
       }
-      return { paid, balance, remaining };
-    }
 
-    // Additional Charges
-    let result = safePay(Aditional_Charge_Balance, remainingPayment);
-    paidAdditionalCharges = result.paid;
-    Aditional_Charge_Balance = result.balance;
-    remainingPayment = result.remaining;
+      // check if the ticket exists and belongs to the branch (pool)
+      const [existingTicket] = await connection.query(
+        "SELECT Interest_apply_on,Maturity_date,Date_Time,Ticket_No,Period_Type,Period FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+        [ticketId, req.branchId],
+      );
+      if (existingTicket.length === 0) {
+        await connection.rollback();
+        await connection2.rollback();
+        connection.release();
+        connection2.release();
+        return next(errorHandler(404, "No ticket found for the given ID"));
+      }
 
-    // Late Charges
-    result = safePay(Late_Charges_Balance, remainingPayment);
-    paidLateCharges = result.paid;
-    Late_Charges_Balance = result.balance;
-    remainingPayment = result.remaining;
+      // get the lastest ticket log entry for the ticket (pool)
+      const [ticketLog] = await connection.query(
+        "SELECT * FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? ORDER BY idTicket_Log DESC LIMIT 1",
+        [ticketId],
+      );
 
-    // Interest Charges
-    result = safePay(Interest_Balance, remainingPayment);
-    paidInterest = result.paid;
-    Interest_Balance = result.balance;
-    remainingPayment = result.remaining;
+      if (ticketLog.length === 0) {
+        await connection.rollback();
+        await connection2.rollback();
+        connection.release();
+        connection2.release();
+        return next(
+          errorHandler(500, "No ticket log found for the given ticket"),
+        );
+      }
 
-    // Service Charges
-    result = safePay(Service_Charge_Balance, remainingPayment);
-    paidServiceCharge = result.paid;
-    Service_Charge_Balance = result.balance;
-    remainingPayment = result.remaining;
+      // First check payment amount is equal or greater than the ticket's other charges sum
+      const otherChargesTotal =
+        (parseFloat(ticketLog[0].Interest_Balance) || 0) +
+        (parseFloat(ticketLog[0].Service_Charge_Balance) || 0) +
+        (parseFloat(ticketLog[0].Late_Charges_Balance) || 0) +
+        (parseFloat(ticketLog[0].Aditional_Charge_Balance) || 0);
 
-    // Advance Balance
-    result = safePay(Advance_Balance, remainingPayment);
-    paidAdvance = result.paid;
-    Advance_Balance = result.balance;
-    remainingPayment = result.remaining;
+      if (paymentAmount < otherChargesTotal) {
+        await connection.rollback();
+        await connection2.rollback();
+        connection.release();
+        connection2.release();
+        return next(
+          errorHandler(
+            400,
+            `Payment amount should be at least ${otherChargesTotal} to cover all other charges.`,
+          ),
+        );
+      }
 
-    // Total Balance
-    const Total_Balance =
-      Interest_Balance +
-      Service_Charge_Balance +
-      Late_Charges_Balance +
-      Aditional_Charge_Balance +
-      Advance_Balance;
-    // now update the ticket log with new balances
+      // update the ticket's maturity date from today to new maturity date based on ticket's Period_Type and Period
+      let newMaturityDate = new Date(); // start from today
+      if (existingTicket[0].Period_Type === "days") {
+        newMaturityDate.setDate(
+          newMaturityDate.getDate() + parseInt(existingTicket[0].Period),
+        );
+      }
+      if (existingTicket[0].Period_Type === "months") {
+        newMaturityDate.setMonth(
+          newMaturityDate.getMonth() + parseInt(existingTicket[0].Period),
+        );
+      }
 
-    // insert the record into ticket log table
-    const [logResult] = await pool.query(
-      "INSERT INTO ticket_log(Pawning_Ticket_idPawning_Ticket,Date_Time,Type,Description,Amount,Interest_Balance,Service_Charge_Balance,Late_Charges_Balance,Aditional_Charge_Balance,Advance_Balance,Total_Balance,User_idUser,Type_Id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-      [
-        ticketId,
-        new Date(),
-        "PAYMENT",
-        `Renewal payment received. Payment ID: ${createdTicketPaymentId}`,
-        paymentAmount,
+      if (existingTicket[0].Period_Type === "years") {
+        newMaturityDate.setFullYear(
+          newMaturityDate.getFullYear() + parseInt(existingTicket[0].Period),
+        );
+      }
+
+      if (existingTicket[0].Period_Type === "weeks") {
+        newMaturityDate.setDate(
+          newMaturityDate.getDate() + 7 * parseInt(existingTicket[0].Period),
+        );
+      }
+
+      // update the ticket's maturity date and Status to active (1) with grant date to today (pool)
+      const [updateMaturityResult] = await connection.query(
+        "UPDATE pawning_ticket SET Maturity_date = ? , Status = '1',Date_Time = ?, Print_Status = '0' WHERE idPawning_Ticket = ?",
+        [newMaturityDate, new Date(), ticketId],
+      );
+
+      if (updateMaturityResult.affectedRows === 0) {
+        throw errorHandler(500, "Failed to update ticket maturity date");
+      }
+
+      // get the day count by from today date to ticket Date_Time
+      const today = new Date();
+      const ticketDate = new Date(existingTicket[0].Date_Time);
+      const timeDiff = Math.abs(today - ticketDate);
+      const dayCount = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
+
+      // Insert into payment table (pool)
+      const [ticketPaymentResult] = await connection.query(
+        "INSERT INTO payment(Date_time,Description,Ticket_no,Amount,User,Ticket_Date,Maturity_Date,Day_Count,Type) VALUES(NOW(),?,?,?,?,?,?,?,?)",
+        [
+          `Customer Payment(Ticket No:${existingTicket[0].Ticket_No})`,
+          existingTicket[0].Ticket_No,
+          paymentAmount,
+          req.userId,
+          existingTicket[0].Date_Time,
+          new Date(),
+          dayCount,
+          "RENEWAL PAYMENT",
+        ],
+      );
+
+      if (ticketPaymentResult.affectedRows === 0) {
+        throw errorHandler(500, "Failed to create renewal payment");
+      }
+
+      const createdTicketPaymentId = ticketPaymentResult.insertId;
+
+      // Calculate payment distribution
+      let remainingPayment = paymentAmount;
+      let {
         Interest_Balance,
         Service_Charge_Balance,
         Late_Charges_Balance,
         Aditional_Charge_Balance,
         Advance_Balance,
-        Total_Balance,
-        req.userId,
-        createdTicketPaymentId,
-      ],
-    );
+      } = ticketLog[0];
 
-    if (logResult.affectedRows === 0) {
-      return next(errorHandler(500, "Failed to update ticket log"));
+      let paidInterest = 0;
+      let paidServiceCharge = 0;
+      let paidLateCharges = 0;
+      let paidAdditionalCharges = 0;
+      let paidAdvance = 0;
+
+      function safePay(balance, remaining) {
+        balance = parseFloat(balance);
+        balance = isNaN(balance) ? 0 : balance;
+        let paid = 0;
+        if (remaining > 0 && balance > 0) {
+          paid = Math.min(remaining, balance);
+          remaining -= paid;
+          balance -= paid;
+        }
+        return { paid, balance, remaining };
+      }
+
+      // Additional Charges
+      let result = safePay(Aditional_Charge_Balance, remainingPayment);
+      paidAdditionalCharges = result.paid;
+      Aditional_Charge_Balance = result.balance;
+      remainingPayment = result.remaining;
+
+      // Late Charges
+      result = safePay(Late_Charges_Balance, remainingPayment);
+      paidLateCharges = result.paid;
+      Late_Charges_Balance = result.balance;
+      remainingPayment = result.remaining;
+
+      // Interest Charges
+      result = safePay(Interest_Balance, remainingPayment);
+      paidInterest = result.paid;
+      Interest_Balance = result.balance;
+      remainingPayment = result.remaining;
+
+      // Service Charges
+      result = safePay(Service_Charge_Balance, remainingPayment);
+      paidServiceCharge = result.paid;
+      Service_Charge_Balance = result.balance;
+      remainingPayment = result.remaining;
+
+      // Advance Balance
+      result = safePay(Advance_Balance, remainingPayment);
+      paidAdvance = result.paid;
+      Advance_Balance = result.balance;
+      remainingPayment = result.remaining;
+
+      // Total Balance
+      const Total_Balance =
+        Interest_Balance +
+        Service_Charge_Balance +
+        Late_Charges_Balance +
+        Aditional_Charge_Balance +
+        Advance_Balance;
+
+      // Insert ticket log record (pool)
+      const [logResult] = await connection.query(
+        "INSERT INTO ticket_log(Pawning_Ticket_idPawning_Ticket,Date_Time,Type,Description,Amount,Interest_Balance,Service_Charge_Balance,Late_Charges_Balance,Aditional_Charge_Balance,Advance_Balance,Total_Balance,User_idUser,Type_Id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        [
+          ticketId,
+          new Date(),
+          "PAYMENT",
+          `Renewal payment received. Payment ID: ${createdTicketPaymentId}`,
+          paymentAmount,
+          Interest_Balance,
+          Service_Charge_Balance,
+          Late_Charges_Balance,
+          Aditional_Charge_Balance,
+          Advance_Balance,
+          Total_Balance,
+          req.userId,
+          createdTicketPaymentId,
+        ],
+      );
+
+      if (logResult.affectedRows === 0) {
+        throw errorHandler(500, "Failed to update ticket log");
+      }
+
+      // Update payment record (pool)
+      const [updatePaymentResult] = await connection.query(
+        "UPDATE payment SET Interest_Payment = ?, Service_Charge_Payment = ?, Late_Charges_Payment = ?, Other_Charges_Payment = ?, Advance_Payment = ? WHERE id = ?",
+        [
+          paidInterest || 0,
+          paidServiceCharge || 0,
+          paidLateCharges || 0,
+          paidAdditionalCharges || 0,
+          paidAdvance || 0,
+          createdTicketPaymentId,
+        ],
+      );
+
+      if (updatePaymentResult.affectedRows === 0) {
+        throw errorHandler(500, "Failed to update payment details");
+      }
+
+      // Update the balance of the toAccountId (pool2)
+      let currentBalance = parseFloat(accountData[0].Account_Balance) || 0;
+      currentBalance += parseFloat(paymentAmount);
+
+      const [updateAccountResult] = await connection2.query(
+        "UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ?",
+        [currentBalance, toAccountId],
+      );
+
+      if (updateAccountResult.affectedRows === 0) {
+        throw errorHandler(500, "Failed to update account balance");
+      }
+
+      // Add a debit entry to accounting_accounts_log table (pool2)
+      const [accountLogResult] = await connection2.query(
+        "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts,Date_Time,Type,Description,Debit,Credit,Balance,Contra_Account,User_idUser) VALUES (?,?,?,?,?,?,?,?,?)",
+        [
+          toAccountId,
+          new Date(),
+          "Ticket Renewal Payment",
+          `Customer Renewal Payment (Ticket No: ${existingTicket[0].Ticket_No})`,
+          paymentAmount,
+          0,
+          currentBalance,
+          null,
+          req.userId,
+        ],
+      );
+
+      if (accountLogResult.affectedRows === 0) {
+        throw errorHandler(500, "Failed to create account log");
+      }
+
+      // Commit both transactions
+      await connection.commit();
+      await connection2.commit();
+      connection.release();
+      connection2.release();
+
+      res.status(201).json({
+        success: true,
+        message: "Renewal payment created successfully.",
+      });
+    } catch (innerError) {
+      await connection.rollback();
+      await connection2.rollback();
+      connection.release();
+      connection2.release();
+      console.error("Error creating renewal payment for ticket:", innerError);
+      return next(errorHandler(500, "Internal Server Error"));
     }
-
-    // insert into the payment table (paid_interest,paid_service_charge,paid_late_charges,paid_additional_charges,paid_advance)
-    const [updatePaymentResult] = await pool.query(
-      "UPDATE payment SET Interest_Payment = ?, Service_Charge_Payment = ?, Late_Charges_Payment = ?, Other_Charges_Payment = ?, Advance_Payment = ? WHERE id = ?",
-      [
-        paidInterest || 0,
-        paidServiceCharge || 0,
-        paidLateCharges || 0,
-        paidAdditionalCharges || 0,
-        paidAdvance || 0,
-        createdTicketPaymentId,
-      ],
-    );
-
-    if (updatePaymentResult.affectedRows === 0) {
-      return next(errorHandler(500, "Failed to update payment details"));
-    }
-
-    // update the balance of the toAccountId in the accounting_accounts table by increasing the balance
-    let currentBalance = parseFloat(accountData[0].Account_Balance) || 0;
-    currentBalance += parseFloat(paymentAmount); // increase the balance
-    // update the account balance in acocunting_accounts table
-    const [updateAccountResult] = await pool.query(
-      "UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ?",
-      [currentBalance, toAccountId],
-    );
-
-    // add a debit entry to accounting_accounts_log table
-    const [accountLogResult] = await pool.query(
-      "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts,Date_Time,Type,Description,Debit,Credit,Balance,Contra_Account,User_idUser) VALUES (?,?,?,?,?,?,?,?,?)",
-      [
-        toAccountId,
-        new Date(),
-        "Ticket Renewal Payment",
-        `Customer Renewal Payment (Ticket No: ${existingTicket[0].Ticket_No})`,
-        paymentAmount,
-        0,
-        currentBalance,
-        null,
-        req.userId,
-      ],
-    );
-
-    res.status(201).json({
-      success: true,
-      message: "Renewal payment created successfully.",
-    });
   } catch (error) {
-    console.error("Error creating part payment for ticket:", error);
+    if (connection) {
+      await connection.rollback();
+      connection.release();
+    }
+    if (connection2) {
+      await connection2.rollback();
+      connection2.release();
+    }
+    console.error("Error creating renewal payment for ticket:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

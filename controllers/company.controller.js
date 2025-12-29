@@ -588,10 +588,11 @@ export const getArticleCategories = async (req, res, next) => {
         [articleTypeId, `%${searchPattern}%`],
         page,
         limit,
+        false,
       );
 
       // Get data
-      [articleCategories] = await pool.query(
+      [articleCategories] = await pool2.query(
         "SELECT * FROM article_categories WHERE Article_types_idArticle_types = ? AND Description LIKE ? LIMIT ? OFFSET ?",
         [articleTypeId, `%${searchPattern}%`, limit, offset],
       );
@@ -601,9 +602,10 @@ export const getArticleCategories = async (req, res, next) => {
         [articleTypeId],
         page,
         limit,
+        false,
       );
 
-      [articleCategories] = await pool.query(
+      [articleCategories] = await pool2.query(
         "SELECT * FROM article_categories WHERE Article_types_idArticle_types = ? LIMIT ? OFFSET ?",
         [articleTypeId, limit, offset],
       );

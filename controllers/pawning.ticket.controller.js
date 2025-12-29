@@ -1323,14 +1323,26 @@ export const getTicketComments = async (req, res, next) => {
       return next(errorHandler(400, "Ticket ID is required"));
     }
 
+    // Fetch comments without user JOIN (user is in pool2)
     const [comments] = await pool.query(
-      `SELECT tc.*, u.Full_name
+      `SELECT tc.*
          FROM ticket_comment tc
-    LEFT JOIN user u ON tc.User_idUser = u.idUser
-        WHERE tc.Pawning_Ticket_idPawning_Ticket = ? 
-       `,
+        WHERE tc.Pawning_Ticket_idPawning_Ticket = ?`,
       [ticketId],
     );
+
+    // Fetch user names from pool2 for each comment
+    for (let comment of comments) {
+      if (comment.User_idUser) {
+        const [userData] = await pool2.query(
+          "SELECT full_name FROM user WHERE idUser = ?",
+          [comment.User_idUser],
+        );
+        comment.Full_name = userData[0]?.full_name || null;
+      } else {
+        comment.Full_name = null;
+      }
+    }
 
     res.status(200).json({
       success: true,
@@ -1363,15 +1375,22 @@ export const createTicketComment = async (req, res, next) => {
       return next(errorHandler(500, "Failed to add comment"));
     }
 
-    // return the created comment with user name and timestamp
+    // return the created comment with user name and timestamp (user is in pool2)
     const [createdComment] = await pool.query(
-      `SELECT tc.*, u.Full_name
+      `SELECT tc.*
          FROM ticket_comment tc
-    LEFT JOIN user u ON tc.User_idUser = u.idUser
-        WHERE tc.idTicket_Comment = ? 
-       `,
+        WHERE tc.idTicket_Comment = ?`,
       [result.insertId],
     );
+
+    // Fetch user name from pool2
+    if (createdComment.length > 0 && createdComment[0].User_idUser) {
+      const [userData] = await pool2.query(
+        "SELECT full_name FROM user WHERE idUser = ?",
+        [createdComment[0].User_idUser],
+      );
+      createdComment[0].Full_name = userData[0]?.full_name || null;
+    }
 
     res.status(201).json({
       message: "Comment added successfully",

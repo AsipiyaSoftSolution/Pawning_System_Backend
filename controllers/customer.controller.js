@@ -1,5 +1,5 @@
 import { errorHandler } from "../utils/errorHandler.js";
-import { pool } from "../utils/db.js";
+import { pool, pool2 } from "../utils/db.js";
 import { uploadImage } from "../utils/cloudinary.js";
 import { getPaginationData, getCompanyBranches } from "../utils/helper.js";
 import { parse } from "path";
@@ -152,7 +152,7 @@ export const checkCustomerByNICWhenCreating = async (req, res, next) => {
     }
 
     // Get all the branches for this company
-    const [branches] = await pool.query(
+    const [branches] = await pool2.query(
       "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
       [req.companyId],
     );
@@ -336,7 +336,7 @@ export const getCustomerById = async (req, res, next) => {
     customer.documents = documents || [];
 
     // Fetch the branch name and code
-    const [branchRows] = await pool.query(
+    const [branchRows] = await pool2.query(
       " SELECT Name, Branch_Code FROM branch WHERE idBranch = ? ",
       [customer.Branch_idBranch],
     );
@@ -1089,7 +1089,7 @@ export const generateCustomerNumber = async (req, res, next) => {
         // Process format components
         if (part === "Branch Number") {
           // Get the branch number
-          const [branch] = await pool.query(
+          const [branch] = await pool2.query(
             "SELECT Branch_Code FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
             [req.branchId, req.companyId],
           );
@@ -1118,7 +1118,7 @@ export const generateCustomerNumber = async (req, res, next) => {
             // Calculate the total customers in the company
             let customerCount = 0;
             // Find all the branches for this specific company
-            const [branches] = await pool.query(
+            const [branches] = await pool2.query(
               "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
               [req.companyId],
             );
@@ -1180,7 +1180,7 @@ export const generateCustomerNumber = async (req, res, next) => {
       // For "Custom Format" type, use simple auto-increment
       let customerCount = 0;
       // Find all the branches for this specific company
-      const [branches] = await pool.query(
+      const [branches] = await pool2.query(
         "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
         [req.companyId],
       );

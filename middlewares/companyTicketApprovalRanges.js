@@ -1,4 +1,4 @@
-import { pool } from "../utils/db.js";
+import { pool, pool2 } from "../utils/db.js";
 import { errorHandler } from "../utils/errorHandler.js";
 
 export const checkCompanyTicketApprovalRanges = async (req, res, next) => {
@@ -8,7 +8,7 @@ export const checkCompanyTicketApprovalRanges = async (req, res, next) => {
     // Get the approval ranges for the company
     let [approvalRanges] = await pool.query(
       "SELECT * FROM pawning_ticket_approval_range WHERE companyid = ?",
-      [companyId]
+      [companyId],
     );
 
     if (approvalRanges.length === 0) {
@@ -20,7 +20,7 @@ export const checkCompanyTicketApprovalRanges = async (req, res, next) => {
     for (let range of approvalRanges) {
       let [levels] = await pool.query(
         "SELECT * FROM pawning_ticket_approval_ranges_level WHERE Approval_Range_idApproval_Range = ?",
-        [range.idApproval_Range]
+        [range.idApproval_Range],
       );
 
       // Attach levels to the range
@@ -28,14 +28,14 @@ export const checkCompanyTicketApprovalRanges = async (req, res, next) => {
 
       // Get the designation id's for each level
       for (let level of levels) {
-        let [designations] = await pool.query(
+        let [designations] = await pool2.query(
           "SELECT Designation_idDesignation FROM pawning_ticket_approval_levels_designations WHERE ApprovalRangeLevel_idApprovalRangeLevel = ?",
-          [level.idApprovalRangeLevel]
+          [level.idApprovalRangeLevel],
         );
 
         // Attach designation ids to the level
         level.designations = designations.map(
-          (d) => d.Designation_idDesignation
+          (d) => d.Designation_idDesignation,
         );
       }
     }
@@ -45,7 +45,7 @@ export const checkCompanyTicketApprovalRanges = async (req, res, next) => {
   } catch (error) {
     console.error(
       "Error in checkCompanyTicketApprovalRanges middleware:",
-      error
+      error,
     );
     return next(errorHandler(500, "Internal server error"));
   }

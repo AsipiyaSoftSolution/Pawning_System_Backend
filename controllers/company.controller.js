@@ -1,5 +1,5 @@
 import { errorHandler } from "../utils/errorHandler.js";
-import { pool } from "../utils/db.js";
+import { pool, pool2 } from "../utils/db.js";
 import bcrypt from "bcrypt";
 import { getPaginationData, formatSearchPattern } from "../utils/helper.js";
 import { sendWelcomeEmail } from "../utils/mailConfig.js";
@@ -12,7 +12,7 @@ import {
 // Get COmpany Details
 export const getCompanyDetails = async (req, res, next) => {
   try {
-    const [companyData] = await pool.query(
+    const [companyData] = await pool2.query(
       "SELECT * FROM company WHERE idCompany = ?",
       [req.companyId],
     );
@@ -38,7 +38,7 @@ export const updateCompanyDetails = async (req, res, next) => {
 
     let secureUrl = null;
 
-    const [existingCompany] = await pool.query(
+    const [existingCompany] = await pool2.query(
       "SELECT Logo FROM company WHERE idCompany = ?",
       [req.companyId],
     );
@@ -78,7 +78,7 @@ export const updateCompanyDetails = async (req, res, next) => {
       }
     }
 
-    const [result] = await pool.query(
+    const [result] = await pool2.query(
       "UPDATE company SET Company_Name = ?, Contact_no = ?, Address01 = ?, Address02 = ?, Address03 = ?, City = ?, Logo = ? WHERE idCompany = ?",
       [
         name,
@@ -93,7 +93,7 @@ export const updateCompanyDetails = async (req, res, next) => {
     );
 
     // SEND UPDATED DATA BACK
-    const [updatedCompanyData] = await pool.query(
+    const [updatedCompanyData] = await pool2.query(
       "SELECT * FROM company WHERE idCompany = ?",
       [req.companyId],
     );
@@ -117,7 +117,7 @@ export const creteDesignation = async (req, res, next) => {
       return next(errorHandler(400, "Designation name is required"));
     }
 
-    const [result] = await pool.query(
+    const [result] = await pool2.query(
       "INSERT INTO designation (Description,Company_idCompany) VALUES (?,?)",
       [designation, req.companyId],
     );
@@ -126,7 +126,7 @@ export const creteDesignation = async (req, res, next) => {
       return next(errorHandler(500, "Failed to create designation"));
     }
 
-    const [designationData] = await pool.query(
+    const [designationData] = await pool2.query(
       "SELECT * FROM designation WHERE idDesignation = ?",
       [result.insertId],
     );
@@ -151,7 +151,7 @@ export const getDesignations = async (req, res, next) => {
     let designations;
     let designationPrivilages;
     let privilages;
-    [designations] = await pool.query(
+    [designations] = await pool2.query(
       "SELECT * FROM designation WHERE Company_idCompany = ?",
       [req.companyId],
     );
@@ -161,13 +161,13 @@ export const getDesignations = async (req, res, next) => {
     }
 
     for (let designation of designations) {
-      [designationPrivilages] = await pool.query(
+      [designationPrivilages] = await pool2.query(
         "SELECT * FROM designation_has_user_privilages WHERE Designation_idDesignation = ?",
         [designation.idDesignation],
       );
 
       for (let privilage of designationPrivilages) {
-        [privilages] = await pool.query(
+        [privilages] = await pool2.query(
           "SELECT * FROM user_privilages WHERE idUser_Privilages = ?",
           [privilage.User_Privilages_idUser_Privilages],
         );
@@ -191,7 +191,7 @@ export const getDesignations = async (req, res, next) => {
 // get Designation Privileges
 export const getDesignationPrivileges = async (req, res, next) => {
   try {
-    const [privileges] = await pool.query("SELECT * FROM user_privilages ");
+    const [privileges] = await pool2.query("SELECT * FROM user_privilages ");
 
     if (privileges.length === 0) {
       return next(errorHandler(404, "No privileges found !"));
@@ -217,7 +217,7 @@ export const assignPrivileges = async (req, res, next) => {
       );
     }
 
-    const [result] = await pool.query(
+    const [result] = await pool2.query(
       "INSERT INTO designation_has_user_privilages (Designation_idDesignation, User_Privilages_idUser_Privilages,Last_Updated_User,Last_Updated_Time) VALUES (?, ?,?, NOW())",
       [idDesignation, idUser_privilages, req.userId],
     );
@@ -243,7 +243,7 @@ export const createArticleType = async (req, res, next) => {
       return next(errorHandler(400, "Article type name is required"));
     }
 
-    const [existingArticle] = await pool.query(
+    const [existingArticle] = await pool2.query(
       "SELECT * FROM article_types WHERE Description LIKE ? AND Company_idCompany = ?",
       [articleName, req.companyId],
     );
@@ -252,7 +252,7 @@ export const createArticleType = async (req, res, next) => {
       return next(errorHandler(400, "Article type already exists"));
     }
 
-    const [result] = await pool.query(
+    const [result] = await pool2.query(
       "INSERT INTO article_types (Description, Company_idCompany,created_at) VALUES (?, ?, now())",
       [articleName, req.companyId],
     );
@@ -261,7 +261,7 @@ export const createArticleType = async (req, res, next) => {
       return next(errorHandler(500, "Failed to create article type"));
     }
 
-    const [articleTypeData] = await pool.query(
+    const [articleTypeData] = await pool2.query(
       "SELECT * FROM article_types WHERE idArticle_Types = ?",
       [result.insertId],
     );
@@ -2924,7 +2924,7 @@ export const getAllSMSTemplates = async (req, res, next) => {
 // Assessed Values
 export const getAssessedValues = async (req, res, next) => {
   try {
-    const [rows] = await pool.query(
+    const [rows] = await pool2.query(
       `SELECT 
          av.idAssessed_Value   AS id,
          av.Carat              AS carat,
@@ -2964,7 +2964,7 @@ export const bulkUpdateAssessedValues = async (req, res, next) => {
       return next(errorHandler(400, "Updates array is required"));
     }
 
-    const connection = await pool.getConnection();
+    const connection = await pool2.getConnection();
     try {
       await connection.beginTransaction();
 

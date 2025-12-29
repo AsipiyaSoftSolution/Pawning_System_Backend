@@ -2438,6 +2438,7 @@ export const getApprovedPawningTickets = async (req, res, next) => {
 // make approved ticket as active once we disburse the loan
 export const activatePawningTicket = async (req, res, next) => {
   let connection;
+  let connection2;
   try {
     const ticketId = req.params.id || req.params.ticketId;
     const { fromAccountId, amount } = req.body;
@@ -2454,7 +2455,7 @@ export const activatePawningTicket = async (req, res, next) => {
     }
 
     // check if there is a valid from account
-    const [fromAccount] = await pool.query(
+    const [fromAccount] = await pool2.query(
       "SELECT idAccounting_Accounts, Account_Type, Account_Balance, Cashier_idCashier, Branch_idBranch FROM accounting_accounts WHERE idAccounting_Accounts = ? AND Branch_idBranch = ?",
       [fromAccountId, req.branchId],
     );
@@ -2502,7 +2503,10 @@ export const activatePawningTicket = async (req, res, next) => {
 
     // begin transaction
     connection = await pool.getConnection();
+    connection2 = await pool2.getConnection();
+
     await connection.beginTransaction();
+    await connection2.beginTransaction();
 
     // check if from Account is either cashier account or not
     if (fromAccount[0].Account_Type === "Cashier") {
@@ -2512,7 +2516,10 @@ export const activatePawningTicket = async (req, res, next) => {
         fromAccount[0].Branch_idBranch !== req.branchId
       ) {
         await connection.rollback();
+
         connection.release();
+        connection2.release();
+        await connection2.rollback();
         return next(
           errorHandler(
             403,
@@ -2532,7 +2539,7 @@ export const activatePawningTicket = async (req, res, next) => {
       );
 
       // deduct the amount from the cashier account balance
-      const [updateAccountResult] = await connection.query(
+      const [updateAccountResult] = await connection2.query(
         "UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ? AND Branch_idBranch = ? AND Cashier_idCashier = ?",
         [balanceAfterDisbursement, fromAccountId, req.branchId, req.userId],
       );
@@ -2544,7 +2551,7 @@ export const activatePawningTicket = async (req, res, next) => {
       }
 
       // insert a credit log to accounting accounting logs
-      const [accountingLogResult] = await connection.query(
+      const [accountingLogResult] = await connection2.query(
         "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts, Date_Time, Type, Description, Debit, Credit, Balance, Contra_Account, User_idUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
           fromAccountId,
@@ -2559,19 +2566,21 @@ export const activatePawningTicket = async (req, res, next) => {
         ],
       );
       // now get the Pawn Loan Receivable account that is linked to the branch
-      const [pawnLoanReceivableAccount] = await connection.query(
+      const [pawnLoanReceivableAccount] = await connection2.query(
         "SELECT idAccounting_Accounts FROM accounting_accounts WHERE Account_Type = 'Pawn Loan Receivable' AND Branch_idBranch = ? AND Group_Of_Type = 'Assets'",
         [req.branchId],
       );
       if (pawnLoanReceivableAccount.length === 0) {
         await connection.rollback();
         connection.release();
+        connection2.release();
+        await connection2.rollback();
         return next(
           errorHandler(500, "Pawn Loan Receivable account not found"),
         );
       }
       // now add a debit entry to the Pawn Loan Receivable account
-      const [addDebitEntryResult] = await connection.query(
+      const [addDebitEntryResult] = await connection2.query(
         "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts, Date_Time, Type, Description, Debit, Credit, Balance, Contra_Account, User_idUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
           pawnLoanReceivableAccount[0].idAccounting_Accounts,
@@ -2588,6 +2597,8 @@ export const activatePawningTicket = async (req, res, next) => {
       if (addDebitEntryResult.affectedRows === 0) {
         await connection.rollback();
         connection.release();
+        connection2.release();
+        await connection2.rollback();
         return next(
           errorHandler(
             500,
@@ -2600,6 +2611,8 @@ export const activatePawningTicket = async (req, res, next) => {
       if (fromAccount[0].Branch_idBranch !== req.branchId) {
         await connection.rollback();
         connection.release();
+        connection2.release();
+        await connection2.rollback();
         return next(
           errorHandler(
             403,
@@ -2617,14 +2630,20 @@ export const activatePawningTicket = async (req, res, next) => {
       if (result.affectedRows === 0) {
         await connection.rollback();
         connection.release();
+        connection2.release();
+        await connection2.rollback();
+        return next(errorHandler(500, "Failed to activate the ticket"));
+        await connection2.rollback();
+        connection.release();
+        connection2.release();
         return next(errorHandler(500, "Failed to activate the ticket"));
       }
 
       const balanceAfterDisbursement = parseFloat(
         fromAccount[0].Account_Balance - amount,
       );
-      // deduct the amount from the account balance
-      const [updateAccountResult] = await connection.query(
+      // deduct the amount from the account balance (accounting_accounts is in pool2)
+      const [updateAccountResult] = await connection2.query(
         "UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ? AND Branch_idBranch = ?",
         [balanceAfterDisbursement, fromAccountId, req.branchId],
       );
@@ -2632,11 +2651,13 @@ export const activatePawningTicket = async (req, res, next) => {
       if (updateAccountResult.affectedRows === 0) {
         await connection.rollback();
         connection.release();
+        connection2.release();
+        await connection2.rollback();
         return next(errorHandler(500, "Failed to update account balance"));
       }
 
       // insert a credit log to accounting accounting logs
-      const [accountingLogResult] = await connection.query(
+      const [accountingLogResult] = await connection2.query(
         "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts, Date_Time, Type, Description, Debit, Credit, Balance, Contra_Account, User_idUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
           fromAccountId,
@@ -2661,8 +2682,11 @@ export const activatePawningTicket = async (req, res, next) => {
       req.userId,
     );
 
+    // Commit both transactions first, then release connections
     await connection.commit();
+    await connection2.commit();
     connection.release();
+    connection2.release();
     res.status(200).json({
       success: true,
       ticketId: ticketIdToUpdate,
@@ -2672,6 +2696,10 @@ export const activatePawningTicket = async (req, res, next) => {
     if (connection) {
       await connection.rollback();
       connection.release();
+    }
+    if (connection2) {
+      await connection2.rollback();
+      connection2.release();
     }
     console.error("Error in activatePawningTicket:", error);
     return next(errorHandler(500, "Internal Server Error"));

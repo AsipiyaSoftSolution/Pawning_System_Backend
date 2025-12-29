@@ -1049,7 +1049,7 @@ export const generateCustomerNumber = async (req, res, next) => {
     ];
     let customerNo = "";
 
-    const [customerFormat] = await pool.query(
+    const [customerFormat] = await pool2.query(
       "SELECT * FROM customer_number_formats WHERE company_id = ?",
       [req.companyId],
     );

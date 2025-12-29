@@ -298,10 +298,11 @@ export const getArticleTypes = async (req, res, next) => {
         [searchPattern, req.companyId],
         page,
         limit,
+        false,
       );
 
       // Get paginated data
-      [articleTypes] = await pool.query(
+      [articleTypes] = await pool2.query(
         "SELECT * FROM article_types WHERE Description LIKE ? AND Company_idCompany = ? LIMIT ? OFFSET ?",
         [`%${searchPattern}%`, req.companyId, limit, offset],
       );
@@ -311,8 +312,9 @@ export const getArticleTypes = async (req, res, next) => {
         [req.companyId],
         page,
         limit,
+        false,
       );
-      [articleTypes] = await pool.query(
+      [articleTypes] = await pool2.query(
         "SELECT * FROM article_types WHERE Company_idCompany = ? LIMIT ? OFFSET ?",
         [req.companyId, limit, offset],
       );
@@ -320,7 +322,7 @@ export const getArticleTypes = async (req, res, next) => {
 
     // Fetch categories for each article type
     for (let i = 0; i < articleTypes.length; i++) {
-      const [categories] = await pool.query(
+      const [categories] = await pool2.query(
         "SELECT * FROM article_categories WHERE Article_types_idArticle_types = ?",
         [articleTypes[i].idArticle_Types],
       );
@@ -2168,10 +2170,11 @@ export const getArticlesConditions = async (req, res, next) => {
       [req.companyId],
       page,
       limit,
+      false,
     );
 
     // Fetch paginated article conditions for the company
-    const [conditions] = await pool.query(
+    const [conditions] = await pool2.query(
       "SELECT * FROM article_conditions WHERE Company_idCompany = ? LIMIT ? OFFSET ?",
       [req.companyId, limit, offset],
     );

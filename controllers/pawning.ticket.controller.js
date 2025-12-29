@@ -1,5 +1,5 @@
 import { errorHandler } from "../utils/errorHandler.js";
-import { pool } from "../utils/db.js";
+import { pool, pool2 } from "../utils/db.js";
 import { getPaginationData } from "../utils/helper.js";
 import { uploadImage } from "../utils/cloudinary.js";
 import {
@@ -81,8 +81,8 @@ export const createPawningTicket = async (req, res, next) => {
           return next(
             errorHandler(
               400,
-              `Missing required field in ticket article: ${field}`
-            )
+              `Missing required field in ticket article: ${field}`,
+            ),
           );
         }
       }
@@ -91,51 +91,51 @@ export const createPawningTicket = async (req, res, next) => {
     // Validate that productId exists in pawning_product table
     const [productExists] = await pool.query(
       "SELECT idPawning_Product FROM pawning_product WHERE idPawning_Product = ?",
-      [data.ticketData.productId]
+      [data.ticketData.productId],
     );
 
     if (productExists.length === 0) {
       return next(
         errorHandler(
           400,
-          `Invalid product ID: ${data.ticketData.productId}. Product does not exist.`
-        )
+          `Invalid product ID: ${data.ticketData.productId}. Product does not exist.`,
+        ),
       );
     }
 
     // Validate that customerId exists
     const [customerExists] = await pool.query(
       "SELECT idCustomer FROM customer WHERE idCustomer = ?",
-      [data.ticketData.customerId]
+      [data.ticketData.customerId],
     );
 
     if (customerExists.length === 0) {
       return next(
         errorHandler(
           400,
-          `Invalid customer ID: ${data.ticketData.customerId}. Customer does not exist.`
-        )
+          `Invalid customer ID: ${data.ticketData.customerId}. Customer does not exist.`,
+        ),
       );
     }
 
     // check if pawning advance is less than or equal to all ticketArticles's declaredValue
     const totalDeclaredValue = data.ticketArticles.reduce(
       (sum, article) => sum + parseFloat(article.declaredValue || 0),
-      0
+      0,
     );
     if (parseFloat(data.ticketData.pawningAdvance) > totalDeclaredValue) {
       return next(
         errorHandler(
           400,
-          "Pawning advance cannot be greater than total declared value of articles"
-        )
+          "Pawning advance cannot be greater than total declared value of articles",
+        ),
       );
     }
 
     // check if customer is blacklisted, if so block ticket creation
     const [customerStatusRows] = await pool.query(
       "SELECT Status FROM customer WHERE idCustomer = ?",
-      [data.ticketData.customerId]
+      [data.ticketData.customerId],
     );
 
     if (
@@ -143,19 +143,19 @@ export const createPawningTicket = async (req, res, next) => {
       Number(customerStatusRows[0].Status) === 0
     ) {
       return next(
-        errorHandler(400, "Cannot create ticket. Customer is blacklisted.")
+        errorHandler(400, "Cannot create ticket. Customer is blacklisted."),
       );
     }
 
     // get the ticket's product service charge type and other data
     const [productData] = await pool.query(
       "SELECT Service_Charge_Create_As,Interest_Method,Service_Charge_Value,Service_Charge_Value_Type FROM pawning_product WHERE idPawning_Product = ?",
-      [data.ticketData.productId]
+      [data.ticketData.productId],
     );
 
     if (!productData || productData.length === 0) {
       return next(
-        errorHandler(400, "Product not found for the given product ID")
+        errorHandler(400, "Product not found for the given product ID"),
       );
     }
 
@@ -171,12 +171,12 @@ export const createPawningTicket = async (req, res, next) => {
           parseFloat(data.ticketData.pawningAdvance) *
           (parseFloat(
             productData[0]?.Service_Charge_Value ||
-              data.ticketData.serviceCharge
+              data.ticketData.serviceCharge,
           ) /
             100);
       } else if (productData[0]?.Service_Charge_Value_Type === "Fixed Amount") {
         serviceChargeRate = parseFloat(
-          productData[0]?.Service_Charge_Value || data.ticketData.serviceCharge
+          productData[0]?.Service_Charge_Value || data.ticketData.serviceCharge,
         );
       }
     }
@@ -194,15 +194,15 @@ export const createPawningTicket = async (req, res, next) => {
             data.ticketData.productId,
             data.ticketData.periodType,
             data.ticketData.period,
-          ]
+          ],
         );
 
         if (productPlanData.length === 0) {
           return next(
             errorHandler(
               400,
-              "No matching product plan found for the given product ID, period type, and period"
-            )
+              "No matching product plan found for the given product ID, period type, and period",
+            ),
           );
         }
 
@@ -217,7 +217,7 @@ export const createPawningTicket = async (req, res, next) => {
             (parseFloat(productPlanData[0]?.Service_Charge_Value) / 100);
         } else if (productPlanData[0]?.Service_Charge_Value_type === "fixed") {
           serviceChargeRate = parseFloat(
-            productPlanData[0]?.Service_Charge_Value
+            productPlanData[0]?.Service_Charge_Value,
           );
         }
       }
@@ -225,15 +225,15 @@ export const createPawningTicket = async (req, res, next) => {
       if (productData[0].Interest_Method === "Interest For Pawning Amount") {
         [productPlanData] = await pool.query(
           "SELECT idProduct_Plan,Service_Charge_Value_type, Service_Charge_Value FROM product_plan WHERE Pawning_Product_idPawning_Product = ? AND ? BETWEEN CAST(Minimum_Amount AS UNSIGNED) AND CAST(Maximum_Amount AS UNSIGNED)",
-          [data.ticketData.productId, data.ticketData.pawningAdvance]
+          [data.ticketData.productId, data.ticketData.pawningAdvance],
         );
 
         if (productPlanData.length === 0) {
           return next(
             errorHandler(
               400,
-              "No matching product plan found for the given product ID and pawning advance amount"
-            )
+              "No matching product plan found for the given product ID and pawning advance amount",
+            ),
           );
         }
 
@@ -248,7 +248,7 @@ export const createPawningTicket = async (req, res, next) => {
             (parseFloat(productPlanData[0]?.Service_Charge_Value) / 100);
         } else if (productPlanData[0]?.Service_Charge_Value_type === "fixed") {
           serviceChargeRate = parseFloat(
-            productPlanData[0]?.Service_Charge_Value
+            productPlanData[0]?.Service_Charge_Value,
           );
         }
       }
@@ -268,8 +268,8 @@ export const createPawningTicket = async (req, res, next) => {
         return next(
           errorHandler(
             400,
-            "No matching product plan found for the given interest method and parameters"
-          )
+            "No matching product plan found for the given interest method and parameters",
+          ),
         );
       }
       serviceChargeType =
@@ -287,21 +287,21 @@ export const createPawningTicket = async (req, res, next) => {
     ) {
       const [stagesData] = await pool.query(
         "SELECT stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,interestApplicableMethod FROM product_plan WHERE idProduct_Plan = ?",
-        [productPlanData[0].idProduct_Plan]
+        [productPlanData[0].idProduct_Plan],
       );
       // Defensive assignment and logging
       if (Array.isArray(stagesData) && stagesData.length > 0) {
         productPlanStagesData = stagesData;
         console.log(
           "\x1b[42m\x1b[30m Product Plan Stages Data Found \x1b[0m",
-          JSON.stringify(productPlanStagesData[0], null, 2)
+          JSON.stringify(productPlanStagesData[0], null, 2),
         );
       } else {
         productPlanStagesData = [{}];
         console.warn(
           "\x1b[41m\x1b[37m No Product Plan Stages Data Found for idProduct_Plan:",
           productPlanData[0].idProduct_Plan,
-          "\x1b[0m"
+          "\x1b[0m",
         );
       }
     }
@@ -309,7 +309,7 @@ export const createPawningTicket = async (req, res, next) => {
     // get is_Ticket_Approve_After_Create setting from company table
     const [companySettings] = await pool.query(
       "SELECT is_Ticket_Approve_After_Create FROM company WHERE idCompany = ?",
-      [req.companyId]
+      [req.companyId],
     );
 
     let status = null;
@@ -366,7 +366,7 @@ export const createPawningTicket = async (req, res, next) => {
         productPlanStagesData[0]?.stage3Interest || 0,
         productPlanStagesData[0]?.stage4Interest || 0,
         status, // initial status (can be null or -1 based on company settings)
-      ]
+      ],
     );
 
     const ticketId = result.insertId;
@@ -381,7 +381,7 @@ export const createPawningTicket = async (req, res, next) => {
 
           await pool.query(
             "INSERT INTO ticket_artical_images (File_Path, Pawning_Ticket_idPawning_Ticket) VALUES (?,?)",
-            [imageUrl, ticketId]
+            [imageUrl, ticketId],
           );
         }
       } catch (error) {
@@ -406,7 +406,7 @@ export const createPawningTicket = async (req, res, next) => {
       // Check net weight vs gross weight before processing
       if (parseFloat(article.netWeight) > parseFloat(article.grossWeight)) {
         return next(
-          errorHandler(400, "Net weight cannot be greater than Gross weight")
+          errorHandler(400, "Net weight cannot be greater than Gross weight"),
         );
       }
 
@@ -433,7 +433,7 @@ export const createPawningTicket = async (req, res, next) => {
           (
             (declaredValueForArticle / totalDeclaredValue) *
             ticketPawningAdvance
-          ).toFixed(2)
+          ).toFixed(2),
         );
       }
 
@@ -455,7 +455,7 @@ export const createPawningTicket = async (req, res, next) => {
           article.image,
           advancedValueForArticle,
           article.remark || null,
-        ]
+        ],
       );
     }
 
@@ -464,7 +464,7 @@ export const createPawningTicket = async (req, res, next) => {
       ticketId,
       "CREATE",
       req.userId,
-      data.ticketData.pawningAdvance
+      data.ticketData.pawningAdvance,
     );
 
     // create service charge log entry
@@ -472,7 +472,7 @@ export const createPawningTicket = async (req, res, next) => {
       ticketId,
       "SERVICE CHARGE",
       req.userId,
-      serviceChargeRate // service charge amount
+      serviceChargeRate, // service charge amount
     );
 
     // create customer log for ticket creation
@@ -480,7 +480,7 @@ export const createPawningTicket = async (req, res, next) => {
       "CREATE TICKET",
       `Created ticket No: ${data.ticketData.ticketNo}`,
       data.ticketData.customerId,
-      req.userId
+      req.userId,
     );
 
     if (status === -1) {
@@ -490,7 +490,7 @@ export const createPawningTicket = async (req, res, next) => {
         ticketId, // typeId is also the ticketId here
         "APPROVE-TICKET",
         "Ticket approved, according to company settings it is approved after creation.",
-        req.userId
+        req.userId,
       );
     }
 
@@ -514,7 +514,7 @@ export const createPawningTicket = async (req, res, next) => {
 export const getGrandSeqNo = async (req, res, next) => {
   try {
     const [result] = await pool.query(
-      "SELECT COUNT(*) AS count FROM pawning_ticket WHERE DATE(Date_Time) = CURDATE()"
+      "SELECT COUNT(*) AS count FROM pawning_ticket WHERE DATE(Date_Time) = CURDATE()",
     );
     const count =
       result && result[0] && typeof result[0].count === "number"
@@ -541,12 +541,12 @@ export const getProductsAndInterestMethod = async (req, res, next) => {
       "SELECT COUNT(*) AS total FROM pawning_product WHERE Branch_idBranch = ?",
       [req.branchId],
       page,
-      limit
+      limit,
     );
 
     const [products] = await pool.query(
       "SELECT idPawning_Product, Name, Interest_Method FROM pawning_product WHERE Branch_idBranch = ? ORDER BY idPawning_Product DESC LIMIT ? OFFSET ?",
-      [req.branchId, limit, offset]
+      [req.branchId, limit, offset],
     );
 
     res.status(200).json({
@@ -569,7 +569,7 @@ export const getProductPlanPeriods = async (req, res, next) => {
     }
     const [rows] = await pool.query(
       "SELECT Period_Type FROM product_plan WHERE Pawning_Product_idPawning_Product = ?",
-      [productId]
+      [productId],
     );
 
     // Extract unique period types
@@ -611,7 +611,7 @@ export const getMaxMinPeriod = async (req, res, next) => {
        FROM product_plan 
        WHERE Pawning_Product_idPawning_Product = ? 
          AND Period_Type = ?`,
-      [productId, periodType]
+      [productId, periodType],
     );
 
     if (!rows || rows.length === 0) {
@@ -672,7 +672,7 @@ export const searchCustomerByNIC = async (req, res, next) => {
       LEFT JOIN customer_documents cd ON c.idCustomer = cd.Customer_idCustomer
       WHERE c.NIC LIKE ? AND c.Branch_idBranch = ?
       GROUP BY c.idCustomer, c.NIC, c.Full_name, c.Address1, c.Address2, c.Address3, c.Mobile_No, c.Status, c.Risk_Level, c.Blacklist_Reason, c.Blacklist_Date`,
-      [formatedNIC, req.branchId]
+      [formatedNIC, req.branchId],
     );
 
     // Parse the documents JSON for each customer
@@ -692,7 +692,7 @@ export const searchCustomerByNIC = async (req, res, next) => {
         // Filter out null documents (when LEFT JOIN returns no matches)
         if (Array.isArray(customer.documents)) {
           customer.documents = customer.documents.filter(
-            (doc) => doc && doc.Document_Name !== null
+            (doc) => doc && doc.Document_Name !== null,
           );
         } else {
           customer.documents = [];
@@ -716,7 +716,7 @@ export const searchCustomerByNIC = async (req, res, next) => {
 export const sendCaratageAmountForSelectedProductItem = async (
   req,
   res,
-  next
+  next,
 ) => {
   try {
     const { productId, periodType, period, interestMethod, amount, caratage } =
@@ -727,15 +727,15 @@ export const sendCaratageAmountForSelectedProductItem = async (
       return next(
         errorHandler(
           400,
-          "productId, periodType, interestMethod  and caratage are all required"
-        )
+          "productId, periodType, interestMethod  and caratage are all required",
+        ),
       );
     }
 
     // Fetch all product items for the product and period type
     const [productItems] = await pool.query(
       "SELECT idProduct_Plan, Amount_For_22_Caratage, Minimum_Period, Maximum_Period, Minimum_Amount, Maximum_Amount,Week_Precentage_Amount_22_Caratage,Month1_Precentage_Amount_22_Caratage,Month3_Precentage_Amount_22_Caratage,Month6_Precentage_Amount_22_Caratage,Month9_Precentage_Amount_22_Caratage,Month12_Precentage_Amount_22_Caratage FROM product_plan WHERE Pawning_Product_idPawning_Product = ? ",
-      [productId]
+      [productId],
     );
 
     let filteredItem = null;
@@ -755,36 +755,36 @@ export const sendCaratageAmountForSelectedProductItem = async (
         // period is in days
         if (Number(period) <= 7) {
           caratAmountPrecentage = Number(
-            productItems[0].Week_Precentage_Amount_22_Caratage
+            productItems[0].Week_Precentage_Amount_22_Caratage,
           );
         }
 
         if (Number(period) > 7 && Number(period) <= 30) {
           caratAmountPrecentage = Number(
-            productItems[0].Month1_Precentage_Amount_22_Caratage
+            productItems[0].Month1_Precentage_Amount_22_Caratage,
           );
         }
 
         if (Number(period) > 30 && Number(period) <= 90) {
           caratAmountPrecentage = Number(
-            productItems[0].Month3_Precentage_Amount_22_Caratage
+            productItems[0].Month3_Precentage_Amount_22_Caratage,
           );
         }
 
         if (Number(period) > 90 && Number(period) <= 180) {
           caratAmountPrecentage = Number(
-            productItems[0].Month6_Precentage_Amount_22_Caratage
+            productItems[0].Month6_Precentage_Amount_22_Caratage,
           );
         }
         if (Number(period) > 180 && Number(period) <= 270) {
           caratAmountPrecentage = Number(
-            productItems[0].Month9_Precentage_Amount_22_Caratage
+            productItems[0].Month9_Precentage_Amount_22_Caratage,
           );
         }
 
         if (Number(period) > 270 && Number(period) <= 365) {
           caratAmountPrecentage = Number(
-            productItems[0].Month12_Precentage_Amount_22_Caratage
+            productItems[0].Month12_Precentage_Amount_22_Caratage,
           );
         }
 
@@ -797,37 +797,37 @@ export const sendCaratageAmountForSelectedProductItem = async (
         // period is in weeks
         if (Number(period) === 1) {
           caratAmountPrecentage = Number(
-            productItems[0].Week_Precentage_Amount_22_Caratage
+            productItems[0].Week_Precentage_Amount_22_Caratage,
           );
         }
 
         if (Number(period) > 1 && Number(period) <= 4) {
           caratAmountPrecentage = Number(
-            productItems[0].Month1_Precentage_Amount_22_Caratage
+            productItems[0].Month1_Precentage_Amount_22_Caratage,
           );
         }
 
         if (Number(period) > 4 && Number(period) <= 13) {
           caratAmountPrecentage = Number(
-            productItems[0].Month3_Precentage_Amount_22_Caratage
+            productItems[0].Month3_Precentage_Amount_22_Caratage,
           );
         }
 
         if (Number(period) > 13 && Number(period) <= 26) {
           caratAmountPrecentage = Number(
-            productItems[0].Month6_Precentage_Amount_22_Caratage
+            productItems[0].Month6_Precentage_Amount_22_Caratage,
           );
         }
 
         if (Number(period) > 26 && Number(period) <= 39) {
           caratAmountPrecentage = Number(
-            productItems[0].Month9_Precentage_Amount_22_Caratage
+            productItems[0].Month9_Precentage_Amount_22_Caratage,
           );
         }
 
         if (Number(period) > 39 && Number(period) <= 52) {
           caratAmountPrecentage = Number(
-            productItems[0].Month12_Precentage_Amount_22_Caratage
+            productItems[0].Month12_Precentage_Amount_22_Caratage,
           );
         }
 
@@ -839,31 +839,31 @@ export const sendCaratageAmountForSelectedProductItem = async (
       if (periodType === "months") {
         if (Number(period) === 1) {
           caratAmountPrecentage = Number(
-            productItems[0].Month1_Precentage_Amount_22_Caratage
+            productItems[0].Month1_Precentage_Amount_22_Caratage,
           );
         }
 
         if (Number(period) > 1 && Number(period) <= 3) {
           caratAmountPrecentage = Number(
-            productItems[0].Month3_Precentage_Amount_22_Caratage
+            productItems[0].Month3_Precentage_Amount_22_Caratage,
           );
         }
 
         if (Number(period) > 3 && Number(period) <= 6) {
           caratAmountPrecentage = Number(
-            productItems[0].Month6_Precentage_Amount_22_Caratage
+            productItems[0].Month6_Precentage_Amount_22_Caratage,
           );
         }
 
         if (Number(period) > 6 && Number(period) <= 9) {
           caratAmountPrecentage = Number(
-            productItems[0].Month9_Precentage_Amount_22_Caratage
+            productItems[0].Month9_Precentage_Amount_22_Caratage,
           );
         }
 
         if (Number(period) > 9 && Number(period) <= 12) {
           caratAmountPrecentage = Number(
-            productItems[0].Month12_Precentage_Amount_22_Caratage
+            productItems[0].Month12_Precentage_Amount_22_Caratage,
           );
         }
 
@@ -876,7 +876,7 @@ export const sendCaratageAmountForSelectedProductItem = async (
         // period is in years
         if (Number(period) === 1) {
           caratAmountPrecentage = Number(
-            productItems[0].Month12_Precentage_Amount_22_Caratage
+            productItems[0].Month12_Precentage_Amount_22_Caratage,
           );
         }
 
@@ -891,11 +891,11 @@ export const sendCaratageAmountForSelectedProductItem = async (
         return next(errorHandler(400, "Invalid caratage or base amount"));
       }
       const amountForSelectedCaratage = parseFloat(
-        (baseAmount * (caratNum / 22)).toFixed(2)
+        (baseAmount * (caratNum / 22)).toFixed(2),
       ); // amount for selected caratage
 
       let amount = parseFloat(
-        amountForSelectedCaratage * (caratAmountPrecentage / 100)
+        amountForSelectedCaratage * (caratAmountPrecentage / 100),
       ); // calculated amount based on caratage precentage
 
       // Round amount to nearest 1000
@@ -960,14 +960,14 @@ export const sendAssessedValues = async (req, res, next) => {
     if (!caratage) {
       return next(errorHandler(400, "Caratage is required"));
     }
-    const [assessedValue] = await pool.query(
+    const [assessedValue] = await pool2.query(
       "SELECT Amount FROM  assessed_value WHERE Carat = ? AND Company_idCompany = ?",
-      [caratage, req.companyId]
+      [caratage, req.companyId],
     );
 
     if (assessedValue.length === 0) {
       return next(
-        errorHandler(404, "No assessed values found for the given caratage")
+        errorHandler(404, "No assessed values found for the given caratage"),
       );
     }
 
@@ -991,8 +991,8 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
       return next(
         errorHandler(
           400,
-          "productId, periodType, interestMethod and pawningAdvance are all required"
-        )
+          "productId, periodType, interestMethod and pawningAdvance are all required",
+        ),
       );
     }
 
@@ -1012,12 +1012,12 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
       // get the matching product plans
       [productPlans] = await pool.query(
         "SELECT * FROM product_plan WHERE Pawning_Product_idPawning_Product = ? ",
-        [productId, periodType]
+        [productId, periodType],
       );
 
       if (productPlans.length === 0) {
         return next(
-          errorHandler(404, "No product plans found for the given criteria")
+          errorHandler(404, "No product plans found for the given criteria"),
         );
       }
 
@@ -1051,17 +1051,17 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
       const currentDate = new Date();
       const daysToAdd = Number(filteredPlan.Interest_Calculate_After);
       interestApplyOn = new Date(
-        currentDate.getTime() + daysToAdd * 24 * 60 * 60 * 1000
+        currentDate.getTime() + daysToAdd * 24 * 60 * 60 * 1000,
       );
     } else if (interestMethodNum === 0) {
       [productPlans] = await pool.query(
         "SELECT * FROM product_plan WHERE Pawning_Product_idPawning_Product = ? ",
-        [productId, periodType]
+        [productId, periodType],
       );
 
       if (productPlans.length === 0) {
         return next(
-          errorHandler(404, "No product plans found for the given criteria")
+          errorHandler(404, "No product plans found for the given criteria"),
         );
       }
 
@@ -1092,7 +1092,7 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
       const currentDate = new Date();
       const daysToAdd = Number(filteredPlan.Interest_Calculate_After);
       interestApplyOn = new Date(
-        currentDate.getTime() + daysToAdd * 24 * 60 * 60 * 1000
+        currentDate.getTime() + daysToAdd * 24 * 60 * 60 * 1000,
       );
     } else {
       return next(errorHandler(400, "Invalid interestMethod. Must be 0 or 1"));
@@ -1154,7 +1154,7 @@ export const getTicketDataById = async (req, res, next) => {
     // get the branch name for the ticket
     const [branchData] = await pool.query(
       "SELECT Name FROM branch WHERE idBranch = ?",
-      [ticketData[0].Branch_idBranch]
+      [ticketData[0].Branch_idBranch],
     );
 
     ticketData[0].branchName = branchData[0]?.Name || "Unknown Branch"; // attach branch name to ticket data
@@ -1162,7 +1162,7 @@ export const getTicketDataById = async (req, res, next) => {
     // fetch ticket images
     const [ticketImages] = await pool.query(
       "SELECT File_Path FROM ticket_artical_images WHERE Pawning_Ticket_idPawning_Ticket = ?",
-      [ticketData[0].idPawning_Ticket]
+      [ticketData[0].idPawning_Ticket],
     );
 
     // attach images to ticket data
@@ -1171,7 +1171,7 @@ export const getTicketDataById = async (req, res, next) => {
     // fetch the user name who created the ticket
     const [userData] = await pool.query(
       "SELECT full_name FROM user WHERE idUser = ?",
-      [ticketData[0].User_idUser]
+      [ticketData[0].User_idUser],
     );
     ticketData[0].createdUser = userData[0]?.full_name || "Unknown User";
     delete ticketData[0].User_idUser; // remove User_idUser from ticket data
@@ -1179,7 +1179,7 @@ export const getTicketDataById = async (req, res, next) => {
     // get the product name for the ticket
     const [productData] = await pool.query(
       "SELECT Name FROM pawning_product WHERE idPawning_Product = ?",
-      [ticketData[0].Pawning_Product_idPawning_Product]
+      [ticketData[0].Pawning_Product_idPawning_Product],
     );
 
     ticketData[0].productName = productData[0].Name || "Unknown Product"; // attach product name to ticket data
@@ -1188,7 +1188,7 @@ export const getTicketDataById = async (req, res, next) => {
     // fetch customer data for the ticket
     [customerData] = await pool.query(
       "SELECT idCustomer,NIC, Full_name,Address1,Address2,Address3,Mobile_No,Status,Risk_Level FROM customer WHERE idCustomer = ?",
-      [ticketData[0].Customer_idCustomer]
+      [ticketData[0].Customer_idCustomer],
     );
 
     if (customerData.length === 0) {
@@ -1196,8 +1196,8 @@ export const getTicketDataById = async (req, res, next) => {
         errorHandler(
           404,
           "No customer found for the ticket's customer ID: " +
-            ticketData[0].Customer_idCustomer
-        )
+            ticketData[0].Customer_idCustomer,
+        ),
       );
     }
 
@@ -1210,7 +1210,7 @@ export const getTicketDataById = async (req, res, next) => {
     LEFT JOIN article_types at ON CAST(ta.Article_type AS UNSIGNED) = at.idArticle_Types
     LEFT JOIN article_categories ac ON CAST(ta.Article_category AS UNSIGNED) = ac.idArticle_Categories
         WHERE ta.Pawning_Ticket_idPawning_Ticket = ?`,
-      [ticketData[0].idPawning_Ticket]
+      [ticketData[0].idPawning_Ticket],
     );
 
     if (articleItems.length === 0) {
@@ -1230,7 +1230,7 @@ export const getTicketDataById = async (req, res, next) => {
         WHERE Pawning_Ticket_idPawning_Ticket = ?
      ORDER BY idTicket_Log DESC
         LIMIT 1`,
-      [ticketData[0].idPawning_Ticket]
+      [ticketData[0].idPawning_Ticket],
     );
 
     if (!balanceLogs || balanceLogs.length === 0) {
@@ -1240,7 +1240,7 @@ export const getTicketDataById = async (req, res, next) => {
     // fetch payment history for the ticket
     [paymentHistory] = await pool.query(
       "SELECT p.Date_Time, p.Type, p.Amount, p.Description, u.full_name FROM payment p LEFT JOIN user u ON p.User = u.idUser WHERE p.Ticket_no = ? ORDER BY STR_TO_DATE(p.Date_Time, '%Y-%m-%d %H:%i:%s') DESC",
-      [String(ticketData[0].Ticket_No)]
+      [String(ticketData[0].Ticket_No)],
     );
 
     // fetch ticket logs for the ticket
@@ -1250,7 +1250,7 @@ export const getTicketDataById = async (req, res, next) => {
     LEFT JOIN user u ON tl.User_idUser = u.idUser
         WHERE tl.Pawning_Ticket_idPawning_Ticket = ? 
      ORDER BY tl.idTicket_Log ASC`,
-      [ticketData[0].idPawning_Ticket]
+      [ticketData[0].idPawning_Ticket],
     );
 
     res.status(200).json({
@@ -1284,7 +1284,7 @@ export const getTicketComments = async (req, res, next) => {
     LEFT JOIN user u ON tc.User_idUser = u.idUser
         WHERE tc.Pawning_Ticket_idPawning_Ticket = ? 
        `,
-      [ticketId]
+      [ticketId],
     );
 
     res.status(200).json({
@@ -1311,7 +1311,7 @@ export const createTicketComment = async (req, res, next) => {
 
     const [result] = await pool.query(
       "INSERT INTO ticket_comment (Comment, Pawning_Ticket_idPawning_Ticket, User_idUser,Date_Time) VALUES (?,?,?, NOW())",
-      [comment, ticketId, req.userId]
+      [comment, ticketId, req.userId],
     );
 
     if (result.affectedRows === 0) {
@@ -1325,7 +1325,7 @@ export const createTicketComment = async (req, res, next) => {
     LEFT JOIN user u ON tc.User_idUser = u.idUser
         WHERE tc.idTicket_Comment = ? 
        `,
-      [result.insertId]
+      [result.insertId],
     );
 
     res.status(201).json({
@@ -1350,7 +1350,7 @@ async function getTicketApprovalProgress(ticketId, ticketAmount, companyId) {
          AND start_amount <= ? 
          AND end_amount >= ?
        LIMIT 1`,
-      [companyId, ticketAmount, ticketAmount]
+      [companyId, ticketAmount, ticketAmount],
     );
 
     if (ranges.length === 0) {
@@ -1365,7 +1365,7 @@ async function getTicketApprovalProgress(ticketId, ticketAmount, companyId) {
        FROM pawning_ticket_approval_ranges_level 
        WHERE Approval_Range_idApproval_Range = ? 
        ORDER BY idApprovalRangeLevel ASC`,
-      [rangeId]
+      [rangeId],
     );
 
     if (levels.length === 0) {
@@ -1381,11 +1381,11 @@ async function getTicketApprovalProgress(ticketId, ticketAmount, companyId) {
        LEFT JOIN user u ON pta.approved_by = u.idUser
        WHERE pta.Pawning_Ticket_idPawning_Ticket = ? 
          AND pta.approval_status = 1`,
-      [ticketId]
+      [ticketId],
     );
 
     const approvedLevelIds = approvedLevels.map(
-      (al) => al.ApprovalRangeLevel_idApprovalRangeLevel
+      (al) => al.ApprovalRangeLevel_idApprovalRangeLevel,
     );
 
     // 4. Build progress info
@@ -1407,13 +1407,13 @@ async function getTicketApprovalProgress(ticketId, ticketAmount, companyId) {
          FROM pawning_ticket_approval_levels_designations pald
          JOIN designation d ON pald.Designation_idDesignation = d.idDesignation
          WHERE pald.ApprovalRangeLevel_idApprovalRangeLevel = ?`,
-        [level.idApprovalRangeLevel]
+        [level.idApprovalRangeLevel],
       );
 
       const approvalInfo = approvedLevels.find(
         (al) =>
           al.ApprovalRangeLevel_idApprovalRangeLevel ===
-          level.idApprovalRangeLevel
+          level.idApprovalRangeLevel,
       );
 
       levelProgress.push({
@@ -1456,7 +1456,7 @@ async function checkUserCanApproveTicket(
   userDesignationId,
   isHeadBranch,
   branchId,
-  userId // ADDED: we need the actual user ID
+  userId, // ADDED: we need the actual user ID
 ) {
   try {
     // 1. Find the approval range that matches the ticket amount
@@ -1467,7 +1467,7 @@ async function checkUserCanApproveTicket(
          AND start_amount <= ? 
          AND end_amount >= ?
        LIMIT 1`,
-      [companyId, ticketAmount, ticketAmount]
+      [companyId, ticketAmount, ticketAmount],
     );
 
     if (ranges.length === 0) {
@@ -1482,7 +1482,7 @@ async function checkUserCanApproveTicket(
        FROM pawning_ticket_approval_ranges_level 
        WHERE Approval_Range_idApproval_Range = ? 
        ORDER BY idApprovalRangeLevel ASC`,
-      [rangeId]
+      [rangeId],
     );
 
     if (levels.length === 0) {
@@ -1495,11 +1495,11 @@ async function checkUserCanApproveTicket(
        FROM pawning_ticket_approval 
        WHERE Pawning_Ticket_idPawning_Ticket = ? 
          AND approval_status = 1`,
-      [ticketId]
+      [ticketId],
     );
 
     const approvedLevelIds = approvedLevels.map(
-      (al) => al.ApprovalRangeLevel_idApprovalRangeLevel
+      (al) => al.ApprovalRangeLevel_idApprovalRangeLevel,
     );
 
     // 4. Find the CURRENT PENDING level (first level not approved yet)
@@ -1520,7 +1520,7 @@ async function checkUserCanApproveTicket(
     if (allLevelsApproved) {
       // Check if THIS USER actually approved ANY level (not just if they could have)
       const userApprovedAnyLevel = approvedLevels.some(
-        (al) => al.approved_by === userId
+        (al) => al.approved_by === userId,
       );
 
       return {
@@ -1532,7 +1532,7 @@ async function checkUserCanApproveTicket(
     // 6. Check if THIS USER actually approved any PREVIOUS level
     // CRITICAL FIX: Check actual approvals by this user, not just designation eligibility
     const userApprovedPreviousLevel = approvedLevels.some(
-      (al) => al.approved_by === userId
+      (al) => al.approved_by === userId,
     );
 
     // 7. Get designations authorized for the CURRENT PENDING level
@@ -1540,11 +1540,11 @@ async function checkUserCanApproveTicket(
       `SELECT Designation_idDesignation 
        FROM pawning_ticket_approval_levels_designations 
        WHERE ApprovalRangeLevel_idApprovalRangeLevel = ?`,
-      [currentPendingLevel.idApprovalRangeLevel]
+      [currentPendingLevel.idApprovalRangeLevel],
     );
 
     const authorizedDesignationIds = currentLevelDesignations.map(
-      (d) => d.Designation_idDesignation
+      (d) => d.Designation_idDesignation,
     );
 
     // 8. Check if user's designation is authorized for the CURRENT level
@@ -1662,7 +1662,7 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
     // Check if approval ranges are configured
     const [rangesCheck] = await pool.query(
       `SELECT COUNT(*) as count FROM pawning_ticket_approval_range WHERE companyid = ?`,
-      [req.companyId]
+      [req.companyId],
     );
 
     const hasApprovalRanges = rangesCheck[0].count > 0;
@@ -1679,7 +1679,7 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
         countQuery,
         countParams,
         page,
-        limit
+        limit,
       );
 
       let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, 
@@ -1730,14 +1730,14 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
           req.designationId,
           req.isHeadBranch,
           branchId,
-          req.userId // ADDED THIS
+          req.userId, // ADDED THIS
         );
 
         if (accessCheck.canView) {
           const approvalProgress = await getTicketApprovalProgress(
             ticket.idPawning_Ticket,
             ticket.Pawning_Advance_Amount,
-            req.companyId
+            req.companyId,
           );
 
           filteredTickets.push({
@@ -1749,7 +1749,7 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
       } catch (error) {
         console.error(
           `Error processing ticket ${ticket.idPawning_Ticket}:`,
-          error
+          error,
         );
       }
     }
@@ -1799,7 +1799,7 @@ export const approvePawningTicket = async (req, res, next) => {
 
     const [existingTicketRow] = await pool.query(
       "SELECT Status, idPawning_Ticket, Pawning_Advance_Amount, Branch_idBranch FROM pawning_ticket WHERE idPawning_Ticket = ?",
-      [ticketId]
+      [ticketId],
     );
 
     if (existingTicketRow.length === 0) {
@@ -1814,13 +1814,13 @@ export const approvePawningTicket = async (req, res, next) => {
 
     if (ticket.Status !== null && ticket.Status !== "0") {
       return next(
-        errorHandler(400, "Only tickets with pending status can be approved")
+        errorHandler(400, "Only tickets with pending status can be approved"),
       );
     }
 
     const [rangesCheck] = await pool.query(
       `SELECT COUNT(*) as count FROM pawning_ticket_approval_range WHERE companyid = ?`,
-      [req.companyId]
+      [req.companyId],
     );
 
     const hasApprovalRanges = rangesCheck[0].count > 0;
@@ -1828,7 +1828,7 @@ export const approvePawningTicket = async (req, res, next) => {
     if (!hasApprovalRanges) {
       const [result] = await pool.query(
         "UPDATE pawning_ticket SET Status = '-1' WHERE idPawning_Ticket = ?",
-        [ticketId]
+        [ticketId],
       );
 
       if (result.affectedRows === 0) {
@@ -1837,12 +1837,12 @@ export const approvePawningTicket = async (req, res, next) => {
 
       const [approvalResult] = await pool.query(
         "INSERT INTO ticket_has_approval (Pawning_Ticket_idPawning_Ticket, User, Date_Time, Note, Type) VALUES (?, ?, NOW(), ?, ?)",
-        [ticketId, req.userId, req.body.note || null, "APPROVE"]
+        [ticketId, req.userId, req.body.note || null, "APPROVE"],
       );
 
       if (approvalResult.affectedRows === 0) {
         return next(
-          errorHandler(500, "Failed to record the ticket approval action")
+          errorHandler(500, "Failed to record the ticket approval action"),
         );
       }
 
@@ -1851,7 +1851,7 @@ export const approvePawningTicket = async (req, res, next) => {
         approvalResult.insertId,
         "APPROVE-TICKET",
         req.body.note || "Ticket approved",
-        req.userId
+        req.userId,
       );
 
       return res.status(200).json({
@@ -1873,12 +1873,15 @@ export const approvePawningTicket = async (req, res, next) => {
         req.companyId,
         ticket.Pawning_Advance_Amount,
         ticket.Pawning_Advance_Amount,
-      ]
+      ],
     );
 
     if (ranges.length === 0) {
       return next(
-        errorHandler(400, "No approval range configured for this ticket amount")
+        errorHandler(
+          400,
+          "No approval range configured for this ticket amount",
+        ),
       );
     }
 
@@ -1889,12 +1892,12 @@ export const approvePawningTicket = async (req, res, next) => {
        FROM pawning_ticket_approval_ranges_level 
        WHERE Approval_Range_idApproval_Range = ? 
        ORDER BY idApprovalRangeLevel ASC`,
-      [rangeId]
+      [rangeId],
     );
 
     if (levels.length === 0) {
       return next(
-        errorHandler(400, "No approval levels configured for this range")
+        errorHandler(400, "No approval levels configured for this range"),
       );
     }
 
@@ -1903,11 +1906,11 @@ export const approvePawningTicket = async (req, res, next) => {
        FROM pawning_ticket_approval 
        WHERE Pawning_Ticket_idPawning_Ticket = ? 
          AND approval_status = 1`,
-      [ticketId]
+      [ticketId],
     );
 
     const approvedLevelIds = approvedLevels.map(
-      (al) => al.ApprovalRangeLevel_idApprovalRangeLevel
+      (al) => al.ApprovalRangeLevel_idApprovalRangeLevel,
     );
 
     let nextPendingLevel = null;
@@ -1926,8 +1929,8 @@ export const approvePawningTicket = async (req, res, next) => {
       return next(
         errorHandler(
           403,
-          "This level requires head office approval. You don't have permission."
-        )
+          "This level requires head office approval. You don't have permission.",
+        ),
       );
     }
 
@@ -1935,19 +1938,19 @@ export const approvePawningTicket = async (req, res, next) => {
       `SELECT Designation_idDesignation 
        FROM pawning_ticket_approval_levels_designations 
        WHERE ApprovalRangeLevel_idApprovalRangeLevel = ?`,
-      [nextPendingLevel.idApprovalRangeLevel]
+      [nextPendingLevel.idApprovalRangeLevel],
     );
 
     const authorizedDesignations = designations.map(
-      (d) => d.Designation_idDesignation
+      (d) => d.Designation_idDesignation,
     );
 
     if (!authorizedDesignations.includes(req.designationId)) {
       return next(
         errorHandler(
           403,
-          `Your designation is not authorized to approve at level: ${nextPendingLevel.level_name}`
-        )
+          `Your designation is not authorized to approve at level: ${nextPendingLevel.level_name}`,
+        ),
       );
     }
 
@@ -1957,12 +1960,15 @@ export const approvePawningTicket = async (req, res, next) => {
        WHERE Pawning_Ticket_idPawning_Ticket = ? 
          AND ApprovalRangeLevel_idApprovalRangeLevel = ? 
          AND approved_by = ?`,
-      [ticketId, nextPendingLevel.idApprovalRangeLevel, req.userId]
+      [ticketId, nextPendingLevel.idApprovalRangeLevel, req.userId],
     );
 
     if (existingApproval.length > 0) {
       return next(
-        errorHandler(400, "You have already approved this ticket at this level")
+        errorHandler(
+          400,
+          "You have already approved this ticket at this level",
+        ),
       );
     }
 
@@ -1976,7 +1982,7 @@ export const approvePawningTicket = async (req, res, next) => {
         nextPendingLevel.idApprovalRangeLevel,
         req.userId,
         req.body.note || null,
-      ]
+      ],
     );
 
     if (approvalResult.affectedRows === 0) {
@@ -1988,7 +1994,7 @@ export const approvePawningTicket = async (req, res, next) => {
     if (allLevelsApproved) {
       const [updateResult] = await pool.query(
         "UPDATE pawning_ticket SET Status = '-1' WHERE idPawning_Ticket = ?",
-        [ticketId]
+        [ticketId],
       );
 
       if (updateResult.affectedRows === 0) {
@@ -1997,12 +2003,12 @@ export const approvePawningTicket = async (req, res, next) => {
 
       const [ticketApprovalRecord] = await pool.query(
         "INSERT INTO ticket_has_approval (Pawning_Ticket_idPawning_Ticket, User, Date_Time, Note, Type) VALUES (?, ?, NOW(), ?, ?)",
-        [ticketId, req.userId, req.body.note || null, "APPROVE"]
+        [ticketId, req.userId, req.body.note || null, "APPROVE"],
       );
 
       if (ticketApprovalRecord.affectedRows === 0) {
         return next(
-          errorHandler(500, "Failed to record the ticket approval action")
+          errorHandler(500, "Failed to record the ticket approval action"),
         );
       }
 
@@ -2011,7 +2017,7 @@ export const approvePawningTicket = async (req, res, next) => {
         ticketApprovalRecord.insertId,
         "APPROVE-TICKET",
         "Ticket fully approved",
-        req.userId
+        req.userId,
       );
     }
 
@@ -2064,7 +2070,7 @@ export const rejectPawningTicket = async (req, res, next) => {
     // Check if the ticket exists and is pending approval
     const [existingTicketRow] = await pool.query(
       "SELECT Status, idPawning_Ticket, Pawning_Advance_Amount, Branch_idBranch FROM pawning_ticket WHERE idPawning_Ticket = ?",
-      [ticketId]
+      [ticketId],
     );
 
     if (existingTicketRow.length === 0) {
@@ -2081,14 +2087,14 @@ export const rejectPawningTicket = async (req, res, next) => {
     // Check if ticket is in pending status
     if (ticket.Status !== null && ticket.Status !== "0") {
       return next(
-        errorHandler(400, "Only tickets with pending status can be rejected")
+        errorHandler(400, "Only tickets with pending status can be rejected"),
       );
     }
 
     // Check if approval ranges are configured
     const [rangesCheck] = await pool.query(
       `SELECT COUNT(*) as count FROM pawning_ticket_approval_range WHERE companyid = ?`,
-      [req.companyId]
+      [req.companyId],
     );
 
     const hasApprovalRanges = rangesCheck[0].count > 0;
@@ -2098,7 +2104,7 @@ export const rejectPawningTicket = async (req, res, next) => {
       // Update the ticket status to rejected (4)
       const [result] = await pool.query(
         "UPDATE pawning_ticket SET Status = '4' WHERE idPawning_Ticket = ?",
-        [ticketId]
+        [ticketId],
       );
 
       if (result.affectedRows === 0) {
@@ -2108,12 +2114,12 @@ export const rejectPawningTicket = async (req, res, next) => {
       // Insert a record to ticket_has_approval table
       const [approvalResult] = await pool.query(
         "INSERT INTO ticket_has_approval (Pawning_Ticket_idPawning_Ticket, User, Date_Time, Note, Type) VALUES (?, ?, NOW(), ?, ?)",
-        [ticketId, req.userId, req.body.note, "REJECT"]
+        [ticketId, req.userId, req.body.note, "REJECT"],
       );
 
       if (approvalResult.affectedRows === 0) {
         return next(
-          errorHandler(500, "Failed to record the ticket rejection action")
+          errorHandler(500, "Failed to record the ticket rejection action"),
         );
       }
 
@@ -2138,12 +2144,15 @@ export const rejectPawningTicket = async (req, res, next) => {
         req.companyId,
         ticket.Pawning_Advance_Amount,
         ticket.Pawning_Advance_Amount,
-      ]
+      ],
     );
 
     if (ranges.length === 0) {
       return next(
-        errorHandler(400, "No approval range configured for this ticket amount")
+        errorHandler(
+          400,
+          "No approval range configured for this ticket amount",
+        ),
       );
     }
 
@@ -2155,12 +2164,12 @@ export const rejectPawningTicket = async (req, res, next) => {
        FROM pawning_ticket_approval_ranges_level 
        WHERE Approval_Range_idApproval_Range = ? 
        ORDER BY idApprovalRangeLevel ASC`,
-      [rangeId]
+      [rangeId],
     );
 
     if (levels.length === 0) {
       return next(
-        errorHandler(400, "No approval levels configured for this range")
+        errorHandler(400, "No approval levels configured for this range"),
       );
     }
 
@@ -2170,11 +2179,11 @@ export const rejectPawningTicket = async (req, res, next) => {
        FROM pawning_ticket_approval 
        WHERE Pawning_Ticket_idPawning_Ticket = ? 
          AND approval_status = 1`,
-      [ticketId]
+      [ticketId],
     );
 
     const approvedLevelIds = approvedLevels.map(
-      (al) => al.ApprovalRangeLevel_idApprovalRangeLevel
+      (al) => al.ApprovalRangeLevel_idApprovalRangeLevel,
     );
 
     // 4. Find the next pending level
@@ -2200,8 +2209,8 @@ export const rejectPawningTicket = async (req, res, next) => {
       return next(
         errorHandler(
           403,
-          "This level requires head office access. You don't have permission to reject."
-        )
+          "This level requires head office access. You don't have permission to reject.",
+        ),
       );
     }
 
@@ -2210,19 +2219,19 @@ export const rejectPawningTicket = async (req, res, next) => {
       `SELECT Designation_idDesignation 
        FROM pawning_ticket_approval_levels_designations 
        WHERE ApprovalRangeLevel_idApprovalRangeLevel = ?`,
-      [nextPendingLevel.idApprovalRangeLevel]
+      [nextPendingLevel.idApprovalRangeLevel],
     );
 
     const authorizedDesignations = designations.map(
-      (d) => d.Designation_idDesignation
+      (d) => d.Designation_idDesignation,
     );
 
     if (!authorizedDesignations.includes(req.designationId)) {
       return next(
         errorHandler(
           403,
-          `Your designation is not authorized to reject at level: ${nextPendingLevel.level_name}`
-        )
+          `Your designation is not authorized to reject at level: ${nextPendingLevel.level_name}`,
+        ),
       );
     }
 
@@ -2237,7 +2246,7 @@ export const rejectPawningTicket = async (req, res, next) => {
         nextPendingLevel.idApprovalRangeLevel,
         req.userId,
         req.body.note,
-      ]
+      ],
     );
 
     if (rejectionResult.affectedRows === 0) {
@@ -2247,7 +2256,7 @@ export const rejectPawningTicket = async (req, res, next) => {
     // 8. Update ticket status to rejected (4)
     const [updateResult] = await pool.query(
       "UPDATE pawning_ticket SET Status = '4' WHERE idPawning_Ticket = ?",
-      [ticketId]
+      [ticketId],
     );
 
     if (updateResult.affectedRows === 0) {
@@ -2257,12 +2266,12 @@ export const rejectPawningTicket = async (req, res, next) => {
     // 9. Insert a record to ticket_has_approval table
     const [ticketRejectionRecord] = await pool.query(
       "INSERT INTO ticket_has_approval (Pawning_Ticket_idPawning_Ticket, User, Date_Time, Note, Type) VALUES (?, ?, NOW(), ?, ?)",
-      [ticketId, req.userId, req.body.note, "REJECT"]
+      [ticketId, req.userId, req.body.note, "REJECT"],
     );
 
     if (ticketRejectionRecord.affectedRows === 0) {
       return next(
-        errorHandler(500, "Failed to record the ticket rejection action")
+        errorHandler(500, "Failed to record the ticket rejection action"),
       );
     }
 
@@ -2306,7 +2315,7 @@ export const getApprovedPawningTickets = async (req, res, next) => {
       const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
       if (!dateRegex.test(start_date)) {
         return next(
-          errorHandler(400, "Invalid start_date format. Use YYYY-MM-DD")
+          errorHandler(400, "Invalid start_date format. Use YYYY-MM-DD"),
         );
       }
       baseWhereConditions +=
@@ -2320,7 +2329,7 @@ export const getApprovedPawningTickets = async (req, res, next) => {
       const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
       if (!dateRegex.test(end_date)) {
         return next(
-          errorHandler(400, "Invalid end_date format. Use YYYY-MM-DD")
+          errorHandler(400, "Invalid end_date format. Use YYYY-MM-DD"),
         );
       }
       baseWhereConditions +=
@@ -2356,7 +2365,7 @@ export const getApprovedPawningTickets = async (req, res, next) => {
       countQuery,
       countParams,
       page,
-      limit
+      limit,
     );
 
     // Build main data query - fetch ticket data with customer NIC and product name
@@ -2402,7 +2411,7 @@ export const activatePawningTicket = async (req, res, next) => {
     // check if there is a valid from account
     const [fromAccount] = await pool.query(
       "SELECT idAccounting_Accounts, Account_Type, Account_Balance, Cashier_idCashier, Branch_idBranch FROM accounting_accounts WHERE idAccounting_Accounts = ? AND Branch_idBranch = ?",
-      [fromAccountId, req.branchId]
+      [fromAccountId, req.branchId],
     );
 
     if (fromAccount.length === 0) {
@@ -2412,7 +2421,7 @@ export const activatePawningTicket = async (req, res, next) => {
     // Check if the ticket exists and is approved
     const [existingTicketRow] = await pool.query(
       "SELECT Status,idPawning_Ticket,Pawning_Advance_Amount FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
-      [ticketId, req.branchId]
+      [ticketId, req.branchId],
     );
 
     if (existingTicketRow.length === 0) {
@@ -2423,7 +2432,7 @@ export const activatePawningTicket = async (req, res, next) => {
     const currentStatus = existingTicketRow[0].Status;
     if (currentStatus !== "-1") {
       return next(
-        errorHandler(400, "Only tickets with approved status can be activated")
+        errorHandler(400, "Only tickets with approved status can be activated"),
       );
     }
 
@@ -2434,15 +2443,15 @@ export const activatePawningTicket = async (req, res, next) => {
       return next(
         errorHandler(
           400,
-          "Disbursement amount cannot be more than the approved advance amount"
-        )
+          "Disbursement amount cannot be more than the approved advance amount",
+        ),
       );
     }
 
     // check if the account has sufficient balance
     if (amount > parseFloat(fromAccount[0].Account_Balance)) {
       return next(
-        errorHandler(400, "Insufficient balance in the selected account")
+        errorHandler(400, "Insufficient balance in the selected account"),
       );
     }
 
@@ -2462,25 +2471,25 @@ export const activatePawningTicket = async (req, res, next) => {
         return next(
           errorHandler(
             403,
-            "You are not authorized to use this cashier account"
-          )
+            "You are not authorized to use this cashier account",
+          ),
         );
       }
 
       // Update the ticket status to active (1)
       const [result] = await connection.query(
         "UPDATE pawning_ticket SET Status = '1' WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
-        [ticketIdToUpdate, req.branchId]
+        [ticketIdToUpdate, req.branchId],
       );
 
       const balanceAfterDisbursement = parseFloat(
-        fromAccount[0].Account_Balance - amount
+        fromAccount[0].Account_Balance - amount,
       );
 
       // deduct the amount from the cashier account balance
       const [updateAccountResult] = await connection.query(
         "UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ? AND Branch_idBranch = ? AND Cashier_idCashier = ?",
-        [balanceAfterDisbursement, fromAccountId, req.branchId, req.userId]
+        [balanceAfterDisbursement, fromAccountId, req.branchId, req.userId],
       );
 
       if (result.affectedRows === 0 || updateAccountResult.affectedRows === 0) {
@@ -2502,18 +2511,18 @@ export const activatePawningTicket = async (req, res, next) => {
           balanceAfterDisbursement,
           null,
           req.userId,
-        ]
+        ],
       );
       // now get the Pawn Loan Receivable account that is linked to the branch
       const [pawnLoanReceivableAccount] = await connection.query(
         "SELECT idAccounting_Accounts FROM accounting_accounts WHERE Account_Type = 'Pawn Loan Receivable' AND Branch_idBranch = ? AND Group_Of_Type = 'Assets'",
-        [req.branchId]
+        [req.branchId],
       );
       if (pawnLoanReceivableAccount.length === 0) {
         await connection.rollback();
         connection.release();
         return next(
-          errorHandler(500, "Pawn Loan Receivable account not found")
+          errorHandler(500, "Pawn Loan Receivable account not found"),
         );
       }
       // now add a debit entry to the Pawn Loan Receivable account
@@ -2529,7 +2538,7 @@ export const activatePawningTicket = async (req, res, next) => {
           balanceAfterDisbursement,
           null,
           req.userId,
-        ]
+        ],
       );
       if (addDebitEntryResult.affectedRows === 0) {
         await connection.rollback();
@@ -2537,8 +2546,8 @@ export const activatePawningTicket = async (req, res, next) => {
         return next(
           errorHandler(
             500,
-            "Failed to add debit entry to Pawn Loan Receivable account"
-          )
+            "Failed to add debit entry to Pawn Loan Receivable account",
+          ),
         );
       }
     } else {
@@ -2549,15 +2558,15 @@ export const activatePawningTicket = async (req, res, next) => {
         return next(
           errorHandler(
             403,
-            "You are not authorized to use this account from this branch"
-          )
+            "You are not authorized to use this account from this branch",
+          ),
         );
       }
 
       // Update the ticket status to active (1)
       const [result] = await connection.query(
         "UPDATE pawning_ticket SET Status = '1' WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
-        [ticketIdToUpdate, req.branchId]
+        [ticketIdToUpdate, req.branchId],
       );
 
       if (result.affectedRows === 0) {
@@ -2567,12 +2576,12 @@ export const activatePawningTicket = async (req, res, next) => {
       }
 
       const balanceAfterDisbursement = parseFloat(
-        fromAccount[0].Account_Balance - amount
+        fromAccount[0].Account_Balance - amount,
       );
       // deduct the amount from the account balance
       const [updateAccountResult] = await connection.query(
         "UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ? AND Branch_idBranch = ?",
-        [balanceAfterDisbursement, fromAccountId, req.branchId]
+        [balanceAfterDisbursement, fromAccountId, req.branchId],
       );
 
       if (updateAccountResult.affectedRows === 0) {
@@ -2594,7 +2603,7 @@ export const activatePawningTicket = async (req, res, next) => {
           balanceAfterDisbursement,
           null,
           req.userId,
-        ]
+        ],
       );
     }
 
@@ -2604,7 +2613,7 @@ export const activatePawningTicket = async (req, res, next) => {
       null,
       "LOAN-DISBURSEMENT",
       "Ticket activated and loan disbursed",
-      req.userId
+      req.userId,
     );
 
     await connection.commit();
@@ -2672,7 +2681,7 @@ export const sendActiveTickets = async (req, res, next) => {
       const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
       if (!dateRegex.test(start_date)) {
         return next(
-          errorHandler(400, "Invalid start_date format. Use YYYY-MM-DD")
+          errorHandler(400, "Invalid start_date format. Use YYYY-MM-DD"),
         );
       }
       baseWhereConditions +=
@@ -2686,7 +2695,7 @@ export const sendActiveTickets = async (req, res, next) => {
       const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
       if (!dateRegex.test(end_date)) {
         return next(
-          errorHandler(400, "Invalid end_date format. Use YYYY-MM-DD")
+          errorHandler(400, "Invalid end_date format. Use YYYY-MM-DD"),
         );
       }
       baseWhereConditions +=
@@ -2723,7 +2732,7 @@ export const sendActiveTickets = async (req, res, next) => {
       countQuery,
       countParams,
       page,
-      limit
+      limit,
     );
 
     // Build main data query - fetch ticket data with customer NIC and product name
@@ -2800,7 +2809,7 @@ export const sendSettledTickets = async (req, res, next) => {
       const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
       if (!dateRegex.test(start_date)) {
         return next(
-          errorHandler(400, "Invalid start_date format. Use YYYY-MM-DD")
+          errorHandler(400, "Invalid start_date format. Use YYYY-MM-DD"),
         );
       }
       baseWhereConditions +=
@@ -2814,7 +2823,7 @@ export const sendSettledTickets = async (req, res, next) => {
       const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
       if (!dateRegex.test(end_date)) {
         return next(
-          errorHandler(400, "Invalid end_date format. Use YYYY-MM-DD")
+          errorHandler(400, "Invalid end_date format. Use YYYY-MM-DD"),
         );
       }
       baseWhereConditions +=
@@ -2851,7 +2860,7 @@ export const sendSettledTickets = async (req, res, next) => {
       countQuery,
       countParams,
       page,
-      limit
+      limit,
     );
 
     // Build main data query - fetch ticket data with customer NIC and product name
@@ -2940,7 +2949,7 @@ export const sendTicketsForPrinting = async (req, res, next) => {
       const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
       if (!dateRegex.test(start_date)) {
         return next(
-          errorHandler(400, "Invalid start_date format. Use YYYY-MM-DD")
+          errorHandler(400, "Invalid start_date format. Use YYYY-MM-DD"),
         );
       }
       baseWhereConditions +=
@@ -2954,7 +2963,7 @@ export const sendTicketsForPrinting = async (req, res, next) => {
       const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
       if (!dateRegex.test(end_date)) {
         return next(
-          errorHandler(400, "Invalid end_date format. Use YYYY-MM-DD")
+          errorHandler(400, "Invalid end_date format. Use YYYY-MM-DD"),
         );
       }
       baseWhereConditions +=
@@ -2991,7 +3000,7 @@ export const sendTicketsForPrinting = async (req, res, next) => {
       countQuery,
       countParams,
       page,
-      limit
+      limit,
     );
 
     // Determine if any search filters are applied
@@ -3039,7 +3048,7 @@ export const markTicketAsPrinted = async (req, res, next) => {
 
     const [existingTicketRow] = await pool.query(
       "SELECT 1 FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
-      [ticketId, req.branchId]
+      [ticketId, req.branchId],
     );
 
     if (existingTicketRow.length === 0) {
@@ -3049,12 +3058,12 @@ export const markTicketAsPrinted = async (req, res, next) => {
     // Update the Print_Status to '1'
     const [result] = await pool.query(
       "UPDATE pawning_ticket SET Print_Status = '1' WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
-      [ticketId, req.branchId]
+      [ticketId, req.branchId],
     );
 
     if (result.affectedRows === 0) {
       return next(
-        errorHandler(500, "Failed to update the ticket print status")
+        errorHandler(500, "Failed to update the ticket print status"),
       );
     }
 
@@ -3082,14 +3091,14 @@ export const generatePawningTicketNumber = async (req, res, next) => {
     ];
     let ticketNo = "";
 
-    const [ticketFormat] = await pool.query(
+    const [ticketFormat] = await pool2.query(
       "SELECT * FROM pawning_ticket_format WHERE company_id = ?",
-      [req.companyId]
+      [req.companyId],
     );
 
     if (ticketFormat.length === 0) {
       return next(
-        errorHandler(404, "Pawning ticket number format not configured")
+        errorHandler(404, "Pawning ticket number format not configured"),
       );
     }
 
@@ -3113,9 +3122,9 @@ export const generatePawningTicketNumber = async (req, res, next) => {
         // If it's a format component, process it
         if (part === "Branch Number") {
           // get the branch number
-          const [branch] = await pool.query(
+          const [branch] = await pool2.query(
             "SELECT Branch_Code FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
-            [req.branchId, req.companyId]
+            [req.branchId, req.companyId],
           );
 
           if (branch.length === 0) {
@@ -3128,7 +3137,7 @@ export const generatePawningTicketNumber = async (req, res, next) => {
         if (part === "Branch's Customer Count") {
           const [customerCount] = await pool.query(
             "SELECT COUNT(*) AS count FROM customer WHERE Branch_idBranch = ?",
-            [req.branchId]
+            [req.branchId],
           );
 
           if (customerCount.length === 0) {
@@ -3160,14 +3169,14 @@ export const generatePawningTicketNumber = async (req, res, next) => {
             // calculate the total tickets in the company
             let ticketCount = 0;
             // find all the branches for this specific company
-            const [branches] = await pool.query(
+            const [branches] = await pool2.query(
               "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
-              [req.companyId]
+              [req.companyId],
             );
 
             if (branches.length === 0) {
               return next(
-                errorHandler(404, "No branches found for the company")
+                errorHandler(404, "No branches found for the company"),
               );
             }
 
@@ -3175,7 +3184,7 @@ export const generatePawningTicketNumber = async (req, res, next) => {
             for (const branch of branches) {
               const [branchTicketCount] = await pool.query(
                 "SELECT COUNT(*) AS count FROM pawning_ticket WHERE Branch_idBranch = ?",
-                [branch.idBranch]
+                [branch.idBranch],
               );
               ticketCount += branchTicketCount[0].count;
             }
@@ -3191,9 +3200,9 @@ export const generatePawningTicketNumber = async (req, res, next) => {
     } else {
       let ticketCount = 0;
       // find all the branches for this specific company
-      const [branches] = await pool.query(
+      const [branches] = await pool2.query(
         "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
-        [req.companyId]
+        [req.companyId],
       );
 
       if (branches.length === 0) {
@@ -3204,7 +3213,7 @@ export const generatePawningTicketNumber = async (req, res, next) => {
       for (const branch of branches) {
         const [branchTicketCount] = await pool.query(
           "SELECT COUNT(*) AS count FROM pawning_ticket WHERE Branch_idBranch = ?",
-          [branch.idBranch]
+          [branch.idBranch],
         );
         ticketCount += branchTicketCount[0].count;
       }
@@ -3236,7 +3245,7 @@ export const checkIfTicketsExistInCompany = async (req, res, next) => {
        JOIN branch b ON pt.Branch_idBranch = b.idBranch
        WHERE b.Company_idCompany = ?
        LIMIT 1`,
-      [req.companyId]
+      [req.companyId],
     );
 
     res.status(200).json({
@@ -3254,7 +3263,7 @@ export const getCompanyBranchesForTicketFilters = async (req, res, next) => {
   try {
     const [branches] = await pool.query(
       "SELECT idBranch, Name, Branch_Code FROM branch WHERE Company_idCompany = ? AND Branch_Code NOT LIKE CONCAT('%', ?, '-HO') ORDER BY Name ASC",
-      [req.companyId, req.companyId]
+      [req.companyId, req.companyId],
     );
 
     return res.status(200).json({

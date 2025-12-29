@@ -14,27 +14,27 @@ import { uploadImage, deleteImage } from "../utils/cloudinary.js";
 const userWithoutPassword = async (userId) => {
   try {
     let user;
-    [user] = await pool.query("SELECT * FROM user WHERE idUser = ?", [userId]);
+    [user] = await pool2.query("SELECT * FROM user WHERE idUser = ?", [userId]);
 
     if (!user[0]) {
       throw new Error("User not found");
     }
 
     // get the desgination
-    const [desgination] = await pool.query(
+    const [desgination] = await pool2.query(
       "SELECT Description, idDesignation from designation WHERE idDesignation = ?",
       [user[0].Designation_idDesignation],
     );
 
     // get the designation privileges
-    const [designationPrivileges] = await pool.query(
+    const [designationPrivileges] = await pool2.query(
       "SELECT User_Privilages_idUser_Privilages FROM designation_has_user_privilages WHERE Designation_idDesignation = ? AND Status = '1'",
       [user[0].Designation_idDesignation],
     );
 
     let privileges = [];
     for (const privilege of designationPrivileges) {
-      const [privilegeRows] = await pool.query(
+      const [privilegeRows] = await pool2.query(
         "SELECT idUser_privilages, Description FROM user_privilages WHERE idUser_privilages = ?",
         [privilege.User_Privilages_idUser_Privilages],
       );
@@ -43,19 +43,19 @@ const userWithoutPassword = async (userId) => {
       }
     }
 
-    const [company] = await pool.query(
+    const [company] = await pool2.query(
       "SELECT * FROM company WHERE idCompany = ?",
       [user[0].Company_idCompany],
     );
 
-    const [branchIds] = await pool.query(
+    const [branchIds] = await pool2.query(
       "SELECT Branch_idBranch FROM user_has_branch WHERE User_idUser = ?",
       [user[0].idUser],
     );
 
     let userBranches = [];
     for (const branch of branchIds) {
-      const [branchRows] = await pool.query(
+      const [branchRows] = await pool2.query(
         "SELECT idBranch, Name,Branch_Code FROM branch WHERE idBranch = ?",
         [branch.Branch_idBranch],
       );
@@ -64,7 +64,7 @@ const userWithoutPassword = async (userId) => {
       }
     }
 
-    const [documetTypes] = await pool.query(
+    const [documetTypes] = await pool2.query(
       "SELECT * FROM company_documents WHERE Company_idCompany = ?",
       [user[0].Company_idCompany],
     );
@@ -76,7 +76,7 @@ const userWithoutPassword = async (userId) => {
     }));
 
     // Check if user got a cashier account and if yes send cashier account id
-    const [cashierAccount] = await pool.query(
+    const [cashierAccount] = await pool2.query(
       "SELECT idAccounting_Accounts,Cashier_idCashier FROM accounting_accounts WHERE Cashier_idCashier = ?",
       [user[0].idUser],
     );
@@ -218,7 +218,7 @@ export const forgetPassword = async (req, res, next) => {
     }
 
     if (email) {
-      const [existingUser] = await pool.query(
+      const [existingUser] = await pool2.query(
         "SELECT idUser,full_name FROM user WHERE Email = ?",
         [email],
       );
@@ -232,7 +232,7 @@ export const forgetPassword = async (req, res, next) => {
       const tokenExpiry = new Date(Date.now() + 3600000); // Token valid for 1 hour from now
 
       // Store the token and its expiry in the database
-      await pool.query(
+      await pool2.query(
         "UPDATE user SET Reset_Password_Token = ?,Reset_Password_Token_Expires_At = ? WHERE idUser = ?",
         [token, tokenExpiry, existingUser[0].idUser],
       );
@@ -281,7 +281,7 @@ export const forgetPassword = async (req, res, next) => {
       const tokenExpiry = new Date(Date.now() + 3600000); // Token valid for 1 hour from now
 
       // Store the token and its expiry in the database
-      await pool.query(
+      await pool2.query(
         "UPDATE user SET Reset_Password_Mobile_Otp = ?, Reset_Password_Mobile_Otp_Expires_At = ? WHERE idUser = ?",
         [token, tokenExpiry, existingUser[0].idUser],
       );
@@ -301,7 +301,7 @@ export const forgetPassword = async (req, res, next) => {
       }
 
       // get the company sms mask
-      const [companyRows] = await pool.query(
+      const [companyRows] = await pool2.query(
         "SELECT SMS_Mask FROM company WHERE idCompany = ?",
         [existingUser[0].Company_idCompany],
       );
@@ -355,7 +355,7 @@ export const verifyMobileOtpForPasswordReset = async (req, res, next) => {
       );
     }
 
-    const [existingUser] = await pool.query(
+    const [existingUser] = await pool2.query(
       "SELECT idUser,Reset_Password_Mobile_Otp_Expires_At FROM user WHERE Reset_Password_Mobile_Otp = ? AND Contact_no = ?",
       [otp, mobile],
     );
@@ -377,7 +377,7 @@ export const verifyMobileOtpForPasswordReset = async (req, res, next) => {
     const tokenExpiry = new Date(Date.now() + 3600000); // Token valid for 1 hour from now
 
     // Store the token and its expiry in the database and remove the otp and its expiry from table
-    await pool.query(
+    await pool2.query(
       "UPDATE user SET Reset_Password_Token = ?,Reset_Password_Token_Expires_At = ?, Reset_Password_Mobile_Otp = NULL, Reset_Password_Mobile_Otp_Expires_At = NULL WHERE idUser = ?",
       [token, tokenExpiry, existingUser[0].idUser],
     );
@@ -444,7 +444,7 @@ export const resetPassword = async (req, res, next) => {
     }
 
     // find there is a user with the token and userId and the token is not expired
-    const [user] = await pool.query(
+    const [user] = await pool2.query(
       "SELECT idUser,Email,full_name,Reset_Password_Token,Reset_Password_Token_Expires_At,Company_idCompany,Contact_no FROM user WHERE idUser = ? ",
       [userId],
     );
@@ -462,7 +462,7 @@ export const resetPassword = async (req, res, next) => {
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
     // update the password in the database and remove the token
-    const [result] = await pool.query(
+    const [result] = await pool2.query(
       "UPDATE user SET Password = ?, Reset_Password_Token = NULL, Reset_Password_Token_Expires_At = NULL WHERE idUser = ?",
       [hashedPassword, userId],
     );
@@ -486,7 +486,7 @@ export const resetPassword = async (req, res, next) => {
     }
 
     // send the sms after password reset success
-    const [companyRows] = await pool.query(
+    const [companyRows] = await pool2.query(
       "SELECT SMS_Mask FROM company WHERE idCompany = ?",
       [user[0].Company_idCompany],
     );
@@ -549,7 +549,7 @@ export const updateProfile = async (req, res, next) => {
     }
 
     // get the existing user's profile image to perform update or delete from cloudinary
-    const [existingUser] = await pool.query(
+    const [existingUser] = await pool2.query(
       "SELECT Profile_Image FROM user WHERE idUser = ?",
       [req.userId],
     );
@@ -596,7 +596,7 @@ export const updateProfile = async (req, res, next) => {
     }
 
     // update the user profile
-    const [result] = await pool.query(
+    const [result] = await pool2.query(
       "UPDATE user SET full_name = ?, Contact_no = ?, Email = ?, Profile_Image = ? WHERE idUser = ?",
       [
         full_name,

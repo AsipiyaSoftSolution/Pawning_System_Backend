@@ -2629,10 +2629,6 @@ export const activatePawningTicket = async (req, res, next) => {
 
       if (result.affectedRows === 0) {
         await connection.rollback();
-        connection.release();
-        connection2.release();
-        await connection2.rollback();
-        return next(errorHandler(500, "Failed to activate the ticket"));
         await connection2.rollback();
         connection.release();
         connection2.release();
@@ -2650,9 +2646,9 @@ export const activatePawningTicket = async (req, res, next) => {
 
       if (updateAccountResult.affectedRows === 0) {
         await connection.rollback();
+        await connection2.rollback();
         connection.release();
         connection2.release();
-        await connection2.rollback();
         return next(errorHandler(500, "Failed to update account balance"));
       }
 
@@ -2808,20 +2804,33 @@ export const sendActiveTickets = async (req, res, next) => {
       limit,
     );
 
-    // Build main data query - fetch ticket data with customer NIC and product name
+    // Build main data query - fetch ticket data with customer NIC and product name (without branch - it's in pool2)
     let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, 
-                        pt.Pawning_Advance_Amount, pt.Status, c.Full_name, c.NIC, c.Mobile_No, 
-                        pp.Name AS ProductName, b.Name AS BranchName
+                        pt.Pawning_Advance_Amount, pt.Status, pt.Branch_idBranch, c.Full_name, c.NIC, c.Mobile_No, 
+                        pp.Name AS ProductName
                  FROM pawning_ticket pt
             LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
             LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product
-            LEFT JOIN branch b ON pt.Branch_idBranch = b.idBranch
                  WHERE ${baseWhereConditions}
             ORDER BY pt.idPawning_Ticket DESC LIMIT ? OFFSET ?`;
 
     dataParams.push(limit, offset);
 
     const [tickets] = await pool.query(query, dataParams);
+
+    // Fetch branch names from pool2 for each ticket
+    for (let ticket of tickets) {
+      if (ticket.Branch_idBranch) {
+        const [branchData] = await pool2.query(
+          "SELECT Name FROM branch WHERE idBranch = ?",
+          [ticket.Branch_idBranch],
+        );
+        ticket.BranchName = branchData[0]?.Name || null;
+      } else {
+        ticket.BranchName = null;
+      }
+      delete ticket.Branch_idBranch; // Remove the branch ID from response
+    }
 
     return res.status(200).json({
       success: true,
@@ -3334,7 +3343,7 @@ export const checkIfTicketsExistInCompany = async (req, res, next) => {
 // get company branches for ticket page filters
 export const getCompanyBranchesForTicketFilters = async (req, res, next) => {
   try {
-    const [branches] = await pool.query(
+    const [branches] = await pool2.query(
       "SELECT idBranch, Name, Branch_Code FROM branch WHERE Company_idCompany = ? AND Branch_Code NOT LIKE CONCAT('%', ?, '-HO') ORDER BY Name ASC",
       [req.companyId, req.companyId],
     );

@@ -307,7 +307,7 @@ export const createPawningTicket = async (req, res, next) => {
     }
 
     // get is_Ticket_Approve_After_Create setting from company table
-    const [companySettings] = await pool.query(
+    const [companySettings] = await pool2.query(
       "SELECT is_Ticket_Approve_After_Create FROM company WHERE idCompany = ?",
       [req.companyId],
     );
@@ -1152,7 +1152,7 @@ export const getTicketDataById = async (req, res, next) => {
     }
 
     // get the branch name for the ticket
-    const [branchData] = await pool.query(
+    const [branchData] = await pool2.query(
       "SELECT Name FROM branch WHERE idBranch = ?",
       [ticketData[0].Branch_idBranch],
     );
@@ -1169,7 +1169,7 @@ export const getTicketDataById = async (req, res, next) => {
     ticketData[0].images = ticketImages || [];
 
     // fetch the user name who created the ticket
-    const [userData] = await pool.query(
+    const [userData] = await pool2.query(
       "SELECT full_name FROM user WHERE idUser = ?",
       [ticketData[0].User_idUser],
     );
@@ -1201,17 +1201,36 @@ export const getTicketDataById = async (req, res, next) => {
       );
     }
 
-    // fetch ticket article items with JOINs for type and category names, casting VARCHAR keys
+    // fetch ticket article items from pool (pawning_system db)
     [articleItems] = await pool.query(
-      `SELECT ta.*, 
-              at.Description AS ArticleTypeName, 
-              ac.Description AS categoryName
-         FROM ticket_articles ta
-    LEFT JOIN article_types at ON CAST(ta.Article_type AS UNSIGNED) = at.idArticle_Types
-    LEFT JOIN article_categories ac ON CAST(ta.Article_category AS UNSIGNED) = ac.idArticle_Categories
-        WHERE ta.Pawning_Ticket_idPawning_Ticket = ?`,
+      `SELECT ta.* FROM ticket_articles ta WHERE ta.Pawning_Ticket_idPawning_Ticket = ?`,
       [ticketData[0].idPawning_Ticket],
     );
+
+    // fetch article_types and article_categories from pool2 (account_center_asipiya db) and merge
+    for (let item of articleItems) {
+      // Get article type name from pool2
+      if (item.Article_type) {
+        const [articleType] = await pool2.query(
+          `SELECT Description FROM article_types WHERE idArticle_Types = ?`,
+          [parseInt(item.Article_type)],
+        );
+        item.ArticleTypeName = articleType[0]?.Description || null;
+      } else {
+        item.ArticleTypeName = null;
+      }
+
+      // Get article category name from pool2
+      if (item.Article_category) {
+        const [articleCategory] = await pool2.query(
+          `SELECT Description FROM article_categories WHERE idArticle_Categories = ?`,
+          [parseInt(item.Article_category)],
+        );
+        item.categoryName = articleCategory[0]?.Description || null;
+      } else {
+        item.categoryName = null;
+      }
+    }
 
     if (articleItems.length === 0) {
       return next(errorHandler(404, "No article items found for the ticket"));
@@ -1237,21 +1256,47 @@ export const getTicketDataById = async (req, res, next) => {
       return next(errorHandler(404, "No balance log found for the ticket"));
     }
 
-    // fetch payment history for the ticket
+    // fetch payment history for the ticket from pool (payment table)
     [paymentHistory] = await pool.query(
-      "SELECT p.Date_Time, p.Type, p.Amount, p.Description, u.full_name FROM payment p LEFT JOIN user u ON p.User = u.idUser WHERE p.Ticket_no = ? ORDER BY STR_TO_DATE(p.Date_Time, '%Y-%m-%d %H:%i:%s') DESC",
+      "SELECT p.Date_Time, p.Type, p.Amount, p.Description, p.User FROM payment p WHERE p.Ticket_no = ? ORDER BY STR_TO_DATE(p.Date_Time, '%Y-%m-%d %H:%i:%s') DESC",
       [String(ticketData[0].Ticket_No)],
     );
 
-    // fetch ticket logs for the ticket
+    // fetch user names from pool2 for each payment
+    for (let payment of paymentHistory) {
+      if (payment.User) {
+        const [userData] = await pool2.query(
+          "SELECT full_name FROM user WHERE idUser = ?",
+          [payment.User],
+        );
+        payment.full_name = userData[0]?.full_name || null;
+      } else {
+        payment.full_name = null;
+      }
+      delete payment.User; // remove User id from response
+    }
+
+    // fetch ticket logs for the ticket from pool
     [ticketLogs] = await pool.query(
-      `SELECT tl.*, u.full_name 
+      `SELECT tl.*
          FROM ticket_log tl
-    LEFT JOIN user u ON tl.User_idUser = u.idUser
         WHERE tl.Pawning_Ticket_idPawning_Ticket = ? 
      ORDER BY tl.idTicket_Log ASC`,
       [ticketData[0].idPawning_Ticket],
     );
+
+    // fetch user names from pool2 for each ticket log
+    for (let log of ticketLogs) {
+      if (log.User_idUser) {
+        const [userData] = await pool2.query(
+          "SELECT full_name FROM user WHERE idUser = ?",
+          [log.User_idUser],
+        );
+        log.full_name = userData[0]?.full_name || null;
+      } else {
+        log.full_name = null;
+      }
+    }
 
     res.status(200).json({
       success: true,

@@ -1641,12 +1641,11 @@ export const getTicketsPaymentsHistory = async (req, res, next) => {
       limit,
     );
 
-    // Build main data query
-    const dataQuery = `SELECT p.*, u.full_name AS officerName, pt.idPawning_Ticket, pt.Status AS Ticket_Status, 
+    // Build main data query (without user JOIN - user is in pool2)
+    const dataQuery = `SELECT p.*, p.User AS User_idUser, pt.idPawning_Ticket, pt.Status AS Ticket_Status, 
                               c.Full_name AS customerName, c.NIC AS customerNIC, c.Mobile_No AS customerMobile
                        FROM payment p
                        JOIN pawning_ticket pt ON p.Ticket_no COLLATE utf8mb4_unicode_ci = pt.Ticket_No COLLATE utf8mb4_unicode_ci
-                       LEFT JOIN user u ON p.User = u.idUser
                        LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
                        WHERE ${baseWhereConditions}
                        ORDER BY STR_TO_DATE(p.Date_time, '%Y-%m-%d %H:%i:%s') DESC
@@ -1656,7 +1655,19 @@ export const getTicketsPaymentsHistory = async (req, res, next) => {
 
     const [payments] = await pool.query(dataQuery, dataParams);
 
-    console.log(payments, "tickets payments history");
+    // Fetch officer names from pool2 for each payment
+    for (let payment of payments) {
+      if (payment.User_idUser) {
+        const [userData] = await pool2.query(
+          "SELECT full_name FROM user WHERE idUser = ?",
+          [payment.User_idUser],
+        );
+        payment.officerName = userData[0]?.full_name || null;
+      } else {
+        payment.officerName = null;
+      }
+      delete payment.User_idUser; // Remove User_idUser from response
+    }
 
     res.status(200).json({
       success: true,

@@ -2812,10 +2812,33 @@ export const sendActiveTickets = async (req, res, next) => {
       dataParams = [branchId];
     } else if (req.isHeadBranch === true) {
       // Head branch - show all branches from company
-      baseWhereConditions =
-        "pt.Status = '1' AND pt.Branch_idBranch IN (SELECT idBranch FROM branch WHERE Company_idCompany = ?)";
-      countParams = [req.companyId];
-      dataParams = [req.companyId];
+      // Fetch branch IDs from pool2 first (branch table is on pool2)
+      const [companyBranches] = await pool2.query(
+        "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
+        [req.companyId],
+      );
+
+      if (companyBranches.length === 0) {
+        // No branches found, return empty result
+        return res.status(200).json({
+          success: true,
+          tickets: [],
+          pagination: {
+            currentPage: page,
+            totalPages: 0,
+            totalItems: 0,
+            itemsPerPage: limit,
+            hasNextPage: false,
+            hasPreviousPage: false,
+          },
+        });
+      }
+
+      const branchIds = companyBranches.map((b) => b.idBranch);
+      const placeholders = branchIds.map(() => "?").join(",");
+      baseWhereConditions = `pt.Status = '1' AND pt.Branch_idBranch IN (${placeholders})`;
+      countParams = [...branchIds];
+      dataParams = [...branchIds];
     } else {
       // Regular branch - only show tickets from this branch
       baseWhereConditions = "pt.Branch_idBranch = ? AND pt.Status = '1'";
@@ -2953,10 +2976,33 @@ export const sendSettledTickets = async (req, res, next) => {
       dataParams = [branchId];
     } else if (req.isHeadBranch === true) {
       // Head branch - show all branches from company
-      baseWhereConditions =
-        "pt.Status = '2' AND pt.Branch_idBranch IN (SELECT idBranch FROM branch WHERE Company_idCompany = ?)";
-      countParams = [req.companyId];
-      dataParams = [req.companyId];
+      // Fetch branch IDs from pool2 first (branch table is on pool2)
+      const [companyBranches] = await pool2.query(
+        "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
+        [req.companyId],
+      );
+
+      if (companyBranches.length === 0) {
+        // No branches found, return empty result
+        return res.status(200).json({
+          success: true,
+          tickets: [],
+          pagination: {
+            currentPage: page,
+            totalPages: 0,
+            totalItems: 0,
+            itemsPerPage: limit,
+            hasNextPage: false,
+            hasPreviousPage: false,
+          },
+        });
+      }
+
+      const branchIds = companyBranches.map((b) => b.idBranch);
+      const placeholders = branchIds.map(() => "?").join(",");
+      baseWhereConditions = `pt.Status = '2' AND pt.Branch_idBranch IN (${placeholders})`;
+      countParams = [...branchIds];
+      dataParams = [...branchIds];
     } else {
       // Regular branch - only show tickets from this branch
       baseWhereConditions = "pt.Branch_idBranch = ? AND pt.Status = '2'";
@@ -3032,20 +3078,43 @@ export const sendSettledTickets = async (req, res, next) => {
       limit,
     );
 
-    // Build main data query - fetch ticket data with customer NIC and product name
+    // Build main data query - fetch ticket data with customer NIC and product name (without branch - it's in pool2)
     let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, 
-                        pt.Pawning_Advance_Amount, pt.Status, c.Full_name, c.NIC, c.Mobile_No, 
-                        pp.Name AS ProductName, b.Name AS BranchName
+                        pt.Pawning_Advance_Amount, pt.Status, pt.Branch_idBranch, c.Full_name, c.NIC, c.Mobile_No, 
+                        pp.Name AS ProductName
                  FROM pawning_ticket pt
             LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
             LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product
-            LEFT JOIN branch b ON pt.Branch_idBranch = b.idBranch
                  WHERE ${baseWhereConditions}
             ORDER BY pt.idPawning_Ticket DESC LIMIT ? OFFSET ?`;
 
     dataParams.push(limit, offset);
 
     const [tickets] = await pool.query(query, dataParams);
+
+    // Fetch branch names from pool2 for all unique branch IDs
+    if (tickets.length > 0) {
+      const branchIds = [
+        ...new Set(tickets.map((t) => t.Branch_idBranch).filter((id) => id)),
+      ];
+
+      if (branchIds.length > 0) {
+        const placeholders = branchIds.map(() => "?").join(",");
+        const [branches] = await pool2.query(
+          `SELECT idBranch, Name FROM branch WHERE idBranch IN (${placeholders})`,
+          branchIds,
+        );
+
+        // Create a map for quick lookup
+        const branchMap = new Map(branches.map((b) => [b.idBranch, b.Name]));
+
+        // Add branch names to tickets
+        tickets.forEach((ticket) => {
+          ticket.BranchName = branchMap.get(ticket.Branch_idBranch) || null;
+          delete ticket.Branch_idBranch; // Remove the branch ID from response
+        });
+      }
+    }
 
     return res.status(200).json({
       success: true,
@@ -3077,16 +3146,55 @@ export const sendTicketsForPrinting = async (req, res, next) => {
     // Handle branch filtering
     if (req.isHeadBranch === true && branchId) {
       // Head branch filtering by specific branch - need to verify branch belongs to company
+      // Fetch company branches from pool2 to verify
+      const [companyBranches] = await pool2.query(
+        "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
+        [req.companyId],
+      );
+
+      const companyBranchIds = companyBranches.map((b) => b.idBranch);
+
+      // Verify that the requested branchId belongs to this company
+      if (!companyBranchIds.includes(parseInt(branchId))) {
+        return res.status(403).json({
+          success: false,
+          message: "You don't have access to this branch",
+        });
+      }
+
       baseWhereConditions =
-        "pt.Branch_idBranch = ? AND (pt.Status = '1' OR pt.Status = '-1') AND pt.Branch_idBranch IN (SELECT idBranch FROM branch WHERE Company_idCompany = ?)";
-      countParams = [branchId, req.companyId];
-      dataParams = [branchId, req.companyId];
+        "pt.Branch_idBranch = ? AND (pt.Status = '1' OR pt.Status = '-1')";
+      countParams = [branchId];
+      dataParams = [branchId];
     } else if (req.isHeadBranch === true) {
       // Head branch - show all branches from company
-      baseWhereConditions =
-        "pt.Branch_idBranch IN (SELECT idBranch FROM branch WHERE Company_idCompany = ?) AND (pt.Status = '1' OR pt.Status = '-1')";
-      countParams = [req.companyId];
-      dataParams = [req.companyId];
+      // Fetch branch IDs from pool2 first (branch table is on pool2)
+      const [companyBranches] = await pool2.query(
+        "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
+        [req.companyId],
+      );
+
+      if (companyBranches.length === 0) {
+        // No branches found, return empty result
+        return res.status(200).json({
+          success: true,
+          tickets: [],
+          pagination: {
+            currentPage: page,
+            totalPages: 0,
+            totalItems: 0,
+            itemsPerPage: limit,
+            hasNextPage: false,
+            hasPreviousPage: false,
+          },
+        });
+      }
+
+      const branchIds = companyBranches.map((b) => b.idBranch);
+      const placeholders = branchIds.map(() => "?").join(",");
+      baseWhereConditions = `pt.Branch_idBranch IN (${placeholders}) AND (pt.Status = '1' OR pt.Status = '-1')`;
+      countParams = [...branchIds];
+      dataParams = [...branchIds];
     } else {
       // Regular branch - only show tickets from this branch
       baseWhereConditions =

@@ -1,5 +1,5 @@
 import { errorHandler } from "../utils/errorHandler.js";
-import { pool } from "../utils/db.js";
+import { pool, pool2 } from "../utils/db.js";
 import bcrypt from "bcryptjs";
 import { jwtToken, generatePasswordResetToken } from "../utils/helper.js";
 import {
@@ -14,59 +14,59 @@ import { uploadImage, deleteImage } from "../utils/cloudinary.js";
 const userWithoutPassword = async (userId) => {
   try {
     let user;
-    [user] = await pool.query("SELECT * FROM user WHERE idUser = ?", [userId]);
+    [user] = await pool2.query("SELECT * FROM user WHERE idUser = ?", [userId]);
 
     if (!user[0]) {
       throw new Error("User not found");
     }
 
     // get the desgination
-    const [desgination] = await pool.query(
+    const [desgination] = await pool2.query(
       "SELECT Description, idDesignation from designation WHERE idDesignation = ?",
-      [user[0].Designation_idDesignation]
+      [user[0].Designation_idDesignation],
     );
 
     // get the designation privileges
-    const [designationPrivileges] = await pool.query(
+    const [designationPrivileges] = await pool2.query(
       "SELECT User_Privilages_idUser_Privilages FROM designation_has_user_privilages WHERE Designation_idDesignation = ? AND Status = '1'",
-      [user[0].Designation_idDesignation]
+      [user[0].Designation_idDesignation],
     );
 
     let privileges = [];
     for (const privilege of designationPrivileges) {
-      const [privilegeRows] = await pool.query(
+      const [privilegeRows] = await pool2.query(
         "SELECT idUser_privilages, Description FROM user_privilages WHERE idUser_privilages = ?",
-        [privilege.User_Privilages_idUser_Privilages]
+        [privilege.User_Privilages_idUser_Privilages],
       );
       if (privilegeRows.length > 0) {
         privileges.push(privilegeRows[0]);
       }
     }
 
-    const [company] = await pool.query(
+    const [company] = await pool2.query(
       "SELECT * FROM company WHERE idCompany = ?",
-      [user[0].Company_idCompany]
+      [user[0].Company_idCompany],
     );
 
-    const [branchIds] = await pool.query(
+    const [branchIds] = await pool2.query(
       "SELECT Branch_idBranch FROM user_has_branch WHERE User_idUser = ?",
-      [user[0].idUser]
+      [user[0].idUser],
     );
 
     let userBranches = [];
     for (const branch of branchIds) {
-      const [branchRows] = await pool.query(
+      const [branchRows] = await pool2.query(
         "SELECT idBranch, Name,Branch_Code FROM branch WHERE idBranch = ?",
-        [branch.Branch_idBranch]
+        [branch.Branch_idBranch],
       );
       if (branchRows.length > 0) {
         userBranches.push(branchRows[0]);
       }
     }
 
-    const [documetTypes] = await pool.query(
+    const [documetTypes] = await pool2.query(
       "SELECT * FROM company_documents WHERE Company_idCompany = ?",
-      [user[0].Company_idCompany]
+      [user[0].Company_idCompany],
     );
 
     // Extract the document types from the documetTypes array
@@ -76,9 +76,9 @@ const userWithoutPassword = async (userId) => {
     }));
 
     // Check if user got a cashier account and if yes send cashier account id
-    const [cashierAccount] = await pool.query(
+    const [cashierAccount] = await pool2.query(
       "SELECT idAccounting_Accounts,Cashier_idCashier FROM accounting_accounts WHERE Cashier_idCashier = ?",
-      [user[0].idUser]
+      [user[0].idUser],
     );
 
     user = {
@@ -115,7 +115,7 @@ export const login = async (req, res, next) => {
 
     const [existingUser] = await pool.query(
       "SELECT idUser,Password FROM user WHERE Email = ?",
-      [email]
+      [email],
     );
     if (!existingUser[0]) {
       return next(errorHandler(401, "Invalid credentials"));
@@ -124,7 +124,7 @@ export const login = async (req, res, next) => {
     // Check if the password is correct
     const validPassword = await bcrypt.compare(
       password,
-      existingUser[0].Password
+      existingUser[0].Password,
     );
     if (!validPassword) {
       return next(errorHandler(401, "Invalid credentials"));
@@ -143,7 +143,7 @@ export const login = async (req, res, next) => {
       user.Company_idCompany,
       user.Designation_idDesignation,
       user.branchIds,
-      user.companyDocuments
+      user.companyDocuments,
     );
 
     // Set cookies and send response
@@ -218,9 +218,9 @@ export const forgetPassword = async (req, res, next) => {
     }
 
     if (email) {
-      const [existingUser] = await pool.query(
+      const [existingUser] = await pool2.query(
         "SELECT idUser,full_name FROM user WHERE Email = ?",
-        [email]
+        [email],
       );
 
       if (!existingUser[0]) {
@@ -232,9 +232,9 @@ export const forgetPassword = async (req, res, next) => {
       const tokenExpiry = new Date(Date.now() + 3600000); // Token valid for 1 hour from now
 
       // Store the token and its expiry in the database
-      await pool.query(
+      await pool2.query(
         "UPDATE user SET Reset_Password_Token = ?,Reset_Password_Token_Expires_At = ? WHERE idUser = ?",
-        [token, tokenExpiry, existingUser[0].idUser]
+        [token, tokenExpiry, existingUser[0].idUser],
       );
       // reset url
       const resetUrl = `${process.env.CLIENT_URL}/reset-password/${token}/${existingUser[0].idUser}`;
@@ -243,7 +243,7 @@ export const forgetPassword = async (req, res, next) => {
       const emailSent = await sendPasswordResetEmail(
         email,
         resetUrl,
-        existingUser[0].full_name
+        existingUser[0].full_name,
       );
 
       if (!emailSent) {
@@ -251,8 +251,8 @@ export const forgetPassword = async (req, res, next) => {
         return next(
           errorHandler(
             500,
-            "Failed to send password reset email. Please try again."
-          )
+            "Failed to send password reset email. Please try again.",
+          ),
         );
       }
     } else if (mobile) {
@@ -267,12 +267,12 @@ export const forgetPassword = async (req, res, next) => {
 
       const [existingUser] = await pool.query(
         "SELECT idUser,full_name,Company_idCompany FROM user WHERE Contact_no = ?",
-        [normalizedMobile]
+        [normalizedMobile],
       );
 
       if (!existingUser[0]) {
         return next(
-          errorHandler(404, "User with this contact number does not exist")
+          errorHandler(404, "User with this contact number does not exist"),
         );
       }
 
@@ -281,9 +281,9 @@ export const forgetPassword = async (req, res, next) => {
       const tokenExpiry = new Date(Date.now() + 3600000); // Token valid for 1 hour from now
 
       // Store the token and its expiry in the database
-      await pool.query(
+      await pool2.query(
         "UPDATE user SET Reset_Password_Mobile_Otp = ?, Reset_Password_Mobile_Otp_Expires_At = ? WHERE idUser = ?",
-        [token, tokenExpiry, existingUser[0].idUser]
+        [token, tokenExpiry, existingUser[0].idUser],
       );
 
       // send the otp via sms
@@ -301,9 +301,9 @@ export const forgetPassword = async (req, res, next) => {
       }
 
       // get the company sms mask
-      const [companyRows] = await pool.query(
+      const [companyRows] = await pool2.query(
         "SELECT SMS_Mask FROM company WHERE idCompany = ?",
-        [existingUser[0].Company_idCompany]
+        [existingUser[0].Company_idCompany],
       );
 
       // Create company object - the mask will be validated in sendViaHutch
@@ -320,7 +320,7 @@ export const forgetPassword = async (req, res, next) => {
         { full_name: existingUser[0].full_name },
         message,
         "reset_password",
-        [normalizedNumber]
+        [normalizedNumber],
       );
 
       if (!(sendResult && sendResult.success)) {
@@ -350,14 +350,14 @@ export const verifyMobileOtpForPasswordReset = async (req, res, next) => {
       return next(
         errorHandler(
           400,
-          "Contact Number is Missing, Please try again the forget password process again"
-        )
+          "Contact Number is Missing, Please try again the forget password process again",
+        ),
       );
     }
 
-    const [existingUser] = await pool.query(
+    const [existingUser] = await pool2.query(
       "SELECT idUser,Reset_Password_Mobile_Otp_Expires_At FROM user WHERE Reset_Password_Mobile_Otp = ? AND Contact_no = ?",
-      [otp, mobile]
+      [otp, mobile],
     );
 
     if (!existingUser[0]) {
@@ -377,9 +377,9 @@ export const verifyMobileOtpForPasswordReset = async (req, res, next) => {
     const tokenExpiry = new Date(Date.now() + 3600000); // Token valid for 1 hour from now
 
     // Store the token and its expiry in the database and remove the otp and its expiry from table
-    await pool.query(
+    await pool2.query(
       "UPDATE user SET Reset_Password_Token = ?,Reset_Password_Token_Expires_At = ?, Reset_Password_Mobile_Otp = NULL, Reset_Password_Mobile_Otp_Expires_At = NULL WHERE idUser = ?",
-      [token, tokenExpiry, existingUser[0].idUser]
+      [token, tokenExpiry, existingUser[0].idUser],
     );
 
     res.status(200).json({
@@ -409,38 +409,44 @@ export const resetPassword = async (req, res, next) => {
     // check if the password is strong enough
     if (newPassword.length < 8) {
       return next(
-        errorHandler(400, "Password must be at least 8 characters long")
+        errorHandler(400, "Password must be at least 8 characters long"),
       );
     }
     if (!/[A-Z]/.test(newPassword)) {
       return next(
-        errorHandler(400, "Password must contain at least one uppercase letter")
+        errorHandler(
+          400,
+          "Password must contain at least one uppercase letter",
+        ),
       );
     }
 
     if (!/[a-z]/.test(newPassword)) {
       return next(
-        errorHandler(400, "Password must contain at least one lowercase letter")
+        errorHandler(
+          400,
+          "Password must contain at least one lowercase letter",
+        ),
       );
     }
     if (!/[0-9]/.test(newPassword)) {
       return next(
-        errorHandler(400, "Password must contain at least one number")
+        errorHandler(400, "Password must contain at least one number"),
       );
     }
     if (!/[!@#$%^&*]/.test(newPassword)) {
       return next(
         errorHandler(
           400,
-          "Password must contain at least one special character"
-        )
+          "Password must contain at least one special character",
+        ),
       );
     }
 
     // find there is a user with the token and userId and the token is not expired
-    const [user] = await pool.query(
+    const [user] = await pool2.query(
       "SELECT idUser,Email,full_name,Reset_Password_Token,Reset_Password_Token_Expires_At,Company_idCompany,Contact_no FROM user WHERE idUser = ? ",
-      [userId]
+      [userId],
     );
 
     if (!user[0] || user[0].Reset_Password_Token !== token) {
@@ -456,9 +462,9 @@ export const resetPassword = async (req, res, next) => {
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
     // update the password in the database and remove the token
-    const [result] = await pool.query(
+    const [result] = await pool2.query(
       "UPDATE user SET Password = ?, Reset_Password_Token = NULL, Reset_Password_Token_Expires_At = NULL WHERE idUser = ?",
-      [hashedPassword, userId]
+      [hashedPassword, userId],
     );
 
     if (result.affectedRows === 0) {
@@ -468,21 +474,21 @@ export const resetPassword = async (req, res, next) => {
     // Send password reset success email
     const emailSent = await sendPasswordResetSuccessEmail(
       user[0].Email,
-      user[0].full_name
+      user[0].full_name,
     );
 
     if (!emailSent) {
       console.error(
         "Failed to send password reset success email to:",
-        user[0].Email
+        user[0].Email,
       );
       // Don't fail the password reset if email fails, just log it
     }
 
     // send the sms after password reset success
-    const [companyRows] = await pool.query(
+    const [companyRows] = await pool2.query(
       "SELECT SMS_Mask FROM company WHERE idCompany = ?",
-      [user[0].Company_idCompany]
+      [user[0].Company_idCompany],
     );
 
     // Create company object - the mask will be validated in sendViaHutch
@@ -512,11 +518,11 @@ export const resetPassword = async (req, res, next) => {
         { full_name: user[0].full_name },
         message,
         "password_reset_success",
-        [normalizedNumber]
+        [normalizedNumber],
       );
     } else {
       console.warn(
-        `User ${userId} has no Contact_no; skipping password-reset SMS`
+        `User ${userId} has no Contact_no; skipping password-reset SMS`,
       );
     }
 
@@ -538,14 +544,14 @@ export const updateProfile = async (req, res, next) => {
 
     if (!full_name || !contact_no || !email) {
       return next(
-        errorHandler(400, "Full name, Contact number and Email are required")
+        errorHandler(400, "Full name, Contact number and Email are required"),
       );
     }
 
     // get the existing user's profile image to perform update or delete from cloudinary
-    const [existingUser] = await pool.query(
+    const [existingUser] = await pool2.query(
       "SELECT Profile_Image FROM user WHERE idUser = ?",
-      [req.userId]
+      [req.userId],
     );
     let secureUrl = null;
     if (profileImage && profileImage !== null) {
@@ -556,7 +562,7 @@ export const updateProfile = async (req, res, next) => {
         // upload new image to cloudinary
         secureUrl = await uploadImage(
           profileImage,
-          `pawning_system/user_profiles/user_${req.userId}`
+          `pawning_system/user_profiles/user_${req.userId}`,
         );
       }
 
@@ -570,7 +576,7 @@ export const updateProfile = async (req, res, next) => {
           .split(".")[0];
 
         await deleteImage(
-          `pawning_system/user_profiles/user_${req.userId}/${publicId}`
+          `pawning_system/user_profiles/user_${req.userId}/${publicId}`,
         );
       }
     } else {
@@ -580,7 +586,7 @@ export const updateProfile = async (req, res, next) => {
           .slice(-1)[0]
           .split(".")[0];
         const success = await deleteImage(
-          `pawning_system/user_profiles/user_${req.userId}/${publicId}`
+          `pawning_system/user_profiles/user_${req.userId}/${publicId}`,
         );
 
         if (success.result === "ok") {
@@ -590,7 +596,7 @@ export const updateProfile = async (req, res, next) => {
     }
 
     // update the user profile
-    const [result] = await pool.query(
+    const [result] = await pool2.query(
       "UPDATE user SET full_name = ?, Contact_no = ?, Email = ?, Profile_Image = ? WHERE idUser = ?",
       [
         full_name,
@@ -598,7 +604,7 @@ export const updateProfile = async (req, res, next) => {
         email,
         isDeleted ? null : secureUrl || existingUser[0].Profile_Image,
         req.userId,
-      ]
+      ],
     );
 
     if (result.affectedRows === 0) {

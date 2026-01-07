@@ -1,12 +1,12 @@
 import { errorHandler } from "../utils/errorHandler.js";
-import { pool } from "../utils/db.js";
+import { pool, pool2 } from "../utils/db.js";
 import { getReportPaginationData } from "../utils/helper.js";
 
 // Helper function to get all branches for a company
 const getAllBranchesForTheCompany = async (companyId) => {
-  const [branches] = await pool.query(
+  const [branches] = await pool2.query(
     "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
-    [companyId]
+    [companyId],
   );
   return branches;
 };
@@ -14,9 +14,9 @@ const getAllBranchesForTheCompany = async (companyId) => {
 // controller to send all the branches of the company
 export const getCompanyBranches = async (req, res, next) => {
   try {
-    const [branches] = await pool.query(
+    const [branches] = await pool2.query(
       "SELECT idBranch, Name,Branch_Code FROM branch WHERE Company_idCompany = ?",
-      [req.companyId]
+      [req.companyId],
     );
 
     return res.status(200).json({
@@ -46,17 +46,17 @@ export const loanToMarketValueReport = async (req, res, next) => {
       }
 
       // If branchId is provided, verify it belongs to the company
-      const [branch] = await pool.query(
+      const [branch] = await pool2.query(
         "SELECT idBranch FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
-        [parsedBranchId, req.companyId]
+        [parsedBranchId, req.companyId],
       );
 
       if (branch.length === 0) {
         return next(
           errorHandler(
             404,
-            "Branch not found or does not belong to your company"
-          )
+            "Branch not found or does not belong to your company",
+          ),
         );
       }
 
@@ -69,8 +69,8 @@ export const loanToMarketValueReport = async (req, res, next) => {
         return next(
           errorHandler(
             404,
-            "No branches found for the company to generate report"
-          )
+            "No branches found for the company to generate report",
+          ),
         );
       }
 
@@ -101,7 +101,7 @@ export const loanToMarketValueReport = async (req, res, next) => {
       `SELECT COUNT(*) as count FROM pawning_ticket t WHERE ${whereClause}`,
       queryParams,
       page,
-      limit
+      limit,
     );
 
     // If no records, return early
@@ -113,7 +113,7 @@ export const loanToMarketValueReport = async (req, res, next) => {
       });
     }
 
-    // Fetch ticket data with pagination using calculated offset
+    // Fetch ticket data with pagination using calculated offset (without branch - it's in pool2)
     const [ticketsData] = await pool.query(
       `SELECT 
         t.idPawning_Ticket, 
@@ -124,16 +124,15 @@ export const loanToMarketValueReport = async (req, res, next) => {
         t.Period_Type, 
         t.Maturity_date, 
         t.Status,
+        t.Branch_idBranch,
         c.NIC, 
-        c.Full_name, 
-        b.Name as Branch_Name 
+        c.Full_name
       FROM pawning_ticket t 
       JOIN customer c ON t.Customer_idCustomer = c.idCustomer 
-      JOIN branch b ON t.Branch_idBranch = b.idBranch 
       WHERE ${whereClause}
       ORDER BY t.Date_Time DESC 
       LIMIT ? OFFSET ?`,
-      [...queryParams, limit, offset]
+      [...queryParams, limit, offset],
     );
 
     if (ticketsData.length === 0) {
@@ -141,6 +140,26 @@ export const loanToMarketValueReport = async (req, res, next) => {
         success: true,
         reports: [],
         pagination: paginationData,
+      });
+    }
+
+    // Fetch branch names from pool2 for all unique branch IDs
+    const uniqueBranchIds = [
+      ...new Set(ticketsData.map((t) => t.Branch_idBranch).filter((id) => id)),
+    ];
+
+    if (uniqueBranchIds.length > 0) {
+      const placeholders = uniqueBranchIds.map(() => "?").join(",");
+      const [branches] = await pool2.query(
+        `SELECT idBranch, Name FROM branch WHERE idBranch IN (${placeholders})`,
+        uniqueBranchIds,
+      );
+
+      const branchMap = new Map(branches.map((b) => [b.idBranch, b.Name]));
+
+      ticketsData.forEach((ticket) => {
+        ticket.Branch_Name = branchMap.get(ticket.Branch_idBranch) || null;
+        delete ticket.Branch_idBranch;
       });
     }
 
@@ -154,7 +173,7 @@ export const loanToMarketValueReport = async (req, res, next) => {
       FROM user u 
       JOIN ticket_has_approval pta ON u.idUser = pta.User 
       WHERE pta.Pawning_Ticket_idPawning_Ticket IN (?)`,
-      [ticketIds]
+      [ticketIds],
     );
 
     // Create a map for quick lookup
@@ -176,7 +195,7 @@ export const loanToMarketValueReport = async (req, res, next) => {
       FROM ticket_log
       WHERE Pawning_Ticket_idPawning_Ticket IN (?)
       `,
-      [ticketIds]
+      [ticketIds],
     );
 
     const ticketLogMap = {};
@@ -205,13 +224,13 @@ export const loanToMarketValueReport = async (req, res, next) => {
       FROM ticket_articles ta 
       JOIN article_types at ON ta.Article_type = at.idArticle_Types 
       WHERE ta.Pawning_Ticket_idPawning_Ticket IN (?)`,
-      [ticketIds]
+      [ticketIds],
     );
 
     // Get unique caratages
     const uniqueCaratages = [
       ...new Set(
-        articles.map((a) => parseInt(a.Caratage)).filter((c) => !isNaN(c))
+        articles.map((a) => parseInt(a.Caratage)).filter((c) => !isNaN(c)),
       ),
     ];
 
@@ -220,7 +239,7 @@ export const loanToMarketValueReport = async (req, res, next) => {
     if (uniqueCaratages.length > 0) {
       const [assessedValues] = await pool.query(
         "SELECT Carat, Amount FROM assessed_value WHERE Carat IN (?)",
-        [uniqueCaratages]
+        [uniqueCaratages],
       );
 
       assessedValues.forEach((av) => {
@@ -242,7 +261,7 @@ export const loanToMarketValueReport = async (req, res, next) => {
           ? (article.Advanced_Value / article.Assessed_Value) * 100
           : 0;
       article.Advance_Amount_As_Percentage_Of_Estimated_Value = parseFloat(
-        advancePercentage.toFixed(2)
+        advancePercentage.toFixed(2),
       );
 
       // Calculate current market value
@@ -257,7 +276,7 @@ export const loanToMarketValueReport = async (req, res, next) => {
         const advanceToValuePercentage =
           marketValue > 0 ? (article.Advanced_Value / marketValue) * 100 : 0;
         article.Advance_To_Value_Percentage = parseFloat(
-          advanceToValuePercentage.toFixed(2)
+          advanceToValuePercentage.toFixed(2),
         );
       } else {
         article.Current_Market_Value = 0;
@@ -330,7 +349,7 @@ export const loanToMarketValueReport = async (req, res, next) => {
         total_contracts_with_shortfall: totalContractsWithShortfall,
         total_shortfall_value: parseFloat(totalShortfallValue.toFixed(2)),
         net_position: parseFloat(
-          (totalXSValue - totalShortfallValue).toFixed(2)
+          (totalXSValue - totalShortfallValue).toFixed(2),
         ),
       },
     });
@@ -366,17 +385,17 @@ export const ticketDayEndReport = async (req, res, next) => {
       }
 
       // Verify the branch belongs to this company
-      const [branchRow] = await pool.query(
+      const [branchRow] = await pool2.query(
         "SELECT idBranch FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
-        [parsedBranchId, req.companyId]
+        [parsedBranchId, req.companyId],
       );
 
       if (branchRow.length === 0) {
         return next(
           errorHandler(
             404,
-            "Branch not found or does not belong to your company"
-          )
+            "Branch not found or does not belong to your company",
+          ),
         );
       }
 
@@ -388,8 +407,8 @@ export const ticketDayEndReport = async (req, res, next) => {
         return next(
           errorHandler(
             404,
-            "No branches found for the company to generate report"
-          )
+            "No branches found for the company to generate report",
+          ),
         );
       }
 
@@ -402,7 +421,8 @@ export const ticketDayEndReport = async (req, res, next) => {
 
     // Build data query (do NOT join ticket_articles here — a ticket can have multiple articles/categories)
     // fetch articles separately and attach them per ticket to avoid duplicate ticket rows.
-    let dataQuery = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.SEQ_No, pt.Date_Time, pt.Period_Type, pt.Period, pt.Net_Weight, pt.Gross_Weight, pt.Pawning_Advance_Amount, pt.Status, pt.updated_at, b.Name as Branch_Name, c.Full_name, c.NIC FROM pawning_ticket pt JOIN branch b ON pt.Branch_idBranch = b.idBranch JOIN customer c ON pt.Customer_idCustomer = c.idCustomer WHERE pt.Branch_idBranch IN (?)`;
+    // Also fetch branch names separately from pool2 since branch is on a different database
+    let dataQuery = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.SEQ_No, pt.Date_Time, pt.Period_Type, pt.Period, pt.Net_Weight, pt.Gross_Weight, pt.Pawning_Advance_Amount, pt.Status, pt.updated_at, pt.Branch_idBranch, c.Full_name, c.NIC FROM pawning_ticket pt JOIN customer c ON pt.Customer_idCustomer = c.idCustomer WHERE pt.Branch_idBranch IN (?)`;
     let dataQueryParams = [branchIds];
 
     // If a specific date is provided use otherwise default to current date
@@ -426,7 +446,7 @@ export const ticketDayEndReport = async (req, res, next) => {
       paginationQuery,
       paginationQueryParams,
       page,
-      limit
+      limit,
     );
 
     // Get ticket rows (one row per ticket)
@@ -440,6 +460,30 @@ export const ticketDayEndReport = async (req, res, next) => {
       });
     }
 
+    // Fetch branch names from pool2 for all unique branch IDs
+    if (ticketsData.length > 0) {
+      const uniqueBranchIds = [
+        ...new Set(
+          ticketsData.map((t) => t.Branch_idBranch).filter((id) => id),
+        ),
+      ];
+
+      if (uniqueBranchIds.length > 0) {
+        const placeholders = uniqueBranchIds.map(() => "?").join(",");
+        const [branches] = await pool2.query(
+          `SELECT idBranch, Name FROM branch WHERE idBranch IN (${placeholders})`,
+          uniqueBranchIds,
+        );
+
+        const branchMap = new Map(branches.map((b) => [b.idBranch, b.Name]));
+
+        ticketsData.forEach((ticket) => {
+          ticket.Branch_Name = branchMap.get(ticket.Branch_idBranch) || null;
+          delete ticket.Branch_idBranch;
+        });
+      }
+    }
+
     // Fetch article categories for all tickets in this page and group them by ticket id
     const ticketIds = ticketsData.map((t) => t.idPawning_Ticket);
     const [articleRows] = await pool.query(
@@ -447,7 +491,7 @@ export const ticketDayEndReport = async (req, res, next) => {
        FROM ticket_articles ta
        LEFT JOIN article_categories ac ON ta.Article_category = ac.idArticle_Categories
        WHERE ta.Pawning_Ticket_idPawning_Ticket IN (?)`,
-      [ticketIds]
+      [ticketIds],
     );
 
     const categoriesByTicket = {};

@@ -5,7 +5,7 @@ dotenv.config();
 
 import cors from "cors";
 import cookieParser from "cookie-parser";
-import { connectDB, pool } from "./utils/db.js";
+import { connectDB, pool, connectDB2, pool2 } from "./utils/db.js";
 import { verifyConnection } from "./utils/mailConfig.js";
 // routes import
 import authRoutes from "./routes/auth.route.js";
@@ -67,6 +67,7 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   try {
     connectDB();
+    connectDB2();
     verifyConnection();
     console.log("Database connected successfully");
   } catch (error) {

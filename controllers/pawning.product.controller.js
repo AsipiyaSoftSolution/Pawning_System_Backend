@@ -1,14 +1,14 @@
 import { errorHandler } from "../utils/errorHandler.js";
-import { pool } from "../utils/db.js";
+import { pool, pool2 } from "../utils/db.js";
 import { getPaginationData } from "../utils/helper.js";
 
 // Function to get user  data by userId and companyId to display last updated user info when fetching pawning product details
 const returnUserData = async (userId, companyId) => {
   try {
     if (!userId || !companyId) return null;
-    const [user] = await pool.query(
+    const [user] = await pool2.query(
       "SELECT idUser,Full_name,Email FROM user WHERE idUser = ? AND Company_idCompany = ?",
-      [userId, companyId]
+      [userId, companyId],
     );
     if (user.length === 0) return null;
     return user[0];
@@ -50,7 +50,7 @@ export const getPawningProductById = async (req, res, next) => {
         Last_Updated_Time
       FROM pawning_product 
       WHERE idPawning_Product = ?`,
-      [idPawning_Product]
+      [idPawning_Product],
     );
 
     if (productRows.length === 0) {
@@ -69,7 +69,7 @@ export const getPawningProductById = async (req, res, next) => {
         Amount
       FROM early_settlement_charges 
       WHERE Pawning_Product_idPawning_Product = ?`,
-      [idPawning_Product]
+      [idPawning_Product],
     );
 
     // Get product plans
@@ -114,7 +114,7 @@ export const getPawningProductById = async (req, res, next) => {
 
       FROM product_plan 
       WHERE Pawning_Product_idPawning_Product = ?`,
-      [idPawning_Product]
+      [idPawning_Product],
     );
 
     // Structure the response data similar to the input format
@@ -228,7 +228,7 @@ export const getPawningProductById = async (req, res, next) => {
 
       lastUpdatedUser: await returnUserData(
         product.Last_Updated_User,
-        req.companyId
+        req.companyId,
       ),
       lastUpdatedTime: product.Last_Updated_Time,
     };
@@ -258,13 +258,13 @@ export const getPawningProducts = async (req, res, next) => {
       "SELECT COUNT(*) AS total FROM pawning_product WHERE Branch_idBranch = ?",
       [req.branchId],
       page,
-      limit
+      limit,
     );
 
     let pawningProducts;
     [pawningProducts] = await pool.query(
       `SELECT idPawning_Product,Name,Interest_Method,Service_Charge,Early_Settlement_Charge,Late_Charge_Status FROM pawning_product WHERE Branch_idBranch = ? LIMIT ? OFFSET ?`,
-      [req.branchId, limit, offset]
+      [req.branchId, limit, offset],
     );
     //console.log("fetched pawning products:", pawningProducts);
 
@@ -272,7 +272,7 @@ export const getPawningProducts = async (req, res, next) => {
     for (let product of pawningProducts) {
       const [activeTickets] = await pool.query(
         `SELECT COUNT(*) AS activeCount FROM pawning_ticket WHERE Pawning_Product_idPawning_Product = ? AND Status != '2'`,
-        [product.idPawning_Product]
+        [product.idPawning_Product],
       );
       product.activeTickets = activeTickets[0].activeCount || 0;
     }
@@ -301,7 +301,7 @@ export const deletePawningProductById = async (req, res, next) => {
 
     const [existingProduct] = await pool.query(
       `SELECT * FROM pawning_product WHERE idPawning_Product = ? AND Branch_idBranch = ?`,
-      [productId, req.branchId]
+      [productId, req.branchId],
     );
 
     if (existingProduct.length === 0) {
@@ -311,7 +311,7 @@ export const deletePawningProductById = async (req, res, next) => {
     // Delete from Product Plan table first
     const [result] = await pool.query(
       `DELETE FROM product_plan WHERE Pawning_Product_idPawning_Product = ?`,
-      [productId]
+      [productId],
     );
 
     if (result.affectedRows === 0) {
@@ -397,7 +397,7 @@ export const createPawningProduct = async (req, res, next) => {
         data.interestMethod || null,
         req.userId,
         new Date(),
-      ]
+      ],
     );
 
     if (result.affectedRows === 0) {
@@ -412,8 +412,8 @@ export const createPawningProduct = async (req, res, next) => {
         return next(
           errorHandler(
             400,
-            "Early settlement data is required for settlement amount charges"
-          )
+            "Early settlement data is required for settlement amount charges",
+          ),
         );
       }
 
@@ -431,7 +431,7 @@ export const createPawningProduct = async (req, res, next) => {
 
         const [earlySettlementResult] = await pool.query(
           "INSERT INTO early_settlement_charges (From_Amount,To_Amount,Value_Type,Amount,Pawning_Product_idPawning_Product) VALUES (?,?,?,?,?)",
-          [fromAmount, toAmount, valueType, value, result.insertId]
+          [fromAmount, toAmount, valueType, value, result.insertId],
         );
 
         if (earlySettlementResult.affectedRows === 0) {
@@ -447,7 +447,7 @@ export const createPawningProduct = async (req, res, next) => {
       } catch (error) {
         console.error("Error inserting early settlement charges:", error);
         return next(
-          errorHandler(500, "Failed to create early settlement charges")
+          errorHandler(500, "Failed to create early settlement charges"),
         );
       }
     }
@@ -506,7 +506,7 @@ export const createPawningProduct = async (req, res, next) => {
           data.percentages?.sixMonths || 0,
           data.percentages?.nineMonths || 0,
           data.percentages?.twelveMonths || 0,
-        ]
+        ],
       );
 
       if (productPlanResult.affectedRows === 0) {
@@ -543,7 +543,7 @@ export const updatePawningProductById = async (req, res, next) => {
     // Validate required fields
     if (!data.productName || data.productName.trim().length < 3) {
       return next(
-        errorHandler(400, "Product name must be at least 3 characters")
+        errorHandler(400, "Product name must be at least 3 characters"),
       );
     }
 
@@ -554,12 +554,12 @@ export const updatePawningProductById = async (req, res, next) => {
     // Check if product exists and belongs to the branch
     const [existingProduct] = await pool.query(
       "SELECT * FROM pawning_product WHERE idPawning_Product = ? AND Branch_idBranch = ?",
-      [idPawning_Product, req.branchId]
+      [idPawning_Product, req.branchId],
     );
 
     if (existingProduct.length === 0) {
       return next(
-        errorHandler(404, "Pawning product not found or access denied")
+        errorHandler(404, "Pawning product not found or access denied"),
       );
     }
 
@@ -633,7 +633,7 @@ export const updatePawningProductById = async (req, res, next) => {
         req.userId,
         new Date(),
         idPawning_Product,
-      ]
+      ],
     );
 
     if (updateResult.affectedRows === 0) {
@@ -643,7 +643,7 @@ export const updatePawningProductById = async (req, res, next) => {
     // Delete existing early settlement charges
     await pool.query(
       "DELETE FROM early_settlement_charges WHERE Pawning_Product_idPawning_Product = ?",
-      [idPawning_Product]
+      [idPawning_Product],
     );
 
     // Handle early settlement charges if charge type is "Charge For Settlement Amount"
@@ -654,8 +654,8 @@ export const updatePawningProductById = async (req, res, next) => {
         return next(
           errorHandler(
             400,
-            "Early settlement data is required for settlement amount charges"
-          )
+            "Early settlement data is required for settlement amount charges",
+          ),
         );
       }
 
@@ -673,7 +673,7 @@ export const updatePawningProductById = async (req, res, next) => {
 
         const [earlySettlementResult] = await pool.query(
           "INSERT INTO early_settlement_charges (From_Amount, To_Amount, Value_Type, Amount, Pawning_Product_idPawning_Product) VALUES (?, ?, ?, ?, ?)",
-          [fromAmount, toAmount, valueType, value, idPawning_Product]
+          [fromAmount, toAmount, valueType, value, idPawning_Product],
         );
 
         if (earlySettlementResult.affectedRows === 0) {
@@ -689,7 +689,7 @@ export const updatePawningProductById = async (req, res, next) => {
       } catch (error) {
         console.error("Error inserting early settlement charges:", error);
         return next(
-          errorHandler(500, "Failed to create early settlement charges")
+          errorHandler(500, "Failed to create early settlement charges"),
         );
       }
     }
@@ -697,7 +697,7 @@ export const updatePawningProductById = async (req, res, next) => {
     // Delete existing product plans
     await pool.query(
       "DELETE FROM product_plan WHERE Pawning_Product_idPawning_Product = ?",
-      [idPawning_Product]
+      [idPawning_Product],
     );
 
     // Insert updated product plans
@@ -803,7 +803,7 @@ export const updatePawningProductById = async (req, res, next) => {
           parseFloat(carat22Percentages.nineMonths) || 0,
           parseFloat(carat22Percentages.twelveMonths) || 0,
           plan.interestApplicableMethod || null,
-        ]
+        ],
       );
 
       if (productPlanResult.affectedRows === 0) {
@@ -830,7 +830,7 @@ export const updatePawningProductById = async (req, res, next) => {
         Interest_Method
       FROM pawning_product 
       WHERE idPawning_Product = ?`,
-      [idPawning_Product]
+      [idPawning_Product],
     );
 
     // Return success response

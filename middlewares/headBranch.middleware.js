@@ -1,11 +1,11 @@
-import { pool } from "../utils/db.js";
+import { pool, pool2 } from "../utils/db.js";
 import { errorHandler } from "../utils/errorHandler.js";
 
 export const checkUserSelectedHeadBranch = async (req, res, next) => {
   try {
-    const [branch] = await pool.query(
+    const [branch] = await pool2.query(
       "SELECT Branch_Code FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
-      [req.branchId, req.companyId]
+      [req.branchId, req.companyId],
     );
 
     if (branch.length === 0) {

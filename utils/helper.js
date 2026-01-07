@@ -1,5 +1,5 @@
 import jwt from "jsonwebtoken";
-import { pool } from "../utils/db.js";
+import { pool, pool2 } from "../utils/db.js";
 import crypto from "crypto";
 export const jwtToken = (
   userId,
@@ -7,7 +7,7 @@ export const jwtToken = (
   company_id,
   designation_id,
   branches,
-  company_documents
+  company_documents,
 ) => {
   const accessToken = jwt.sign(
     {
@@ -21,7 +21,7 @@ export const jwtToken = (
     process.env.JWT_ACCESS_SECRET,
     {
       expiresIn: "24h",
-    }
+    },
   );
 
   const refreshToken = jwt.sign(
@@ -29,7 +29,7 @@ export const jwtToken = (
     process.env.JWT_REFRESH_SECRET,
     {
       expiresIn: "7d",
-    }
+    },
   );
 
   return { accessToken, refreshToken };
@@ -41,10 +41,14 @@ export const getPaginationData = async (
   query,
   queryParams = [],
   page = 1,
-  limit = 10
+  limit = 10,
+  isPool1 = true,
 ) => {
   try {
-    const [countResult] = await pool.query(query, queryParams);
+    const [countResult] = await (isPool1 ? pool : pool2).query(
+      query,
+      queryParams,
+    );
     console.log("Count Result:", countResult);
 
     const totalCount =
@@ -92,7 +96,7 @@ export const getReportPaginationData = async (
   countQuery,
   queryParams = [],
   page = 1,
-  limit = 10
+  limit = 10,
 ) => {
   try {
     const [countResult] = await pool.query(countQuery, queryParams);
@@ -130,9 +134,9 @@ export const getReportPaginationData = async (
 // get company branch id's
 export const getCompanyBranches = async (companyId) => {
   try {
-    const [branches] = await pool.query(
+    const [branches] = await pool2.query(
       "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
-      [companyId]
+      [companyId],
     );
     return branches.map((branch) => branch.idBranch);
   } catch (error) {

@@ -134,7 +134,7 @@ export const getReportPaginationData = async (
 // get company branch id's
 export const getCompanyBranches = async (companyId) => {
   try {
-    const [branches] = await pool.query(
+    const [branches] = await pool2.query(
       "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
       [companyId],
     );

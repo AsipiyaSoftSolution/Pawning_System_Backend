@@ -1683,10 +1683,34 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
         dataParams = [parseInt(branchId)];
       } else {
         // No branchId filter, show all branches in the company
-        baseWhereConditions =
-          "pt.Branch_idBranch IN (SELECT idBranch FROM branch WHERE Company_idCompany = ?) AND (pt.Status IS NULL OR pt.Status = '0')";
-        countParams = [req.companyId];
-        dataParams = [req.companyId];
+        // Fetch branch IDs from pool2 first (branch table is on pool2)
+        const [companyBranches] = await pool2.query(
+          "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
+          [req.companyId],
+        );
+
+        if (companyBranches.length === 0) {
+          // No branches found for this company, return empty result
+          return res.status(200).json({
+            success: true,
+            tickets: [],
+            pagination: {
+              currentPage: page,
+              totalPages: 0,
+              totalItems: 0,
+              itemsPerPage: limit,
+              hasNextPage: false,
+              hasPreviousPage: false,
+            },
+            approvalMode: "simple",
+          });
+        }
+
+        const branchIds = companyBranches.map((b) => b.idBranch);
+        const placeholders = branchIds.map(() => "?").join(",");
+        baseWhereConditions = `pt.Branch_idBranch IN (${placeholders}) AND (pt.Status IS NULL OR pt.Status = '0')`;
+        countParams = [...branchIds];
+        dataParams = [...branchIds];
       }
     } else {
       // Regular branch user - always show only their own branch
@@ -1747,17 +1771,39 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
       );
 
       let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, 
-                          pt.Pawning_Advance_Amount, pt.Status, c.NIC, pp.Name AS ProductName, 
-                          b.Name AS BranchName
+                          pt.Pawning_Advance_Amount, pt.Status, pt.Branch_idBranch, 
+                          c.NIC, pp.Name AS ProductName
                    FROM pawning_ticket pt
             LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
             LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product
-            LEFT JOIN branch b ON pt.Branch_idBranch = b.idBranch
                   WHERE ${baseWhereConditions}
                ORDER BY pt.idPawning_Ticket DESC LIMIT ? OFFSET ?`;
 
       dataParams.push(limit, offset);
       const [tickets] = await pool.query(query, dataParams);
+
+      // Fetch branch names from pool2 for all unique branch IDs
+      if (tickets.length > 0) {
+        const branchIds = [
+          ...new Set(tickets.map((t) => t.Branch_idBranch).filter((id) => id)),
+        ];
+
+        if (branchIds.length > 0) {
+          const placeholders = branchIds.map(() => "?").join(",");
+          const [branches] = await pool2.query(
+            `SELECT idBranch, Name FROM branch WHERE idBranch IN (${placeholders})`,
+            branchIds,
+          );
+
+          // Create a map for quick lookup
+          const branchMap = new Map(branches.map((b) => [b.idBranch, b.Name]));
+
+          // Add branch names to tickets
+          tickets.forEach((ticket) => {
+            ticket.BranchName = branchMap.get(ticket.Branch_idBranch) || null;
+          });
+        }
+      }
 
       return res.status(200).json({
         success: true,
@@ -1770,15 +1816,37 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
     // Multi-level approval mode
     let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, 
                         pt.Pawning_Advance_Amount, pt.Status, pt.Branch_idBranch, 
-                        c.NIC, pp.Name AS ProductName, b.Name AS BranchName
+                        c.NIC, pp.Name AS ProductName
                  FROM pawning_ticket pt
           LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
           LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product
-          LEFT JOIN branch b ON pt.Branch_idBranch = b.idBranch
                 WHERE ${baseWhereConditions}
              ORDER BY pt.idPawning_Ticket DESC`;
 
     const [allTickets] = await pool.query(query, dataParams);
+
+    // Fetch branch names from pool2 for all unique branch IDs
+    if (allTickets.length > 0) {
+      const branchIds = [
+        ...new Set(allTickets.map((t) => t.Branch_idBranch).filter((id) => id)),
+      ];
+
+      if (branchIds.length > 0) {
+        const placeholders = branchIds.map(() => "?").join(",");
+        const [branches] = await pool2.query(
+          `SELECT idBranch, Name FROM branch WHERE idBranch IN (${placeholders})`,
+          branchIds,
+        );
+
+        // Create a map for quick lookup
+        const branchMap = new Map(branches.map((b) => [b.idBranch, b.Name]));
+
+        // Add branch names to tickets
+        allTickets.forEach((ticket) => {
+          ticket.BranchName = branchMap.get(ticket.Branch_idBranch) || null;
+        });
+      }
+    }
 
     // Filter and enrich tickets
     const filteredTickets = [];

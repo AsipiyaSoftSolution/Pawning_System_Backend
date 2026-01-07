@@ -7,7 +7,8 @@ dotenv.config();
 
 export const protectedRoute = async (req, res, next) => {
   try {
-    const accessToken = req.cookies.accessToken;
+    const accessToken =
+      req.cookies.accessToken || req.headers.authorization?.split(" ")[1];
     if (!accessToken) return next(errorHandler(401, "Unauthorized access"));
 
     // Verify the token

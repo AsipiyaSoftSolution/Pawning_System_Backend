@@ -1406,8 +1406,8 @@ export const createTicketComment = async (req, res, next) => {
 // Helper function to get approval progress details
 async function getTicketApprovalProgress(ticketId, ticketAmount, companyId) {
   try {
-    // 1. Find the approval range
-    const [ranges] = await pool.query(
+    // 1. Find the approval range (approval tables are in pool2)
+    const [ranges] = await pool2.query(
       `SELECT idApproval_Range 
        FROM pawning_ticket_approval_range 
        WHERE companyid = ? 
@@ -1423,8 +1423,8 @@ async function getTicketApprovalProgress(ticketId, ticketAmount, companyId) {
 
     const rangeId = ranges[0].idApproval_Range;
 
-    // 2. Get all levels
-    const [levels] = await pool.query(
+    // 2. Get all levels (approval tables are in pool2)
+    const [levels] = await pool2.query(
       `SELECT idApprovalRangeLevel, level_name, is_head_office_level 
        FROM pawning_ticket_approval_ranges_level 
        WHERE Approval_Range_idApproval_Range = ? 
@@ -1436,17 +1436,28 @@ async function getTicketApprovalProgress(ticketId, ticketAmount, companyId) {
       return null;
     }
 
-    // 3. Get approved levels with details
-    const [approvedLevels] = await pool.query(
+    // 3. Get approved levels with details (approval tables are in pool2)
+    const [approvedLevels] = await pool2.query(
       `SELECT pta.ApprovalRangeLevel_idApprovalRangeLevel, 
-              pta.approved_by, pta.approval_date, pta.remarks,
-              u.full_name as approver_name
+              pta.approved_by, pta.approval_date, pta.remarks
        FROM pawning_ticket_approval pta
-       LEFT JOIN user u ON pta.approved_by = u.idUser
        WHERE pta.Pawning_Ticket_idPawning_Ticket = ? 
          AND pta.approval_status = 1`,
       [ticketId],
     );
+
+    // Fetch user names from pool2 for each approved level
+    for (let approval of approvedLevels) {
+      if (approval.approved_by) {
+        const [userData] = await pool2.query(
+          "SELECT full_name FROM user WHERE idUser = ?",
+          [approval.approved_by],
+        );
+        approval.approver_name = userData[0]?.full_name || null;
+      } else {
+        approval.approver_name = null;
+      }
+    }
 
     const approvedLevelIds = approvedLevels.map(
       (al) => al.ApprovalRangeLevel_idApprovalRangeLevel,
@@ -1465,8 +1476,8 @@ async function getTicketApprovalProgress(ticketId, ticketAmount, companyId) {
         currentLevelFound = true;
       }
 
-      // Get designations for this level
-      const [designations] = await pool.query(
+      // Get designations for this level (designation and approval tables are in pool2)
+      const [designations] = await pool2.query(
         `SELECT d.idDesignation, d.Description as designation_name
          FROM pawning_ticket_approval_levels_designations pald
          JOIN designation d ON pald.Designation_idDesignation = d.idDesignation
@@ -1523,8 +1534,8 @@ async function checkUserCanApproveTicket(
   userId, // ADDED: we need the actual user ID
 ) {
   try {
-    // 1. Find the approval range that matches the ticket amount
-    const [ranges] = await pool.query(
+    // 1. Find the approval range that matches the ticket amount (approval tables are in pool2)
+    const [ranges] = await pool2.query(
       `SELECT idApproval_Range 
        FROM pawning_ticket_approval_range 
        WHERE companyid = ? 
@@ -1540,8 +1551,8 @@ async function checkUserCanApproveTicket(
 
     const rangeId = ranges[0].idApproval_Range;
 
-    // 2. Get all levels for this range in order
-    const [levels] = await pool.query(
+    // 2. Get all levels for this range in order (approval tables are in pool2)
+    const [levels] = await pool2.query(
       `SELECT idApprovalRangeLevel, level_name, is_head_office_level 
        FROM pawning_ticket_approval_ranges_level 
        WHERE Approval_Range_idApproval_Range = ? 
@@ -1553,8 +1564,8 @@ async function checkUserCanApproveTicket(
       return { canView: false, canApprove: false };
     }
 
-    // 3. Get already approved levels for this ticket WITH USER INFO
-    const [approvedLevels] = await pool.query(
+    // 3. Get already approved levels for this ticket WITH USER INFO (approval tables are in pool2)
+    const [approvedLevels] = await pool2.query(
       `SELECT ApprovalRangeLevel_idApprovalRangeLevel, approved_by
        FROM pawning_ticket_approval 
        WHERE Pawning_Ticket_idPawning_Ticket = ? 
@@ -1599,8 +1610,8 @@ async function checkUserCanApproveTicket(
       (al) => al.approved_by === userId,
     );
 
-    // 7. Get designations authorized for the CURRENT PENDING level
-    const [currentLevelDesignations] = await pool.query(
+    // 7. Get designations authorized for the CURRENT PENDING level (approval tables are in pool2)
+    const [currentLevelDesignations] = await pool2.query(
       `SELECT Designation_idDesignation 
        FROM pawning_ticket_approval_levels_designations 
        WHERE ApprovalRangeLevel_idApprovalRangeLevel = ?`,
@@ -1747,8 +1758,8 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
       dataParams.push(formattedNIC);
     }
 
-    // Check if approval ranges are configured
-    const [rangesCheck] = await pool.query(
+    // Check if approval ranges are configured (approval tables are in pool2)
+    const [rangesCheck] = await pool2.query(
       `SELECT COUNT(*) as count FROM pawning_ticket_approval_range WHERE companyid = ?`,
       [req.companyId],
     );
@@ -1950,7 +1961,8 @@ export const approvePawningTicket = async (req, res, next) => {
       );
     }
 
-    const [rangesCheck] = await pool.query(
+    // Check if approval ranges are configured (approval tables are in pool2)
+    const [rangesCheck] = await pool2.query(
       `SELECT COUNT(*) as count FROM pawning_ticket_approval_range WHERE companyid = ?`,
       [req.companyId],
     );
@@ -1962,6 +1974,8 @@ export const approvePawningTicket = async (req, res, next) => {
         "UPDATE pawning_ticket SET Status = '-1' WHERE idPawning_Ticket = ?",
         [ticketId],
       );
+
+      console.log(result);
 
       if (result.affectedRows === 0) {
         return next(errorHandler(500, "Failed to approve the ticket"));
@@ -1994,7 +2008,8 @@ export const approvePawningTicket = async (req, res, next) => {
       });
     }
 
-    const [ranges] = await pool.query(
+    // Find the approval range (approval tables are in pool2)
+    const [ranges] = await pool2.query(
       `SELECT idApproval_Range 
        FROM pawning_ticket_approval_range 
        WHERE companyid = ? 
@@ -2019,7 +2034,8 @@ export const approvePawningTicket = async (req, res, next) => {
 
     const rangeId = ranges[0].idApproval_Range;
 
-    const [levels] = await pool.query(
+    // Get approval levels (approval tables are in pool2)
+    const [levels] = await pool2.query(
       `SELECT idApprovalRangeLevel, level_name, is_head_office_level 
        FROM pawning_ticket_approval_ranges_level 
        WHERE Approval_Range_idApproval_Range = ? 
@@ -2033,7 +2049,8 @@ export const approvePawningTicket = async (req, res, next) => {
       );
     }
 
-    const [approvedLevels] = await pool.query(
+    // Get already approved levels (approval tables are in pool2)
+    const [approvedLevels] = await pool2.query(
       `SELECT ApprovalRangeLevel_idApprovalRangeLevel 
        FROM pawning_ticket_approval 
        WHERE Pawning_Ticket_idPawning_Ticket = ? 
@@ -2066,7 +2083,8 @@ export const approvePawningTicket = async (req, res, next) => {
       );
     }
 
-    const [designations] = await pool.query(
+    // Get authorized designations for this level (approval tables are in pool2)
+    const [designations] = await pool2.query(
       `SELECT Designation_idDesignation 
        FROM pawning_ticket_approval_levels_designations 
        WHERE ApprovalRangeLevel_idApprovalRangeLevel = ?`,
@@ -2086,7 +2104,8 @@ export const approvePawningTicket = async (req, res, next) => {
       );
     }
 
-    const [existingApproval] = await pool.query(
+    // Check if user already approved at this level (approval tables are in pool2)
+    const [existingApproval] = await pool2.query(
       `SELECT idPawning_Ticket_Approval 
        FROM pawning_ticket_approval 
        WHERE Pawning_Ticket_idPawning_Ticket = ? 
@@ -2104,7 +2123,8 @@ export const approvePawningTicket = async (req, res, next) => {
       );
     }
 
-    const [approvalResult] = await pool.query(
+    // Record the approval (approval tables are in pool2)
+    const [approvalResult] = await pool2.query(
       `INSERT INTO pawning_ticket_approval 
        (Pawning_Ticket_idPawning_Ticket, ApprovalRangeLevel_idApprovalRangeLevel, 
         approved_by, approval_status, approval_date, remarks) 

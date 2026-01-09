@@ -567,17 +567,38 @@ export const getCustomerLogsDataById = async (req, res, next) => {
     }
 
     const [logs] = await pool.query(
-      `SELECT cl.*, u.full_name 
+      `SELECT cl.*
        FROM customer_log cl
-       LEFT JOIN user u ON cl.User_idUser = u.idUser
        WHERE cl.Customer_idCustomer = ?
        ORDER BY STR_TO_DATE(cl.Date_Time, '%Y-%m-%d %H:%i:%s') ASC `,
       [customerId],
     );
+
+    // Fetch user data from pool2
+    const userIds = [
+      ...new Set(logs.map((l) => l.User_idUser).filter((id) => id)),
+    ];
+    let userMap = new Map();
+
+    if (userIds.length > 0) {
+      const placeholders = userIds.map(() => "?").join(",");
+      const [users] = await pool2.query(
+        `SELECT idUser, full_name FROM user WHERE idUser IN (${placeholders})`,
+        userIds,
+      );
+      userMap = new Map(users.map((u) => [u.idUser, u.full_name]));
+    }
+
+    // Map user names to logs
+    const logsWithUserNames = logs.map((l) => ({
+      ...l,
+      full_name: userMap.get(l.User_idUser) || null,
+    }));
+
     res.status(200).json({
       success: true,
       message: "Customer logs fetched successfully",
-      logs,
+      logs: logsWithUserNames,
     });
   } catch (error) {
     console.error("Error fetching customer logs by ID:", error);
@@ -634,9 +655,8 @@ export const getCustomerPaymentHistory = async (req, res, next) => {
 
     let queryParams = [ticketNos];
 
-    let dataQuery = `SELECT p.*, u.full_name AS officer 
+    let dataQuery = `SELECT p.*
       FROM payment p 
-      LEFT JOIN user u ON p.User = u.idUser 
       WHERE CAST(p.Ticket_No AS UNSIGNED) IN (?)`;
 
     let dataQueryParams = [ticketNos];
@@ -677,11 +697,32 @@ export const getCustomerPaymentHistory = async (req, res, next) => {
       limit,
     );
 
-    const [payments] = await pool.query(dataQuery + " LIMIT ? OFFSET ?", [
+    const [paymentResults] = await pool.query(dataQuery + " LIMIT ? OFFSET ?", [
       ...dataQueryParams,
       limit,
       offset,
     ]);
+
+    // Fetch user data from pool2 for officer names
+    const userIds = [
+      ...new Set(paymentResults.map((p) => p.User).filter((id) => id)),
+    ];
+    let userMap = new Map();
+
+    if (userIds.length > 0) {
+      const placeholders = userIds.map(() => "?").join(",");
+      const [users] = await pool2.query(
+        `SELECT idUser, full_name FROM user WHERE idUser IN (${placeholders})`,
+        userIds,
+      );
+      userMap = new Map(users.map((u) => [u.idUser, u.full_name]));
+    }
+
+    // Map officer names to payments
+    const payments = paymentResults.map((p) => ({
+      ...p,
+      officer: userMap.get(p.User) || null,
+    }));
 
     res.status(200).json({
       success: true,
@@ -838,7 +879,7 @@ export const blacklistCustomer = async (req, res, next) => {
     }
 
     // if exist check this customer NIC in all company branches
-    const [companyBranches] = await pool.query(
+    const [companyBranches] = await pool2.query(
       "SELECT DISTINCT idBranch FROM branch WHERE Company_idCompany = ?",
       [req.companyId],
     );
@@ -848,7 +889,7 @@ export const blacklistCustomer = async (req, res, next) => {
     }
 
     // get the branch code of the branch where the customer is being blacklisted
-    const [branchData] = await pool.query(
+    const [branchData] = await pool2.query(
       "SELECT Branch_Code, Name FROM branch WHERE idBranch = ?",
       [req.branchId],
     );
@@ -976,27 +1017,50 @@ export const getCustomerCompleteDataById = async (req, res, next) => {
       const ticketIds = tickets.map((t) => t.idPawning_Ticket);
 
       const [paymentResults] = await pool.query(
-        `SELECT p.*, u.full_name AS officer 
+        `SELECT p.*
          FROM payment p 
-         LEFT JOIN user u ON p.User = u.idUser 
          WHERE CAST(p.Ticket_No AS UNSIGNED) IN (?)
          ORDER BY STR_TO_DATE(p.Date_Time, '%Y-%m-%d %H:%i:%s') DESC`,
         [ticketNos],
       );
 
-      payments = paymentResults;
-
       // Fetch all comments for these tickets and attach to each ticket
       const [commentsRows] = await pool.query(
-        `SELECT tc.*, u.full_name AS userName
+        `SELECT tc.*
            FROM ticket_comment tc
-      LEFT JOIN user u ON tc.User_idUser = u.idUser
           WHERE tc.Pawning_Ticket_idPawning_Ticket IN (?)
        ORDER BY tc.idTicket_Comment ASC`,
         [ticketIds],
       );
 
-      // Group comments by ticket id
+      // Fetch user data from pool2 for both payments and comments
+      const userIdsFromPayments = [
+        ...new Set(paymentResults.map((p) => p.User).filter((id) => id)),
+      ];
+      const userIdsFromComments = [
+        ...new Set(commentsRows.map((c) => c.User_idUser).filter((id) => id)),
+      ];
+      const allUserIds = [
+        ...new Set([...userIdsFromPayments, ...userIdsFromComments]),
+      ];
+
+      let userMap = new Map();
+      if (allUserIds.length > 0) {
+        const placeholders = allUserIds.map(() => "?").join(",");
+        const [users] = await pool2.query(
+          `SELECT idUser, full_name FROM user WHERE idUser IN (${placeholders})`,
+          allUserIds,
+        );
+        userMap = new Map(users.map((u) => [u.idUser, u.full_name]));
+      }
+
+      // Map user names to payments
+      payments = paymentResults.map((p) => ({
+        ...p,
+        officer: userMap.get(p.User) || null,
+      }));
+
+      // Group comments by ticket id and map user names
       const commentsByTicket = new Map();
       for (const row of commentsRows) {
         const tId = row.Pawning_Ticket_idPawning_Ticket;
@@ -1006,7 +1070,7 @@ export const getCustomerCompleteDataById = async (req, res, next) => {
           Date_Time: row.Date_Time,
           Comment: row.Comment,
           User_idUser: row.User_idUser,
-          userName: row.userName || null,
+          userName: userMap.get(row.User_idUser) || null,
         });
       }
 

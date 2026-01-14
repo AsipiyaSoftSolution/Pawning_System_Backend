@@ -132,10 +132,14 @@ export const createPawningTicket = async (req, res, next) => {
       );
     }
 
-    // check if customer is blacklisted, if so block ticket creation
-    const [customerStatusRows] = await pool.query(
-      "SELECT Status FROM customer WHERE idCustomer = ?",
+    const [accountCenterCus] = await pool.query(
+      "SELECT accountCenterCusId FROM customer WHERE idCustomer = ?",
       [data.ticketData.customerId],
+    );
+    // check if customer is blacklisted, if so block ticket creation
+    const [customerStatusRows] = await pool2.query(
+      "SELECT Status FROM customer WHERE idCustomer = ?",
+      [accountCenterCus[0].accountCenterCusId],
     );
 
     if (
@@ -648,61 +652,97 @@ export const searchCustomerByNIC = async (req, res, next) => {
     }
     const formatedNIC = formatSearchPattern(NIC); // Format NIC for SQL LIKE query
 
-    // Fetch customer data with their documents
-    const [customers] = await pool.query(
-      `SELECT 
-        c.idCustomer, 
-        c.NIC, 
-        c.Full_name,
-        c.Address1,
-        c.Address2,
-        c.Address3,
-        c.Mobile_No,
-        c.Status,
-        c.Risk_Level,
-        CASE WHEN c.Status = '0' THEN c.Blacklist_Reason ELSE NULL END AS Blacklist_Reason,
-        CASE WHEN c.Status = '0' THEN c.Blacklist_Date ELSE NULL END AS Blacklist_Date,
-        JSON_ARRAYAGG(
-          JSON_OBJECT(
-            'Document_Name', cd.Document_Name,
-            'Path', cd.Path
-          )
-        ) as documents
-      FROM customer c
-      LEFT JOIN customer_documents cd ON c.idCustomer = cd.Customer_idCustomer
-      WHERE c.NIC LIKE ? AND c.Branch_idBranch = ?
-      GROUP BY c.idCustomer, c.NIC, c.Full_name, c.Address1, c.Address2, c.Address3, c.Mobile_No, c.Status, c.Risk_Level, c.Blacklist_Reason, c.Blacklist_Date`,
+    // Search in account center (pool2) since NIC is stored there
+    const [accountCenterCustomers] = await pool2.query(
+      `SELECT * FROM customer 
+       WHERE Nic LIKE ? AND branch_id = ? AND isPawningUserId IS NOT NULL`,
       [formatedNIC, req.branchId],
     );
 
-    // Parse the documents JSON for each customer
-    if (customers && customers.length > 0) {
-      customers.forEach((customer) => {
-        // Check if documents is already an object/array or needs parsing
-        if (typeof customer.documents === "string") {
-          try {
-            customer.documents = JSON.parse(customer.documents);
-          } catch (e) {
-            customer.documents = [];
-          }
-        } else if (!customer.documents) {
-          customer.documents = [];
-        }
-
-        // Filter out null documents (when LEFT JOIN returns no matches)
-        if (Array.isArray(customer.documents)) {
-          customer.documents = customer.documents.filter(
-            (doc) => doc && doc.Document_Name !== null,
-          );
-        } else {
-          customer.documents = [];
-        }
+    if (!accountCenterCustomers || accountCenterCustomers.length === 0) {
+      return res.status(200).json({
+        success: true,
+        customer: null,
       });
     }
 
+    // Get pawning customer IDs from account center results
+    const pawningCustomerIds = accountCenterCustomers
+      .map((c) => c.isPawningUserId)
+      .filter((id) => id !== null && id !== undefined);
+
+    // Fetch pawning customer data
+    let pawningCustomersMap = new Map();
+    if (pawningCustomerIds.length > 0) {
+      const placeholders = pawningCustomerIds.map(() => "?").join(",");
+      const [pawningCustomers] = await pool.query(
+        `SELECT * FROM customer WHERE idCustomer IN (${placeholders})`,
+        pawningCustomerIds,
+      );
+
+      for (const pawningCus of pawningCustomers) {
+        pawningCustomersMap.set(pawningCus.idCustomer, pawningCus);
+      }
+    }
+
+    // Fetch documents for all pawning customers
+    let documentsMap = new Map();
+    if (pawningCustomerIds.length > 0) {
+      const placeholders = pawningCustomerIds.map(() => "?").join(",");
+      const [documents] = await pool.query(
+        `SELECT Customer_idCustomer, Document_Name, Path 
+         FROM customer_documents 
+         WHERE Customer_idCustomer IN (${placeholders})`,
+        pawningCustomerIds,
+      );
+
+      // Group documents by customer ID
+      for (const doc of documents) {
+        if (!documentsMap.has(doc.Customer_idCustomer)) {
+          documentsMap.set(doc.Customer_idCustomer, []);
+        }
+        documentsMap.get(doc.Customer_idCustomer).push({
+          Document_Name: doc.Document_Name,
+          Path: doc.Path,
+        });
+      }
+    }
+
+    // Merge account center and pawning customer data - matching original format
+    const customers = accountCenterCustomers.map((accCus) => {
+      const pawningData = pawningCustomersMap.get(accCus.isPawningUserId);
+      const customerDocs = documentsMap.get(accCus.isPawningUserId) || [];
+
+      // Return in original format for frontend compatibility
+      return {
+        idCustomer: pawningData?.idCustomer || null,
+        NIC: accCus.Nic,
+        Full_name:
+          accCus.First_Name && accCus.Last_Name
+            ? `${accCus.First_Name} ${accCus.Last_Name}`
+            : accCus.First_Name || accCus.Last_Name || null,
+        Address1: accCus.Address || null,
+        Address2: accCus.Address_02 || null,
+        Address3: accCus.Address_03 || null,
+        Mobile_No: accCus.Contact_No || null,
+        Status: accCus.Status,
+        Risk_Level: accCus.Customer_Risk_Level || null,
+        // Blacklist fields from pawning data (conditional)
+        Blacklist_Reason:
+          pawningData?.Behaviour_Status === "0"
+            ? pawningData?.Blacklist_Reason
+            : null,
+        Blacklist_Date:
+          pawningData?.Behaviour_Status === "0"
+            ? pawningData?.Blacklist_Date
+            : null,
+        documents: customerDocs,
+      };
+    });
+
     res.status(200).json({
       success: true,
-      customer: customers || null,
+      customer: customers,
     });
   } catch (error) {
     console.error("Error in searchCustomerByNIC:", error);
@@ -3277,19 +3317,35 @@ export const sendTicketsForPrinting = async (req, res, next) => {
     }
 
     if (nic) {
-      // Sanitize and format NIC for SQL LIKE query
-      const sanitizedNIC = nic.replace(/[^a-zA-Z0-9]/g, ""); // Remove special characters
-
+      // NIC search needs to be handled separately - first search in account center
+      // then get matching pawning customer IDs
+      const sanitizedNIC = nic.replace(/[^a-zA-Z0-9]/g, "");
       const formattedNIC = formatSearchPattern(sanitizedNIC);
-      baseWhereConditions += " AND c.NIC LIKE ?";
-      countParams.push(formattedNIC);
-      dataParams.push(formattedNIC);
+
+      // Search for matching customers in account center
+      const [matchingAccCustomers] = await pool2.query(
+        `SELECT isPawningUserId FROM customer WHERE Nic LIKE ? AND branch_id = ? AND isPawningUserId IS NOT NULL`,
+        [formattedNIC, req.branchId],
+      );
+
+      if (matchingAccCustomers.length === 0) {
+        return res.status(200).json({
+          success: true,
+          tickets: [],
+          pagination: { total: 0, page, limit, totalPages: 0 },
+        });
+      }
+
+      const pawningCusIds = matchingAccCustomers.map((c) => c.isPawningUserId);
+      const cusPlaceholders = pawningCusIds.map(() => "?").join(",");
+      baseWhereConditions += ` AND pt.Customer_idCustomer IN (${cusPlaceholders})`;
+      countParams.push(...pawningCusIds);
+      dataParams.push(...pawningCusIds);
     }
 
-    // Build count query with same conditions as main query
+    // Build count query - no customer JOIN needed
     const countQuery = `SELECT COUNT(*) AS total
                         FROM pawning_ticket pt
-                 LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
                  LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product 
                        WHERE ${baseWhereConditions}`;
 
@@ -3308,10 +3364,10 @@ export const sendTicketsForPrinting = async (req, res, next) => {
       ? "ORDER BY pt.idPawning_Ticket DESC"
       : "ORDER BY pt.updated_at DESC, pt.idPawning_Ticket DESC";
 
-    // Build main data query - fetch ticket data with customer NIC and product name (branch is in pool2, fetch separately)
+    // Build main data query - customer data fetched separately from pool2
     let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, 
                         pt.Pawning_Advance_Amount, pt.Status, pt.Print_Status, pt.Branch_idBranch,
-                        c.Full_name, c.NIC, c.Mobile_No, pp.Name AS ProductName
+                        pt.Customer_idCustomer, c.accountCenterCusId, pp.Name AS ProductName
                  FROM pawning_ticket pt
             LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
             LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product
@@ -3322,28 +3378,57 @@ export const sendTicketsForPrinting = async (req, res, next) => {
 
     const [tickets] = await pool.query(query, dataParams);
 
-    // Fetch branch names from pool2 for all unique branch IDs
+    // Fetch customer details from account center for all tickets
     if (tickets.length > 0) {
+      const accountCenterCusIds = [
+        ...new Set(tickets.map((t) => t.accountCenterCusId).filter((id) => id)),
+      ];
+
+      let customerMap = new Map();
+      if (accountCenterCusIds.length > 0) {
+        const cusPlaceholders = accountCenterCusIds.map(() => "?").join(",");
+        const [accCustomers] = await pool2.query(
+          `SELECT idCustomer, First_Name, Last_Name, Nic, Contact_No FROM customer WHERE idCustomer IN (${cusPlaceholders})`,
+          accountCenterCusIds,
+        );
+
+        for (const cus of accCustomers) {
+          customerMap.set(cus.idCustomer, cus);
+        }
+      }
+
+      // Fetch branch names from pool2 for all unique branch IDs
       const branchIds = [
         ...new Set(tickets.map((t) => t.Branch_idBranch).filter((id) => id)),
       ];
 
+      let branchMap = new Map();
       if (branchIds.length > 0) {
         const placeholders = branchIds.map(() => "?").join(",");
         const [branches] = await pool2.query(
           `SELECT idBranch, Name FROM branch WHERE idBranch IN (${placeholders})`,
           branchIds,
         );
-
-        // Create a map for quick lookup
-        const branchMap = new Map(branches.map((b) => [b.idBranch, b.Name]));
-
-        // Add branch names to tickets
-        tickets.forEach((ticket) => {
-          ticket.BranchName = branchMap.get(ticket.Branch_idBranch) || null;
-          delete ticket.Branch_idBranch; // Remove the branch ID from response
-        });
+        branchMap = new Map(branches.map((b) => [b.idBranch, b.Name]));
       }
+
+      // Add customer and branch info to tickets
+      tickets.forEach((ticket) => {
+        const cusData = customerMap.get(ticket.accountCenterCusId);
+        ticket.Full_name = cusData
+          ? cusData.First_Name && cusData.Last_Name
+            ? `${cusData.First_Name} ${cusData.Last_Name}`
+            : cusData.First_Name || cusData.Last_Name || null
+          : null;
+        ticket.NIC = cusData?.Nic || null;
+        ticket.Mobile_No = cusData?.Contact_No || null;
+        ticket.BranchName = branchMap.get(ticket.Branch_idBranch) || null;
+
+        // Clean up internal fields
+        delete ticket.Branch_idBranch;
+        delete ticket.Customer_idCustomer;
+        delete ticket.accountCenterCusId;
+      });
     }
 
     return res.status(200).json({

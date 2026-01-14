@@ -1226,12 +1226,13 @@ export const getTicketDataById = async (req, res, next) => {
     delete ticketData[0].Pawning_Product_idPawning_Product; // remove product id from response
 
     // fetch customer data for the ticket
-    [customerData] = await pool.query(
-      "SELECT idCustomer,NIC, Full_name,Address1,Address2,Address3,Mobile_No,Status,Risk_Level FROM customer WHERE idCustomer = ?",
+    // First get the accountCenterCusId from pawning DB
+    const [pawningCustomer] = await pool.query(
+      "SELECT idCustomer, accountCenterCusId, Behaviour_Status, Blacklist_Reason, Blacklist_Date FROM customer WHERE idCustomer = ?",
       [ticketData[0].Customer_idCustomer],
     );
 
-    if (customerData.length === 0) {
+    if (pawningCustomer.length === 0) {
       return next(
         errorHandler(
           404,
@@ -1239,6 +1240,57 @@ export const getTicketDataById = async (req, res, next) => {
             ticketData[0].Customer_idCustomer,
         ),
       );
+    }
+
+    // Then fetch full details from account center (pool2)
+    const [accCustomer] = await pool2.query(
+      `SELECT idCustomer, Nic, First_Name, Last_Name, Address, Address_02, Address_03, Contact_No, Status, Customer_Risk_Level 
+       FROM customer WHERE idCustomer = ?`,
+      [pawningCustomer[0].accountCenterCusId],
+    );
+
+    if (accCustomer.length > 0) {
+      const accCus = accCustomer[0];
+      customerData = [
+        {
+          idCustomer: pawningCustomer[0].idCustomer,
+          NIC: accCus.Nic,
+          Full_name:
+            accCus.First_Name && accCus.Last_Name
+              ? `${accCus.First_Name} ${accCus.Last_Name}`
+              : accCus.First_Name || accCus.Last_Name || null,
+          Address1: accCus.Address,
+          Address2: accCus.Address_02,
+          Address3: accCus.Address_03,
+          Mobile_No: accCus.Contact_No,
+          Status: accCus.Status,
+          Risk_Level: accCus.Customer_Risk_Level,
+          // Include blacklisting info which might still be relevant on pawning side or merged
+          Blacklist_Reason:
+            pawningCustomer[0].Behaviour_Status === "0"
+              ? pawningCustomer[0].Blacklist_Reason
+              : null,
+          Blacklist_Date:
+            pawningCustomer[0].Behaviour_Status === "0"
+              ? pawningCustomer[0].Blacklist_Date
+              : null,
+        },
+      ];
+    } else {
+      // Fallback if no account center record found (should ideally not happen if data is consistent)
+      customerData = [
+        {
+          idCustomer: pawningCustomer[0].idCustomer,
+          NIC: null,
+          Full_name: "Unknown Customer",
+          Address1: null,
+          Address2: null,
+          Address3: null,
+          Mobile_No: null,
+          Status: null,
+          Risk_Level: null,
+        },
+      ];
     }
 
     // fetch ticket article items from pool (pawning_system db)

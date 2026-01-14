@@ -151,7 +151,7 @@ export const createCustomer = async (req, res, next) => {
       // INSERT query for pawning customer
       const [result] = await connection.query(
         `INSERT INTO customer (Branch_idBranch, Customer_Number, created_at) VALUES (?, ?, ?)`,
-        [req.branchId, customerFields.Customer_Number, new Date()],
+        [req.branchId, customerFields.cus_number, new Date()],
       );
 
       const pawningCustomerId = result.insertId;
@@ -386,11 +386,9 @@ export const getCustomersForTheBranch = async (req, res, next) => {
         totalPages: Math.ceil(total / limit),
       };
 
-      // Fetch customers from account center with search
+      // Fetch customers from account center with search (SELECT * for future-proofing)
       [accountCenterCustomers] = await pool2.query(
-        `SELECT idCustomer, cus_number, First_Name, Last_Name, Email, Contact_No, Nic, Gender, Dob, 
-                Address, City, State, Status, created_at, branch_id, isPawningUserId
-         FROM customer 
+        `SELECT * FROM customer 
          WHERE branch_id IN (${branchPlaceholders}) 
          AND isPawningUserId IS NOT NULL
          AND (First_Name LIKE ? OR Nic LIKE ? OR Contact_No LIKE ? OR cus_number LIKE ? OR idCustomer LIKE ?)
@@ -424,11 +422,9 @@ export const getCustomersForTheBranch = async (req, res, next) => {
         totalPages: Math.ceil(total / limit),
       };
 
-      // Fetch customers from account center without search
+      // Fetch customers from account center without search (SELECT * for future-proofing)
       [accountCenterCustomers] = await pool2.query(
-        `SELECT idCustomer, cus_number, First_Name, Last_Name, Email, Contact_No, Nic, Gender, Dob, 
-                Address, City, State, Status, created_at, branch_id, isPawningUserId
-         FROM customer 
+        `SELECT * FROM customer 
          WHERE branch_id IN (${branchPlaceholders}) 
          AND isPawningUserId IS NOT NULL
          ORDER BY created_at DESC
@@ -446,11 +442,9 @@ export const getCustomersForTheBranch = async (req, res, next) => {
     let pawningCustomersMap = new Map();
     if (pawningCustomerIds.length > 0) {
       const placeholders = pawningCustomerIds.map(() => "?").join(",");
+      // SELECT * for future-proofing - includes all pawning customer fields
       const [pawningCustomers] = await pool.query(
-        `SELECT idCustomer, Customer_Number, Behaviour_Status, Blacklist_Reason, Blacklist_Date, 
-                Branch_idBranch, emp_id, created_at, accountCenterCusId
-         FROM customer 
-         WHERE idCustomer IN (${placeholders})`,
+        `SELECT * FROM customer WHERE idCustomer IN (${placeholders})`,
         pawningCustomerIds,
       );
 
@@ -465,34 +459,13 @@ export const getCustomersForTheBranch = async (req, res, next) => {
       const pawningData = pawningCustomersMap.get(accCus.isPawningUserId);
 
       return {
-        // Primary ID (pawning customer ID for compatibility)
-        idCustomer: pawningData?.idCustomer || null,
-        // Account Center DB fields
+        // Spread all account center fields first
+        ...accCus,
+        // Override/add specific fields
+        idCustomer: pawningData?.idCustomer || null, // Primary ID (pawning customer ID for compatibility)
         accountCenterCusId: accCus.idCustomer,
-        Customer_Number: accCus.cus_number,
-        First_Name: accCus.First_Name,
-        Last_Name: accCus.Last_Name,
-        Full_Name:
-          accCus.First_Name && accCus.Last_Name
-            ? `${accCus.First_Name} ${accCus.Last_Name}`
-            : accCus.First_Name || accCus.Last_Name || null,
-        Email: accCus.Email,
-        Contact_No: accCus.Contact_No,
-        NIC: accCus.Nic,
-        Gender: accCus.Gender,
-        DOB: accCus.Dob,
-        Address: accCus.Address,
-        City: accCus.City,
-        State: accCus.State,
-        Status: accCus.Status,
-        branch_id: accCus.branch_id,
-        created_at: accCus.created_at,
-        // Pawning DB fields (if available)
-        Pawning_Customer_Number: pawningData?.Customer_Number || null,
-        Behaviour_Status: pawningData?.Behaviour_Status || null,
-        Blacklist_Reason: pawningData?.Blacklist_Reason || null,
-        Blacklist_Date: pawningData?.Blacklist_Date || null,
-        emp_id: pawningData?.emp_id || null,
+        // Spread pawning data with prefix to avoid conflicts
+        pawningData: pawningData || null,
       };
     });
 
@@ -509,53 +482,72 @@ export const getCustomersForTheBranch = async (req, res, next) => {
 
 export const getCustomerById = async (req, res, next) => {
   try {
-    const customerId = req.params.id || req.params.customerId; // extract customerId from the request
-    const branchId = req.branchId; // extract branchId from the request
+    const customerId = req.params.id || req.params.customerId;
+    const branchId = req.branchId;
 
     if (!customerId) {
       return next(errorHandler(400, "Customer ID is required"));
     }
 
-    let customer;
-    let customerQuery;
-    let customerQueryParams;
+    let pawningCustomerQuery;
+    let pawningCustomerQueryParams;
 
     if (req.isHeadBranch === true) {
-      customerQuery = "SELECT * FROM customer WHERE idCustomer = ?";
-      customerQueryParams = [customerId];
+      pawningCustomerQuery = "SELECT * FROM customer WHERE idCustomer = ?";
+      pawningCustomerQueryParams = [customerId];
     } else {
-      customerQuery =
+      pawningCustomerQuery =
         "SELECT * FROM customer WHERE idCustomer = ? AND Branch_idBranch = ?";
-      customerQueryParams = [customerId, branchId];
+      pawningCustomerQueryParams = [customerId, branchId];
     }
 
-    // Fetch customer all data by the customer Id and the branch Id
-    const [customerResult] = await pool.query(
-      customerQuery,
-      customerQueryParams,
+    // Fetch pawning customer data
+    const [pawningCustomerResult] = await pool.query(
+      pawningCustomerQuery,
+      pawningCustomerQueryParams,
     );
 
-    if (customerResult.length === 0) {
+    if (pawningCustomerResult.length === 0) {
       return next(errorHandler(404, "Customer not found"));
     }
 
-    customer = customerResult[0] || {};
+    const pawningCustomer = pawningCustomerResult[0];
 
-    // Then Fetch customer documents
+    // Fetch account center customer data using accountCenterCusId
+    let accountCenterCustomer = null;
+    if (pawningCustomer.accountCenterCusId) {
+      const [accCenterResult] = await pool2.query(
+        "SELECT * FROM customer WHERE idCustomer = ?",
+        [pawningCustomer.accountCenterCusId],
+      );
+      accountCenterCustomer = accCenterResult[0] || null;
+    }
+
+    // Fetch customer documents from pawning DB
     const [documents] = await pool.query(
       "SELECT * FROM customer_documents WHERE Customer_idCustomer = ?",
       [customerId],
     );
 
-    customer.documents = documents || [];
-
     // Fetch the branch name and code
     const [branchRows] = await pool2.query(
-      " SELECT Name, Branch_Code FROM branch WHERE idBranch = ? ",
-      [customer.Branch_idBranch],
+      "SELECT Name, Branch_Code FROM branch WHERE idBranch = ?",
+      [pawningCustomer.Branch_idBranch],
     );
 
-    customer.branchInfo = branchRows[0] || {};
+    // Merge data from both databases using spread operator
+    const customer = {
+      // Spread all account center fields first (if available)
+      ...(accountCenterCustomer || {}),
+      // Override/add specific fields
+      idCustomer: pawningCustomer.idCustomer, // Primary ID (pawning customer ID)
+      accountCenterCusId: pawningCustomer.accountCenterCusId,
+      // Pawning specific data as nested object
+      pawningData: pawningCustomer,
+      // Additional data
+      documents: documents || [],
+      branchInfo: branchRows[0] || {},
+    };
 
     res.status(200).json({
       message: "Customer fetched successfully",

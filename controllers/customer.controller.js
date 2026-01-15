@@ -1156,17 +1156,58 @@ export const getCustomerCompleteDataById = async (req, res, next) => {
       return next(errorHandler(400, "Customer ID is required"));
     }
 
-    //Fetch Customer Basic Data
-    const [customerResult] = await pool.query(
-      "SELECT * FROM customer WHERE idCustomer = ? AND Branch_idBranch = ?",
-      [customerId, branchId],
+    // Fetch Pawning Customer Basic Data (contains accountCenterCusId)
+    let pawningCustomerQuery;
+    let pawningCustomerQueryParams;
+
+    if (req.isHeadBranch === true) {
+      pawningCustomerQuery = "SELECT * FROM customer WHERE idCustomer = ?";
+      pawningCustomerQueryParams = [customerId];
+    } else {
+      pawningCustomerQuery =
+        "SELECT * FROM customer WHERE idCustomer = ? AND Branch_idBranch = ?";
+      pawningCustomerQueryParams = [customerId, branchId];
+    }
+
+    const [pawningCustomerResult] = await pool.query(
+      pawningCustomerQuery,
+      pawningCustomerQueryParams,
     );
 
-    if (customerResult.length === 0) {
+    if (pawningCustomerResult.length === 0) {
       return next(errorHandler(404, "Customer not found"));
     }
 
-    const customer = customerResult[0];
+    const pawningCustomer = pawningCustomerResult[0];
+
+    // Fetch account center customer data using accountCenterCusId
+    let accountCenterCustomer = null;
+    if (pawningCustomer.accountCenterCusId) {
+      const [accCenterResult] = await pool2.query(
+        "SELECT * FROM customer WHERE idCustomer = ?",
+        [pawningCustomer.accountCenterCusId],
+      );
+      accountCenterCustomer = accCenterResult[0] || null;
+    }
+
+    // Fetch the branch name and code
+    const [branchRows] = await pool2.query(
+      "SELECT Name, Branch_Code FROM branch WHERE idBranch = ?",
+      [pawningCustomer.Branch_idBranch],
+    );
+
+    // Merge data from both databases using spread operator
+    const customer = {
+      // Spread all account center fields first (if available)
+      ...(accountCenterCustomer || {}),
+      // Override/add specific fields
+      idCustomer: pawningCustomer.idCustomer, // Primary ID (pawning customer ID)
+      accountCenterCusId: pawningCustomer.accountCenterCusId,
+      // Pawning specific data as nested object
+      pawningData: pawningCustomer,
+      // Additional data
+      branchInfo: branchRows[0] || {},
+    };
 
     //Fetch Customer Documents
     const [documents] = await pool.query(

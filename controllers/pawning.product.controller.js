@@ -336,7 +336,6 @@ export const createPawningProduct = async (req, res, next) => {
     if (!data) {
       return next(errorHandler(400, "Product data is required"));
     }
-    console.log("data received for creating pawning product:", data);
 
     // Ready the data of service charge for pawning product table
     const serviceCharge = data.serviceCharge?.status === "Active" ? 1 : 0;

@@ -360,6 +360,9 @@ export const getCustomersForTheBranch = async (req, res, next) => {
     let paginationData;
     let accountCenterCustomers;
 
+    // Only select essential fields for the customer list
+    const selectFields = `idCustomer, isPawningUserId, First_Name, Last_Name, Nic, Contact_No, created_at`;
+
     // Search in account center (pool2) since customer details are stored there
     if (search) {
       // Count query for pagination - search in account center
@@ -367,10 +370,9 @@ export const getCustomersForTheBranch = async (req, res, next) => {
         `SELECT COUNT(*) as total FROM customer 
          WHERE branch_id IN (${branchPlaceholders}) 
          AND isPawningUserId IS NOT NULL
-         AND (First_Name LIKE ? OR Nic LIKE ? OR Contact_No LIKE ? OR cus_number LIKE ? OR idCustomer LIKE ?)`,
+         AND (First_Name LIKE ? OR Nic LIKE ? OR Contact_No LIKE ? OR idCustomer LIKE ?)`,
         [
           ...branchIds,
-          `%${search}%`,
           `%${search}%`,
           `%${search}%`,
           `%${search}%`,
@@ -386,17 +388,16 @@ export const getCustomersForTheBranch = async (req, res, next) => {
         totalPages: Math.ceil(total / limit),
       };
 
-      // Fetch customers from account center with search (SELECT * for future-proofing)
+      // Fetch customers from account center with search (only essential fields)
       [accountCenterCustomers] = await pool2.query(
-        `SELECT * FROM customer 
+        `SELECT ${selectFields} FROM customer 
          WHERE branch_id IN (${branchPlaceholders}) 
          AND isPawningUserId IS NOT NULL
-         AND (First_Name LIKE ? OR Nic LIKE ? OR Contact_No LIKE ? OR cus_number LIKE ? OR idCustomer LIKE ?)
+         AND (First_Name LIKE ? OR Nic LIKE ? OR Contact_No LIKE ? OR idCustomer LIKE ?)
          ORDER BY created_at DESC
          LIMIT ? OFFSET ?`,
         [
           ...branchIds,
-          `%${search}%`,
           `%${search}%`,
           `%${search}%`,
           `%${search}%`,
@@ -422,9 +423,9 @@ export const getCustomersForTheBranch = async (req, res, next) => {
         totalPages: Math.ceil(total / limit),
       };
 
-      // Fetch customers from account center without search (SELECT * for future-proofing)
+      // Fetch customers from account center without search (only essential fields)
       [accountCenterCustomers] = await pool2.query(
-        `SELECT * FROM customer 
+        `SELECT ${selectFields} FROM customer 
          WHERE branch_id IN (${branchPlaceholders}) 
          AND isPawningUserId IS NOT NULL
          ORDER BY created_at DESC
@@ -433,41 +434,34 @@ export const getCustomersForTheBranch = async (req, res, next) => {
       );
     }
 
-    // Get pawning customer IDs from account center results
+    // Get pawning customer IDs to fetch Customer_Number from pawning DB
     const pawningCustomerIds = accountCenterCustomers
       .map((c) => c.isPawningUserId)
       .filter((id) => id !== null && id !== undefined);
 
-    // Fetch pawning customer data if there are any linked customers
-    let pawningCustomersMap = new Map();
+    // Fetch Customer_Number from pawning database
+    let customerNumberMap = new Map();
     if (pawningCustomerIds.length > 0) {
       const placeholders = pawningCustomerIds.map(() => "?").join(",");
-      // SELECT * for future-proofing - includes all pawning customer fields
       const [pawningCustomers] = await pool.query(
-        `SELECT * FROM customer WHERE idCustomer IN (${placeholders})`,
+        `SELECT idCustomer, Customer_Number FROM customer WHERE idCustomer IN (${placeholders})`,
         pawningCustomerIds,
       );
-
-      // Create a map for quick lookup by pawning customer ID
-      for (const pawningCus of pawningCustomers) {
-        pawningCustomersMap.set(pawningCus.idCustomer, pawningCus);
-      }
+      customerNumberMap = new Map(
+        pawningCustomers.map((c) => [c.idCustomer, c.Customer_Number]),
+      );
     }
 
-    // Merge account center customer data with pawning customer data
-    const customers = accountCenterCustomers.map((accCus) => {
-      const pawningData = pawningCustomersMap.get(accCus.isPawningUserId);
-
-      return {
-        // Spread all account center fields first
-        ...accCus,
-        // Override/add specific fields
-        idCustomer: pawningData?.idCustomer || null, // Primary ID (pawning customer ID for compatibility)
-        accountCenterCusId: accCus.idCustomer,
-        // Spread pawning data with prefix to avoid conflicts
-        pawningData: pawningData || null,
-      };
-    });
+    // Map account center customer data to response format
+    const customers = accountCenterCustomers.map((accCus) => ({
+      idCustomer: accCus.isPawningUserId, // Primary ID (pawning customer ID for compatibility)
+      accountCenterCusId: accCus.idCustomer,
+      First_Name: accCus.First_Name,
+      Last_Name: accCus.Last_Name,
+      Nic: accCus.Nic,
+      Contact_No: accCus.Contact_No,
+      Customer_Number: customerNumberMap.get(accCus.isPawningUserId) || null,
+    }));
 
     res.status(200).json({
       message: "Customers fetched successfully",

@@ -1909,16 +1909,14 @@ export const sendReqsOfTicketRenewalForApproval = async (req, res, next) => {
     const dateTo = req.query.dateTo;
     const status = req.query.status || "";
 
-    // Build WHERE conditions - use status if provided, otherwise default to pending (1)
-    let whereConditions = "Branch_idBranch = ?";
+    // Build WHERE conditions - only filter by status if provided, otherwise return all (1, 2, 3)
+    let whereConditions = "Branch_idBranch = ? AND renewReqStatus IS NOT NULL";
     let params = [req.branchId];
 
-    // Add status filter (default to pending status = 1 if not provided)
+    // Add status filter only if provided
     if (status) {
       whereConditions += " AND renewReqStatus = ?";
       params.push(parseInt(status));
-    } else {
-      whereConditions += " AND renewReqStatus = 1"; // default to pending
     }
 
     // Add search filter for Ticket_No
@@ -2039,6 +2037,7 @@ export const approveOrRejectReqForTicketRenewal = async (req, res, next) => {
         : "Ticket renewal request rejected successfully";
 
     res.status(200).json({
+      approvedStatus: renewReqStatus,
       success: true,
       message,
     });

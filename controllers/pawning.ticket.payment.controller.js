@@ -140,7 +140,7 @@ export const getTicketDataById = async (req, res, next) => {
 
     //fetch ticket initial data
     [ticketData] = await pool.query(
-      "SELECT idPawning_Ticket, Ticket_No,Pawning_Product_idPawning_Product,Period,Date_Time,Status,Maturity_date,Pawning_Advance_Amount,Customer_idCustomer,Gross_Weight,Net_Weight,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,User_idUser,Note,Interest_apply_on,Period_Type,SEQ_No FROM pawning_ticket WHERE idPawning_Ticket = ? AND  Branch_idBranch = ?",
+      "SELECT idPawning_Ticket, Ticket_No,Pawning_Product_idPawning_Product,Period,Date_Time,Status,Maturity_date,Pawning_Advance_Amount,Customer_idCustomer,Gross_Weight,Net_Weight,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,User_idUser,Note,Interest_apply_on,Period_Type,SEQ_No,renewReqStatus FROM pawning_ticket WHERE idPawning_Ticket = ? AND  Branch_idBranch = ?",
       [ticketId, req.branchId],
     );
 
@@ -445,13 +445,14 @@ export const getTicketDataById = async (req, res, next) => {
       return isNaN(n) ? 0 : n;
     }
 
+    console.log(ticketCharges);
     let minimumRenewalAmount =
       safeParse(ticketCharges[0].Interest_Balance) +
       safeParse(ticketCharges[0].Service_Charge_Balance) +
       safeParse(ticketCharges[0].Late_Charges_Balance) +
       safeParse(ticketCharges[0].Additional_Charge_Balance);
 
-    console.log("Minimum Renewal Amount:", minimumRenewalAmount);
+    //console.log("Minimum Renewal Amount:", minimumRenewalAmount);
 
     ticketCharges[0].minimumRenewalAmount = minimumRenewalAmount;
 
@@ -470,6 +471,16 @@ export const getTicketDataById = async (req, res, next) => {
         ticketCharges: ticketCharges[0] || {},
         paymentHistory,
         earlySettlementCharge,
+        isRenewReqEnabled:
+          ticketData[0].Maturity_date <
+            new Date().toISOString().split("T")[0] &&
+          ticketData[0].renewReqStatus === null,
+        canRenew:
+          ticketData[0].Maturity_date <
+            new Date().toISOString().split("T")[0] &&
+          ticketData[0].renewReqStatus === 2,
+        renewState:
+          ticketData[0].Maturity_date < new Date().toISOString().split("T")[0],
       },
     });
   } catch (error) {
@@ -1838,6 +1849,51 @@ export const getTicketsPaymentsHistory = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Error fetching ticket payment history:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// req access for pawning ticket renew
+export const reqAccessForTicketRenew = async (req, res, next) => {
+  try {
+    const ticketId = req.params.ticketId;
+
+    const [ticketData] = await pool.query(
+      "SELECT renewReqStatus FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+      [ticketId, req.branchId],
+    );
+
+    if (!ticketData || ticketData.length === 0) {
+      return next(errorHandler(404, "Ticket not found"));
+    }
+
+    if (ticketData[0].renewReqStatus === 1) {
+      return next(errorHandler(400, "Ticket renewal request already pending"));
+    }
+
+    if (ticketData[0].renewReqStatus === 2) {
+      return next(errorHandler(400, "Ticket renewal request already approved"));
+    }
+
+    if (ticketData[0].renewReqStatus === 3) {
+      return next(errorHandler(400, "Ticket renewal request already rejected"));
+    }
+
+    const [updateReqStatus] = await pool.query(
+      "UPDATE pawning_ticket SET renewReqStatus = 1 WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+      [ticketId, req.branchId],
+    );
+
+    if (!updateReqStatus || updateReqStatus.length === 0) {
+      return next(errorHandler(404, "Ticket not found"));
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Ticket renewal request sent successfully",
+    });
+  } catch (error) {
+    console.log("Error in request access for ticket renewal", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

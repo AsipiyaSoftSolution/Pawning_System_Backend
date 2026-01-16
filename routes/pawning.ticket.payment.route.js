@@ -12,6 +12,7 @@ import {
   updatePawningTicketNote,
   createTicketSettlementPayment,
   getTicketsPaymentsHistory,
+  reqAccessForTicketRenew,
 } from "../controllers/pawning.ticket.payment.controller.js";
 
 const route = express.Router();
@@ -20,63 +21,63 @@ route.get(
   "/:branchId/search",
   protectedRoute,
   checkUserBranchAccess,
-  searchByTickerNumberCustomerNICOrName
+  searchByTickerNumberCustomerNICOrName,
 ); // Search by ticket number, customer NIC, or name
 
 route.get(
   "/:branchId/ticket/:ticketId",
   protectedRoute,
   checkUserBranchAccess,
-  getTicketDataById
+  getTicketDataById,
 ); // Get ticket data by ID
 
 route.get(
   "/:branchId/ticket/:ticketId/logs",
   protectedRoute,
   checkUserBranchAccess,
-  getTicketLogDataById
+  getTicketLogDataById,
 ); // Get ticket log data by ID
 
 route.get(
   "/:branchId/ticket/:ticketId/additional-charges",
   protectedRoute,
   checkUserBranchAccess,
-  getTicketAdditionalChargesById
+  getTicketAdditionalChargesById,
 ); // Get ticket additional charges by ID
 
 route.post(
   "/:branchId/ticket/:ticketId/additional-charges",
   protectedRoute,
   checkUserBranchAccess,
-  createTicketAdditionalCharge
+  createTicketAdditionalCharge,
 ); // Create ticket additional charge
 
 route.post(
   "/:branchId/ticket/:ticketId/part-payment",
   protectedRoute,
   checkUserBranchAccess,
-  createPaymentForTicket
+  createPaymentForTicket,
 ); // Create payment for ticket  (Part Payment)
 
 route.post(
   "/:branchId/ticket/:ticketId/settlement-payment",
   protectedRoute,
   checkUserBranchAccess,
-  createTicketSettlementPayment
+  createTicketSettlementPayment,
 ); // Create settlement payment for ticket
 
 route.post(
   "/:branchId/ticket/:ticketId/renewal-payment",
   protectedRoute,
   checkUserBranchAccess,
-  createTicketRenewalPayment
+  createTicketRenewalPayment,
 ); // Create renewal payment for ticket
 
 route.patch(
   "/:branchId/ticket/:ticketId/note-update",
   protectedRoute,
   checkUserBranchAccess,
-  updatePawningTicketNote
+  updatePawningTicketNote,
 ); // Update ticket note
 
 // get all tickets payment histories data for the branch
@@ -84,7 +85,15 @@ route.get(
   "/:branchId/tickets-payments-history",
   protectedRoute,
   checkUserBranchAccess,
-  getTicketsPaymentsHistory
+  getTicketsPaymentsHistory,
 );
+
+// req access for pawning ticket renewal
+route.patch(
+  "/:branchId/ticket/:ticketId/renewal-request",
+  protectedRoute,
+  checkUserBranchAccess,
+  reqAccessForTicketRenew,
+); // Request access for ticket renewal
 
 export default route;

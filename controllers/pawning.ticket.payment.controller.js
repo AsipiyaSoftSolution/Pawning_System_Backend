@@ -1880,8 +1880,8 @@ export const reqAccessForTicketRenew = async (req, res, next) => {
     }
 
     const [updateReqStatus] = await pool.query(
-      "UPDATE pawning_ticket SET renewReqStatus = 1 WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
-      [ticketId, req.branchId],
+      "UPDATE pawning_ticket SET renewReqStatus = 1, renewal_req_created_at = NOW(), renewal_req_created_userId = ? WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+      [req.userId, ticketId, req.branchId],
     );
 
     if (!updateReqStatus || updateReqStatus.length === 0) {
@@ -1894,6 +1894,156 @@ export const reqAccessForTicketRenew = async (req, res, next) => {
     });
   } catch (error) {
     console.log("Error in request access for ticket renewal", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// send req of ticket renewal for approval
+export const sendReqsOfTicketRenewalForApproval = async (req, res, next) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+    const search = req.query.search || "";
+    const dateFrom = req.query.dateFrom;
+    const dateTo = req.query.dateTo;
+    const status = req.query.status || "";
+
+    // Build WHERE conditions - use status if provided, otherwise default to pending (1)
+    let whereConditions = "Branch_idBranch = ?";
+    let params = [req.branchId];
+
+    // Add status filter (default to pending status = 1 if not provided)
+    if (status) {
+      whereConditions += " AND renewReqStatus = ?";
+      params.push(parseInt(status));
+    } else {
+      whereConditions += " AND renewReqStatus = 1"; // default to pending
+    }
+
+    // Add search filter for Ticket_No
+    if (search) {
+      whereConditions += " AND Ticket_No LIKE ?";
+      params.push(`%${search}%`);
+    }
+
+    // Add date range filter for renewal_req_created_at
+    if (dateFrom) {
+      whereConditions += " AND DATE(renewal_req_created_at) >= ?";
+      params.push(dateFrom);
+    }
+
+    if (dateTo) {
+      whereConditions += " AND DATE(renewal_req_created_at) <= ?";
+      params.push(dateTo);
+    }
+
+    const paginationData = await getPaginationData(
+      `SELECT idPawning_Ticket FROM pawning_ticket WHERE ${whereConditions}`,
+      params,
+      page,
+      limit,
+    );
+
+    let tickets;
+    [tickets] = await pool.query(
+      `SELECT idPawning_Ticket, Ticket_No, Date_Time, renewal_req_created_at, renewReqStatus, renewal_req_created_userId, renewal_req_approved_at, renewal_req_approved_by FROM pawning_ticket WHERE ${whereConditions} ORDER BY renewal_req_created_at DESC LIMIT ? OFFSET ?`,
+      [...params, limit, offset],
+    );
+
+    for (const ticket of tickets) {
+      // fetch user full_name who created renewal request
+      if (ticket.renewal_req_created_userId) {
+        const [creatorData] = await pool2.query(
+          "SELECT full_name FROM user WHERE idUser = ?",
+          [ticket.renewal_req_created_userId],
+        );
+        ticket.createdByUserName = creatorData[0]?.full_name || null;
+      } else {
+        ticket.createdByUserName = null;
+      }
+
+      // fetch user full_name who approved/rejected (if status is 2 or 3)
+      if (
+        (ticket.renewReqStatus === 2 || ticket.renewReqStatus === 3) &&
+        ticket.renewal_req_approved_by
+      ) {
+        const [approverData] = await pool2.query(
+          "SELECT full_name FROM user WHERE idUser = ?",
+          [ticket.renewal_req_approved_by],
+        );
+        ticket.approvedByUserName = approverData[0]?.full_name || null;
+      } else {
+        ticket.approvedByUserName = null;
+      }
+
+      // Clean up internal IDs from response (optional - keep if you need them)
+      delete ticket.renewal_req_created_userId;
+      delete ticket.renewal_req_approved_by;
+    }
+
+    res.status(200).json({
+      success: true,
+      tickets: tickets || [],
+      pagination: paginationData,
+    });
+  } catch (error) {
+    console.log("Error in fetching ticket renewal requests", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// approve or reject req for ticket renewal
+export const approveOrRejectReqForTicketRenewal = async (req, res, next) => {
+  try {
+    const ticketId = req.params.ticketId;
+    const renewReqStatus = req.body.renewReqStatus;
+
+    // Validate renewReqStatus is either 2 (approved) or 3 (rejected)
+    if (![2, 3].includes(renewReqStatus)) {
+      return next(
+        errorHandler(
+          400,
+          "Invalid renew request status. Must be 2 (approve) or 3 (reject)",
+        ),
+      );
+    }
+
+    const [ticketData] = await pool.query(
+      "SELECT renewReqStatus FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+      [ticketId, req.branchId],
+    );
+
+    if (!ticketData || ticketData.length === 0) {
+      return next(errorHandler(404, "Ticket not found"));
+    }
+
+    if (ticketData[0].renewReqStatus !== 1) {
+      return next(
+        errorHandler(400, "Ticket renewal request is already processed"),
+      );
+    }
+
+    const [updateReqStatus] = await pool.query(
+      "UPDATE pawning_ticket SET renewReqStatus = ?, renewal_req_approved_by = ?, renewal_req_approved_at = NOW() WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+      [renewReqStatus, req.userId, ticketId, req.branchId],
+    );
+
+    if (!updateReqStatus || updateReqStatus.affectedRows === 0) {
+      return next(errorHandler(404, "Failed to update ticket renewal request"));
+    }
+
+    const message =
+      renewReqStatus === 2
+        ? "Ticket renewal request approved successfully"
+        : "Ticket renewal request rejected successfully";
+
+    res.status(200).json({
+      success: true,
+      message,
+    });
+  } catch (error) {
+    console.log("Error in approve/reject ticket renewal request", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

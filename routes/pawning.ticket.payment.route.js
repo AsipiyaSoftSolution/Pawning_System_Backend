@@ -13,6 +13,8 @@ import {
   createTicketSettlementPayment,
   getTicketsPaymentsHistory,
   reqAccessForTicketRenew,
+  sendReqsOfTicketRenewalForApproval,
+  approveOrRejectReqForTicketRenewal,
 } from "../controllers/pawning.ticket.payment.controller.js";
 
 const route = express.Router();
@@ -95,5 +97,21 @@ route.patch(
   checkUserBranchAccess,
   reqAccessForTicketRenew,
 ); // Request access for ticket renewal
+
+// send req of ticket renewal for approval
+route.get(
+  "/:branchId/tickets-renewal-requests",
+  protectedRoute,
+  checkUserBranchAccess,
+  sendReqsOfTicketRenewalForApproval,
+); // Send req of ticket renewal for approval
+
+// approve or reject req for ticket renewal
+route.patch(
+  "/:branchId/ticket/:ticketId/renewal-request-approval",
+  protectedRoute,
+  checkUserBranchAccess,
+  approveOrRejectReqForTicketRenewal,
+); // Approve or reject req for ticket renewal
 
 export default route;

@@ -222,20 +222,60 @@ export const createPawningTicketLogOnCreate = async (
 };
 
 // after the above log is created, this runs in order to mark the service charge
+// isPaidFromAdvance = true means service charge is deducted from pawning advance (subtract from balance)
+// isPaidFromAdvance = false means customer paid separately (add to what customer owes)
 export const markServiceChargeInTicketLog = async (
   ticketId,
   type,
   userId,
   serviceCharge,
+  isPaidFromAdvance = false, // default to false for backward compatibility
 ) => {
   try {
-    const [latestChargeResult] = await pool.query(
-      "SELECT Advance_Balance FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? ORDER BY idTicket_Log DESC LIMIT 1",
+    // Get the latest log to retrieve all balances
+    const [latestLogResult] = await pool.query(
+      "SELECT Advance_Balance, Interest_Balance, Service_Charge_Balance, Late_Charges_Balance, Aditional_Charge_Balance FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? ORDER BY idTicket_Log DESC LIMIT 1",
       [ticketId],
     );
 
-    const advanceBalance = Number(latestChargeResult[0]?.Advance_Balance) || 0;
-    const totalBalance = advanceBalance + Number(serviceCharge);
+    let advanceBalance = Number(latestLogResult[0]?.Advance_Balance) || 0;
+    const interestBalance = Number(latestLogResult[0]?.Interest_Balance) || 0;
+    const existingServiceChargeBalance =
+      Number(latestLogResult[0]?.Service_Charge_Balance) || 0;
+    const lateChargesBalance =
+      Number(latestLogResult[0]?.Late_Charges_Balance) || 0;
+    const additionalChargeBalance =
+      Number(latestLogResult[0]?.Aditional_Charge_Balance) || 0;
+
+    // If paid from advance, reduce the advance balance
+    if (isPaidFromAdvance) {
+      advanceBalance = advanceBalance - Number(serviceCharge);
+    }
+
+    // Service charge balance (cumulative) - this tracks what was charged
+    const newServiceChargeBalance =
+      existingServiceChargeBalance + Number(serviceCharge);
+
+    // Total balance calculation depends on how service charge was paid:
+    // - If paid from advance: advance is reduced, so total = reduced advance + other balances (service charge is 0 owed since already paid)
+    // - If paid by customer: service charge adds to what customer owes
+    let totalBalance;
+    if (isPaidFromAdvance) {
+      // Service charge already deducted from advance, so don't add it again to total
+      totalBalance =
+        advanceBalance +
+        interestBalance +
+        lateChargesBalance +
+        additionalChargeBalance;
+    } else {
+      // Customer pays service charge separately, so it adds to what they owe
+      totalBalance =
+        advanceBalance +
+        interestBalance +
+        newServiceChargeBalance +
+        lateChargesBalance +
+        additionalChargeBalance;
+    }
 
     const [result] = await pool.query(
       "INSERT INTO ticket_log (Pawning_Ticket_idPawning_Ticket, Type, Amount, Advance_Balance, Interest_Balance, Service_Charge_Balance, Late_Charges_Balance, Aditional_Charge_Balance, Total_Balance, User_idUser,Date_Time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())",
@@ -244,10 +284,10 @@ export const markServiceChargeInTicketLog = async (
         type,
         serviceCharge,
         advanceBalance,
-        0,
-        serviceCharge,
-        0,
-        0,
+        interestBalance,
+        newServiceChargeBalance,
+        lateChargesBalance,
+        additionalChargeBalance,
         totalBalance,
         userId,
       ],

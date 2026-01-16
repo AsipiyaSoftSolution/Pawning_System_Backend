@@ -37,6 +37,7 @@ export const createPawningTicket = async (req, res, next) => {
       "lateChargePercent",
       "interestApplyOn",
       "Interest_Rate_Duration",
+      "serviceChargePaidBy",
     ];
     const requiredFieldsForTicketArticles = [
       // data for pawning ticket article table
@@ -326,7 +327,7 @@ export const createPawningTicket = async (req, res, next) => {
 
     // Insert into pawning_ticket table
     const [result] = await pool.query(
-      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_Date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount,Service_Charge_Type,Service_Charge_Rate,Early_Settlement_Charge_Balance,Additiona_Charges_Balance,Service_Charge_Balance,Late_Charge_Balance,Interest_Amount_Balance,Balance_Amount,Interest_Rate_Duration,stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,Status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_Date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount,Service_Charge_Type,Service_Charge_Rate,Early_Settlement_Charge_Balance,Additiona_Charges_Balance,Service_Charge_Balance,Late_Charge_Balance,Interest_Amount_Balance,Balance_Amount,Interest_Rate_Duration,stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,Status,service_charge_paid_by_customer,service_charge_paid_from_pawning_advance) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [
         data.ticketData.ticketNo,
         data.ticketData.grantSeqNo,
@@ -370,6 +371,8 @@ export const createPawningTicket = async (req, res, next) => {
         productPlanStagesData[0]?.stage3Interest || 0,
         productPlanStagesData[0]?.stage4Interest || 0,
         status, // initial status (can be 0 or -1 based on company settings)
+        data.ticketData.serviceChargePaidBy === "customer" ? 1 : null,
+        data.ticketData.serviceChargePaidBy === "advance" ? 1 : null,
       ],
     );
 
@@ -472,12 +475,14 @@ export const createPawningTicket = async (req, res, next) => {
     );
 
     // create service charge log entry
+    /*
     await markServiceChargeInTicketLog(
       ticketId,
       "SERVICE CHARGE",
       req.userId,
       serviceChargeRate, // service charge amount
     );
+    */
 
     // create customer log for ticket creation
     await createCustomerLogOnCreateTicket(
@@ -2799,7 +2804,7 @@ export const activatePawningTicket = async (req, res, next) => {
 
     // Check if the ticket exists and is approved
     const [existingTicketRow] = await pool.query(
-      "SELECT Status,idPawning_Ticket,Pawning_Advance_Amount FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+      "SELECT Status,idPawning_Ticket,Pawning_Advance_Amount,Service_charge_Amount,service_charge_paid_by_customer,service_charge_paid_from_pawning_advance FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
       [ticketId, req.branchId],
     );
 
@@ -2841,8 +2846,222 @@ export const activatePawningTicket = async (req, res, next) => {
     await connection.beginTransaction();
     await connection2.beginTransaction();
 
+    // DEBUG: Initial log to confirm function is reached
+    console.log("=== ACTIVATE PAWNING TICKET DEBUG ===");
+    console.log("ticketId:", ticketId);
+    console.log("fromAccountId:", fromAccountId);
+    console.log("amount:", amount);
+    console.log("fromAccount[0]:", fromAccount[0]);
+    console.log("Account_Type:", fromAccount[0].Account_Type);
+    console.log(
+      "Is Cashier account?:",
+      fromAccount[0].Account_Type === "Cashier",
+    );
+
+    // Calculate balance after disbursement (used by both paths)
+    const balanceAfterDisbursement = parseFloat(
+      fromAccount[0].Account_Balance - amount,
+    );
+
+    // ============ SERVICE CHARGE DEDUCTION (COMMON FOR BOTH ACCOUNT TYPES) ============
+    let serviceChargeValue = parseFloat(
+      existingTicketRow[0].Service_charge_Amount || 0,
+    );
+    // Use Number() with fallback to handle null values properly (parseFloat(null) = NaN)
+    let serviceChargePaidByCustomer =
+      Number(existingTicketRow[0].service_charge_paid_by_customer) || 0;
+    let serviceChargePaidFromPawningAdvance =
+      Number(existingTicketRow[0].service_charge_paid_from_pawning_advance) ||
+      0;
+
+    // DEBUG: Log service charge values
+    console.log("=== SERVICE CHARGE DEBUG ===");
+    console.log("Raw existingTicketRow[0]:", existingTicketRow[0]);
+    console.log(
+      "Service_charge_Amount (raw):",
+      existingTicketRow[0].Service_charge_Amount,
+    );
+    console.log(
+      "service_charge_paid_by_customer (raw):",
+      existingTicketRow[0].service_charge_paid_by_customer,
+    );
+    console.log(
+      "service_charge_paid_from_pawning_advance (raw):",
+      existingTicketRow[0].service_charge_paid_from_pawning_advance,
+    );
+    console.log("serviceChargeValue (parsed):", serviceChargeValue);
+    console.log(
+      "serviceChargePaidByCustomer (parsed):",
+      serviceChargePaidByCustomer,
+    );
+    console.log(
+      "serviceChargePaidFromPawningAdvance (parsed):",
+      serviceChargePaidFromPawningAdvance,
+    );
+    console.log("Condition: serviceChargeValue > 0:", serviceChargeValue > 0);
+    console.log(
+      "Condition: serviceChargePaidByCustomer === 1:",
+      serviceChargePaidByCustomer === 1,
+    );
+    console.log(
+      "Condition: serviceChargePaidFromPawningAdvance === 1:",
+      serviceChargePaidFromPawningAdvance === 1,
+    );
+    console.log("=== END SERVICE CHARGE DEBUG ===");
+
+    if (serviceChargeValue > 0) {
+      console.log(">>> Entering serviceChargeValue > 0 block");
+      if (serviceChargePaidByCustomer === 1) {
+        // no need to deduct from pawning advance
+        console.log(">>> Customer paid service charge - no deduction needed");
+      } else if (serviceChargePaidFromPawningAdvance === 1) {
+        // need to deduct from pawning advance
+        console.log(">>> Deducting service charge from pawning advance");
+        const [updatePawningAdvanceResult] = await connection.query(
+          "UPDATE pawning_ticket SET Pawning_Advance_Amount = ? WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+          [
+            parseFloat(existingTicketRow[0].Pawning_Advance_Amount) -
+              serviceChargeValue,
+            ticketIdToUpdate,
+            req.branchId,
+          ],
+        );
+
+        if (updatePawningAdvanceResult.affectedRows === 0) {
+          await connection.rollback();
+          connection.release();
+          connection2.release();
+          await connection2.rollback();
+          return next(
+            errorHandler(
+              400,
+              "Failed to deduct service charge from pawning advance",
+            ),
+          );
+        }
+      } else {
+        console.log(
+          ">>> Neither condition met - serviceChargePaidByCustomer:",
+          serviceChargePaidByCustomer,
+          "serviceChargePaidFromPawningAdvance:",
+          serviceChargePaidFromPawningAdvance,
+        );
+      }
+
+      // now get the "Pawn Service Charge / Handling Fee Revenue" acc from con 2
+      let [pawnServiceChargeAcc] = await connection2.query(
+        "SELECT idAccounting_Accounts, Account_Balance FROM accounting_accounts WHERE Account_Type = ? AND Group_Of_Type = ? AND Branch_idBranch = ? And Account_Name = ? LIMIT 1",
+        [
+          "System Default",
+          "Revenue",
+          req.branchId,
+          "Pawn Service Charge / Handling Fee Revenue",
+        ],
+      );
+
+      if (pawnServiceChargeAcc.length === 0) {
+        await connection.rollback();
+        connection.release();
+        connection2.release();
+        await connection2.rollback();
+        return next(
+          errorHandler(
+            404,
+            "Pawn Service Charge / Handling Fee Revenue account not found",
+          ),
+        );
+      }
+
+      // update the pawn service charge acc balance
+      const [updatePawnServiceChargeAccResult] = await connection2.query(
+        "UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ? AND Branch_idBranch = ?",
+        [
+          parseFloat(pawnServiceChargeAcc[0].Account_Balance) +
+            serviceChargeValue,
+          pawnServiceChargeAcc[0].idAccounting_Accounts,
+          req.branchId,
+        ],
+      );
+
+      if (updatePawnServiceChargeAccResult.affectedRows === 0) {
+        await connection.rollback();
+        connection.release();
+        connection2.release();
+        await connection2.rollback();
+        return next(
+          errorHandler(400, "Failed to add service charge to revenue account"),
+        );
+      }
+
+      // Now insert a credit log to accounting accounting logs (revenue account)
+      const [scAccountingLogResult] = await connection2.query(
+        "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts, Date_Time, Type, Description, Debit, Credit, Balance, Contra_Account, User_idUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+          pawnServiceChargeAcc[0].idAccounting_Accounts,
+          new Date(),
+          "Ticket Service Charge",
+          "Pawn Service Charge / Handling Fee Revenue",
+          0,
+          serviceChargeValue,
+          parseFloat(pawnServiceChargeAcc[0].Account_Balance) +
+            serviceChargeValue,
+          fromAccountId, // Contra_Account - the source account
+          req.userId,
+        ],
+      );
+
+      if (scAccountingLogResult.affectedRows === 0) {
+        await connection.rollback();
+        connection.release();
+        connection2.release();
+        await connection2.rollback();
+        return next(
+          errorHandler(400, "Failed to create service charge credit log"),
+        );
+      }
+
+      // Now create the debit log to accounting accounting logs (from account)
+      const [scAccountingLogResult2] = await connection2.query(
+        "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts, Date_Time, Type, Description, Debit, Credit, Balance, Contra_Account, User_idUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+          fromAccountId,
+          new Date(),
+          "Ticket Service Charge",
+          "Pawn Service Charge / Handling Fee Revenue",
+          serviceChargeValue,
+          0,
+          parseFloat(fromAccount[0].Account_Balance) - serviceChargeValue,
+          pawnServiceChargeAcc[0].idAccounting_Accounts,
+          req.userId,
+        ],
+      );
+
+      if (scAccountingLogResult2.affectedRows === 0) {
+        await connection.rollback();
+        connection.release();
+        connection2.release();
+        await connection2.rollback();
+        return next(
+          errorHandler(400, "Failed to create service charge debit log"),
+        );
+      }
+
+      // now create the service charge log for the ticket
+      await markServiceChargeInTicketLog(
+        ticketIdToUpdate,
+        "SERVICE CHARGE",
+        req.userId,
+        serviceChargeValue,
+        serviceChargePaidFromPawningAdvance === 1, // isPaidFromAdvance
+      );
+
+      console.log(">>> Service charge processing completed successfully");
+    }
+    // ============ END SERVICE CHARGE DEDUCTION ============
+
     // check if from Account is either cashier account or not
     if (fromAccount[0].Account_Type === "Cashier") {
+      console.log(">>> INSIDE CASHIER BLOCK");
       // check if this user is assigned to this cashier account
       if (
         fromAccount[0].Cashier_idCashier !== req.userId ||
@@ -2865,10 +3084,6 @@ export const activatePawningTicket = async (req, res, next) => {
       const [result] = await connection.query(
         "UPDATE pawning_ticket SET Status = '1' WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
         [ticketIdToUpdate, req.branchId],
-      );
-
-      const balanceAfterDisbursement = parseFloat(
-        fromAccount[0].Account_Balance - amount,
       );
 
       // deduct the amount from the cashier account balance
@@ -2968,9 +3183,6 @@ export const activatePawningTicket = async (req, res, next) => {
         return next(errorHandler(500, "Failed to activate the ticket"));
       }
 
-      const balanceAfterDisbursement = parseFloat(
-        fromAccount[0].Account_Balance - amount,
-      );
       // deduct the amount from the account balance (accounting_accounts is in pool2)
       const [updateAccountResult] = await connection2.query(
         "UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ? AND Branch_idBranch = ?",

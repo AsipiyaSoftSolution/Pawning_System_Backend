@@ -315,57 +315,33 @@ export const addDailyTicketLog = async () => {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
-      // Check if ticket has stage-based interest system
-      const hasStages =
-        ticket.stage1StartDate &&
-        ticket.stage1EndDate &&
-        ticket.stage2StartDate &&
-        ticket.stage2EndDate &&
-        ticket.stage3StartDate &&
-        ticket.stage3EndDate &&
-        ticket.stage4StartDate &&
-        ticket.stage4EndDate;
+      // Check if ticket has stage-based interest system using noOfStages
+      const noOfStages = parseInt(ticket.noOfStages) || 0;
+      const hasStages = noOfStages >= 2; // Minimum 2 stages to use stage system
 
       if (hasStages) {
         // STAGE-BASED INTEREST SYSTEM
         const ticketStartDate = new Date(ticket.Date_Time);
         ticketStartDate.setHours(0, 0, 0, 0);
 
-        // Parse stage data
-        const stages = [
-          {
-            num: 1,
-            startDay: parseInt(ticket.stage1StartDate),
-            endDay: parseInt(ticket.stage1EndDate),
-            interest: parseFloat(ticket.stage1Interest) || 0,
-          },
-          {
-            num: 2,
-            startDay: parseInt(ticket.stage2StartDate),
-            endDay: parseInt(ticket.stage2EndDate),
-            interest: parseFloat(ticket.stage2Interest) || 0,
-          },
-          {
-            num: 3,
-            startDay: parseInt(ticket.stage3StartDate),
-            endDay: parseInt(ticket.stage3EndDate),
-            interest: parseFloat(ticket.stage3Interest) || 0,
-          },
-          {
-            num: 4,
-            startDay: parseInt(ticket.stage4StartDate),
-            endDay: parseInt(ticket.stage4EndDate),
-            interest: parseFloat(ticket.stage4Interest) || 0,
-          },
-        ];
+        // Dynamically build stages array based on noOfStages
+        const stages = [];
+        for (let i = 1; i <= noOfStages; i++) {
+          stages.push({
+            num: i,
+            startDay: parseInt(ticket[`stage${i}StartDate`]) || 0,
+            endDay: parseInt(ticket[`stage${i}EndDate`]) || 0,
+            interest: parseFloat(ticket[`stage${i}Interest`]) || 0,
+          });
+        }
 
         // Calculate days since ticket creation
         const daysSinceCreation = Math.floor(
           (today - ticketStartDate) / (1000 * 60 * 60 * 24),
         );
 
-        // Process stages 1-3 (one-time interest)
-        for (let i = 0; i < 3; i++) {
+        // Process stages 1 to (n-1) as one-time interest (last stage is daily)
+        for (let i = 0; i < stages.length - 1; i++) {
           const stage = stages[i];
 
           // Only process this stage if we have reached or passed it (daysSinceCreation >= stage.startDay)
@@ -439,31 +415,34 @@ export const addDailyTicketLog = async () => {
           }
         }
 
-        // Process stage 4 (daily interest)
-        const stage4 = stages[3];
+        // Process last stage (daily interest)
+        const lastStage = stages[stages.length - 1];
 
-        // Only process stage 4 if we have reached or passed it
-        if (daysSinceCreation >= stage4.startDay) {
-          const stage4StartDate = new Date(ticketStartDate);
-          stage4StartDate.setDate(stage4StartDate.getDate() + stage4.startDay);
-          stage4StartDate.setHours(0, 0, 0, 0);
+        // Only process last stage if we have reached or passed it
+        if (daysSinceCreation >= lastStage.startDay) {
+          const lastStageStartDate = new Date(ticketStartDate);
+          lastStageStartDate.setDate(
+            lastStageStartDate.getDate() + lastStage.startDay,
+          );
+          lastStageStartDate.setHours(0, 0, 0, 0);
 
-          // Get the last stage 4 log to determine where to start
-          const [lastStage4Log] = await pool.query(
-            "SELECT Description FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? AND Type = 'INTEREST' AND Description LIKE '%Stage 4%' ORDER BY idTicket_Log DESC LIMIT 1",
-            [ticketId],
+          // Get the last daily stage log to determine where to start
+          const [lastDailyStageLog] = await pool.query(
+            "SELECT Description FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? AND Type = 'INTEREST' AND Description LIKE ? ORDER BY idTicket_Log DESC LIMIT 1",
+            [ticketId, `%Stage ${lastStage.num}%`],
           );
 
-          let startDate = new Date(stage4StartDate);
-          if (lastStage4Log.length > 0) {
-            const lastLogDateStr = lastStage4Log[0].Description.split(" - ")[0];
+          let startDate = new Date(lastStageStartDate);
+          if (lastDailyStageLog.length > 0) {
+            const lastLogDateStr =
+              lastDailyStageLog[0].Description.split(" - ")[0];
             const lastLogDate = new Date(lastLogDateStr);
             lastLogDate.setHours(0, 0, 0, 0);
             startDate = new Date(lastLogDate);
             startDate.setDate(startDate.getDate() + 1); // Start from next day
           }
 
-          // Add daily interest logs for stage 4
+          // Add daily interest logs for last stage
           for (
             let currentDate = new Date(startDate);
             currentDate <= today;
@@ -479,7 +458,7 @@ export const addDailyTicketLog = async () => {
 
             const latestAdvanceBalance =
               parseFloat(latestLogResult[0]?.Advance_Balance) || 0;
-            const dailyInterestRate = stage4.interest / 30; // Monthly rate to daily
+            const dailyInterestRate = lastStage.interest / 30; // Monthly rate to daily
             const interestAmount =
               (latestAdvanceBalance * dailyInterestRate) / 100;
 
@@ -499,13 +478,13 @@ export const addDailyTicketLog = async () => {
               latestLateChargesBalance +
               latestAdditionalChargeBalance;
 
-            // Insert daily stage 4 interest log
+            // Insert daily last stage interest log
             await pool.query(
               "INSERT INTO ticket_log (Pawning_Ticket_idPawning_Ticket, Type, Description, Amount, Advance_Balance, Interest_Balance, Service_Charge_Balance, Late_Charges_Balance, Aditional_Charge_Balance, Total_Balance, User_idUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
               [
                 ticketId,
                 "INTEREST",
-                `${dateString} - Stage 4`,
+                `${dateString} - Stage ${lastStage.num}`,
                 interestAmount,
                 latestAdvanceBalance,
                 latestInterestBalance + interestAmount,
@@ -520,7 +499,7 @@ export const addDailyTicketLog = async () => {
             await recordInterestAccountingEntries(
               ticket,
               interestAmount,
-              `${dateString} - Stage 4 interest accrual`,
+              `${dateString} - Stage ${lastStage.num} interest accrual`,
             );
           }
         }
@@ -571,12 +550,12 @@ export const addDailyTicketLog = async () => {
             let interestAmount = 0;
             let interestDescription = "";
 
-            // Check if we're in stage 4 (daily interest)
-            if (daysSinceCreationForInterest >= stage4.startDay) {
-              const dailyInterestRate = stage4.interest / 30;
+            // Check if we're in last stage (daily interest)
+            if (daysSinceCreationForInterest >= lastStage.startDay) {
+              const dailyInterestRate = lastStage.interest / 30;
               interestAmount =
                 (latestAdvanceBalanceForInterest * dailyInterestRate) / 100;
-              interestDescription = `${dateString} - Stage 4`;
+              interestDescription = `${dateString} - Stage ${lastStage.num}`;
             }
 
             if (interestAmount > 0) {

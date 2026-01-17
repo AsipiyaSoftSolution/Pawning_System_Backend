@@ -16,6 +16,7 @@ import {
   sendReqsOfTicketRenewalForApproval,
   approveOrRejectReqForTicketRenewal,
 } from "../controllers/pawning.ticket.payment.controller.js";
+import { checkUserSelectedHeadBranch } from "../middlewares/headBranch.middleware.js";
 
 const route = express.Router();
 
@@ -87,6 +88,7 @@ route.get(
   "/:branchId/tickets-payments-history",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserSelectedHeadBranch,
   getTicketsPaymentsHistory,
 );
 

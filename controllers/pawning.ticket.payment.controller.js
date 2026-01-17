@@ -2,6 +2,7 @@ import { errorHandler } from "../utils/errorHandler.js";
 import { pool, pool2 } from "../utils/db.js";
 import { getPaginationData } from "../utils/helper.js";
 import { formatSearchPattern } from "../utils/helper.js";
+import { getCompanyBranches } from "../utils/helper.js";
 import { createPawningTicketLogOnAdditionalCharge } from "../utils/pawning.ticket.logs.js";
 
 // Search tickets by ticket number, customer NIC, or customer name with pagination
@@ -1712,12 +1713,33 @@ export const getTicketsPaymentsHistory = async (req, res, next) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
-    const { start_date, end_date } = req.query;
+    const { start_date, end_date, branchId } = req.query;
 
     // Build base WHERE conditions
-    let baseWhereConditions = "pt.Branch_idBranch = ?";
-    let countParams = [req.branchId];
-    let dataParams = [req.branchId];
+    let baseWhereConditions = "";
+    let countParams = [];
+    let dataParams = [];
+
+    if (req.isHeadBranch) {
+      console.log("Head Branch");
+      if (branchId) {
+        // Head branch viewing a specific branch
+        baseWhereConditions = "pt.Branch_idBranch = ?";
+        countParams.push(branchId);
+        dataParams.push(branchId);
+      } else {
+        // Head branch viewing all company branches
+        const branches = await getCompanyBranches(req.companyId);
+        baseWhereConditions = "pt.Branch_idBranch IN (?)";
+        countParams.push(branches);
+        dataParams.push(branches);
+      }
+    } else {
+      // Regular branch - only their own data
+      baseWhereConditions = "pt.Branch_idBranch = ?";
+      countParams.push(req.branchId);
+      dataParams.push(req.branchId);
+    }
 
     // Add date filter conditions dynamically
     if (start_date) {

@@ -3680,6 +3680,222 @@ export const sendSettledTickets = async (req, res, next) => {
   }
 };
 
+// send overdue (3) pawning tickets
+export const sendOverdueTickets = async (req, res, next) => {
+  try {
+    const { product, start_date, end_date, nic, branchId } = req.query;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    // Initialize parameters arrays
+    let countParams = [];
+    let dataParams = [];
+
+    // Build base WHERE conditions for both count and data queries
+    let baseWhereConditions = "pt.Status = '3'";
+
+    // Handle branch filtering
+    if (req.isHeadBranch === true && branchId) {
+      // Head branch filtering by specific branch
+      baseWhereConditions = "pt.Branch_idBranch = ? AND pt.Status = '3'";
+      countParams = [branchId];
+      dataParams = [branchId];
+    } else if (req.isHeadBranch === true) {
+      // Head branch - show all branches from company
+      // Fetch branch IDs from pool2 first (branch table is on pool2)
+      const [companyBranches] = await pool2.query(
+        "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
+        [req.companyId],
+      );
+
+      if (companyBranches.length === 0) {
+        // No branches found, return empty result
+        return res.status(200).json({
+          success: true,
+          tickets: [],
+          pagination: {
+            currentPage: page,
+            totalPages: 0,
+            totalItems: 0,
+            itemsPerPage: limit,
+            hasNextPage: false,
+            hasPreviousPage: false,
+          },
+        });
+      }
+
+      const branchIds = companyBranches.map((b) => b.idBranch);
+      const placeholders = branchIds.map(() => "?").join(",");
+      baseWhereConditions = `pt.Status = '3' AND pt.Branch_idBranch IN (${placeholders})`;
+      countParams = [...branchIds];
+      dataParams = [...branchIds];
+    } else {
+      // Regular branch - only show tickets from this branch
+      baseWhereConditions = "pt.Branch_idBranch = ? AND pt.Status = '3'";
+      countParams = [req.branchId];
+      dataParams = [req.branchId];
+    }
+
+    // Add filter conditions dynamically
+    if (product) {
+      // Sanitize product name for LIKE query
+      const sanitizedProduct = `%${product.replace(/[%_\\]/g, "\\$&")}%`;
+      baseWhereConditions += " AND pp.Name LIKE ?";
+      countParams.push(sanitizedProduct);
+      dataParams.push(sanitizedProduct);
+    }
+
+    if (start_date) {
+      // Validate date format (YYYY-MM-DD)
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRegex.test(start_date)) {
+        return next(
+          errorHandler(400, "Invalid start_date format. Use YYYY-MM-DD"),
+        );
+      }
+      baseWhereConditions +=
+        " AND DATE(STR_TO_DATE(pt.Date_Time, '%Y-%m-%d %H:%i:%s')) >= ?";
+      countParams.push(start_date);
+      dataParams.push(start_date);
+    }
+
+    if (end_date) {
+      // Validate date format (YYYY-MM-DD)
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRegex.test(end_date)) {
+        return next(
+          errorHandler(400, "Invalid end_date format. Use YYYY-MM-DD"),
+        );
+      }
+      baseWhereConditions +=
+        " AND DATE(STR_TO_DATE(pt.Date_Time, '%Y-%m-%d %H:%i:%s')) <= ?";
+      countParams.push(end_date);
+      dataParams.push(end_date);
+    }
+
+    // Validate date range if both dates are provided
+    if (start_date && end_date) {
+      if (new Date(start_date) > new Date(end_date)) {
+        return next(errorHandler(400, "start_date cannot be after end_date"));
+      }
+    }
+
+    if (nic) {
+      // NIC search - first search in account center to get matching pawning customer IDs
+      const sanitizedNIC = nic.replace(/[^a-zA-Z0-9]/g, "");
+      const formattedNIC = formatSearchPattern(sanitizedNIC);
+
+      const [matchingAccCustomers] = await pool2.query(
+        `SELECT isPawningUserId FROM customer WHERE Nic LIKE ? AND isPawningUserId IS NOT NULL`,
+        [formattedNIC],
+      );
+
+      if (matchingAccCustomers.length === 0) {
+        return res.status(200).json({
+          success: true,
+          tickets: [],
+          pagination: { total: 0, page, limit, totalPages: 0 },
+        });
+      }
+
+      const pawningCusIds = matchingAccCustomers.map((c) => c.isPawningUserId);
+      const cusPlaceholders = pawningCusIds.map(() => "?").join(",");
+      baseWhereConditions += ` AND pt.Customer_idCustomer IN (${cusPlaceholders})`;
+      countParams.push(...pawningCusIds);
+      dataParams.push(...pawningCusIds);
+    }
+
+    // Build count query - no customer JOIN needed
+    const countQuery = `SELECT COUNT(*) AS total
+                        FROM pawning_ticket pt
+                 LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product 
+                       WHERE ${baseWhereConditions}`;
+
+    const paginationData = await getPaginationData(
+      countQuery,
+      countParams,
+      page,
+      limit,
+    );
+
+    // Build main data query - customer data fetched separately from pool2
+    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, 
+                        pt.Pawning_Advance_Amount, pt.Status, pt.Branch_idBranch, 
+                        pt.Customer_idCustomer, c.accountCenterCusId, pp.Name AS ProductName
+                 FROM pawning_ticket pt
+            LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
+            LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product
+                 WHERE ${baseWhereConditions}
+            ORDER BY pt.idPawning_Ticket DESC LIMIT ? OFFSET ?`;
+
+    dataParams.push(limit, offset);
+
+    const [tickets] = await pool.query(query, dataParams);
+
+    // Fetch customer details from account center and branch names from pool2
+    if (tickets.length > 0) {
+      const accountCenterCusIds = [
+        ...new Set(tickets.map((t) => t.accountCenterCusId).filter((id) => id)),
+      ];
+      const branchIds = [
+        ...new Set(tickets.map((t) => t.Branch_idBranch).filter((id) => id)),
+      ];
+
+      // Fetch customer data from account center
+      let customerMap = new Map();
+      if (accountCenterCusIds.length > 0) {
+        const cusPlaceholders = accountCenterCusIds.map(() => "?").join(",");
+        const [accCustomers] = await pool2.query(
+          `SELECT idCustomer, First_Name, Last_Name, Nic, Contact_No FROM customer WHERE idCustomer IN (${cusPlaceholders})`,
+          accountCenterCusIds,
+        );
+        for (const cus of accCustomers) {
+          customerMap.set(cus.idCustomer, cus);
+        }
+      }
+
+      // Fetch branch names
+      let branchMap = new Map();
+      if (branchIds.length > 0) {
+        const placeholders = branchIds.map(() => "?").join(",");
+        const [branches] = await pool2.query(
+          `SELECT idBranch, Name FROM branch WHERE idBranch IN (${placeholders})`,
+          branchIds,
+        );
+        branchMap = new Map(branches.map((b) => [b.idBranch, b.Name]));
+      }
+
+      // Add customer and branch info to tickets
+      tickets.forEach((ticket) => {
+        const cusData = customerMap.get(ticket.accountCenterCusId);
+        ticket.Full_name = cusData
+          ? cusData.First_Name && cusData.Last_Name
+            ? `${cusData.First_Name} ${cusData.Last_Name}`
+            : cusData.First_Name || cusData.Last_Name || null
+          : null;
+        ticket.NIC = cusData?.Nic || null;
+        ticket.Mobile_No = cusData?.Contact_No || null;
+        ticket.BranchName = branchMap.get(ticket.Branch_idBranch) || null;
+
+        // Clean up internal fields
+        delete ticket.Branch_idBranch;
+        delete ticket.Customer_idCustomer;
+        delete ticket.accountCenterCusId;
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      tickets: tickets || [],
+      pagination: paginationData,
+    });
+  } catch (error) {
+    console.error("Error in sendOverdueTickets:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
 // send ticket which status '1' or '-1' for ticket print after ticket approve or ticket renewal (-1 after ticket approve and after renewal ticket goes to 1 which is active state)
 export const sendTicketsForPrinting = async (req, res, next) => {
   try {

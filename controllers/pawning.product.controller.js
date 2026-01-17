@@ -788,7 +788,7 @@ export const updatePawningProductById = async (req, res, next) => {
           prepareStageValue(plan.stage3StartDate),
           prepareStageValue(plan.stage3EndDate),
           prepareStageValue(plan.stage4StartDate),
-          prepareStageValue(plan.stage4EndDate) || "To maturity date",
+          prepareStageValue(plan.stage4EndDate),
           // Stage interests
           parseFloat(plan.stage1Interest) || 0,
           parseFloat(plan.stage2Interest) || 0,

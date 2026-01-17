@@ -291,7 +291,7 @@ export const createPawningTicket = async (req, res, next) => {
       productPlanData[0]?.idProduct_Plan
     ) {
       const [stagesData] = await pool.query(
-        "SELECT stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,interestApplicableMethod FROM product_plan WHERE idProduct_Plan = ?",
+        "SELECT stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,interestApplicableMethod,noOfStages FROM product_plan WHERE idProduct_Plan = ?",
         [productPlanData[0].idProduct_Plan],
       );
       // Defensive assignment and logging
@@ -327,7 +327,7 @@ export const createPawningTicket = async (req, res, next) => {
 
     // Insert into pawning_ticket table
     const [result] = await pool.query(
-      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_Date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount,Service_Charge_Type,Service_Charge_Rate,Early_Settlement_Charge_Balance,Additiona_Charges_Balance,Service_Charge_Balance,Late_Charge_Balance,Interest_Amount_Balance,Balance_Amount,Interest_Rate_Duration,stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,Status,service_charge_paid_by_customer,service_charge_paid_from_pawning_advance) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_Date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount,Service_Charge_Type,Service_Charge_Rate,Early_Settlement_Charge_Balance,Additiona_Charges_Balance,Service_Charge_Balance,Late_Charge_Balance,Interest_Amount_Balance,Balance_Amount,Interest_Rate_Duration,stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,Status,service_charge_paid_by_customer,service_charge_paid_from_pawning_advance,noOfStages) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [
         data.ticketData.ticketNo,
         data.ticketData.grantSeqNo,
@@ -373,6 +373,7 @@ export const createPawningTicket = async (req, res, next) => {
         status, // initial status (can be 0 or -1 based on company settings)
         data.ticketData.serviceChargePaidBy === "customer" ? 1 : null,
         data.ticketData.serviceChargePaidBy === "advance" ? 1 : null,
+        productPlanStagesData[0]?.noOfStages || 0,
       ],
     );
 

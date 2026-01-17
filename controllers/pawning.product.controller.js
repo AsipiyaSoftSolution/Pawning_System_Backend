@@ -1,6 +1,6 @@
 import { errorHandler } from "../utils/errorHandler.js";
 import { pool, pool2 } from "../utils/db.js";
-import { getPaginationData } from "../utils/helper.js";
+import { getPaginationData, getCompanyBranches } from "../utils/helper.js";
 
 // Function to get user  data by userId and companyId to display last updated user info when fetching pawning product details
 const returnUserData = async (userId, companyId) => {
@@ -251,22 +251,41 @@ export const getPawningProducts = async (req, res, next) => {
     const page = parseInt(req.query.page) || 1; // Default to page 1
     const limit = parseInt(req.query.limit) || 10; // Default to 10
     const offset = (page - 1) * limit;
-    //console.log("params of get pawning products", req.query);
-    // console.log("page", page, "limit", limit, "offset", offset);
+    const { branchId } = req.query;
+
+    // Build WHERE conditions based on branch access
+    let whereCondition = "";
+    let queryParams = [];
+
+    if (req.isHeadBranch) {
+      if (branchId) {
+        // Head branch viewing a specific branch
+        whereCondition = "Branch_idBranch = ?";
+        queryParams.push(branchId);
+      } else {
+        // Head branch viewing all company branches
+        const branches = await getCompanyBranches(req.companyId);
+        whereCondition = "Branch_idBranch IN (?)";
+        queryParams.push(branches);
+      }
+    } else {
+      // Regular branch - only their own data
+      whereCondition = "Branch_idBranch = ?";
+      queryParams.push(req.branchId);
+    }
 
     const paginationData = await getPaginationData(
-      "SELECT COUNT(*) AS total FROM pawning_product WHERE Branch_idBranch = ?",
-      [req.branchId],
+      `SELECT COUNT(*) AS total FROM pawning_product WHERE ${whereCondition}`,
+      queryParams,
       page,
       limit,
     );
 
     let pawningProducts;
     [pawningProducts] = await pool.query(
-      `SELECT idPawning_Product,Name,Interest_Method,Service_Charge,Early_Settlement_Charge,Late_Charge_Status FROM pawning_product WHERE Branch_idBranch = ? LIMIT ? OFFSET ?`,
-      [req.branchId, limit, offset],
+      `SELECT idPawning_Product, Name, Interest_Method, Service_Charge, Early_Settlement_Charge, Late_Charge_Status, Branch_idBranch FROM pawning_product WHERE ${whereCondition} LIMIT ? OFFSET ?`,
+      [...queryParams, limit, offset],
     );
-    //console.log("fetched pawning products:", pawningProducts);
 
     // find number of active tickets for each product
     for (let product of pawningProducts) {

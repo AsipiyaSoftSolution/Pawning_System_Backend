@@ -1793,7 +1793,7 @@ export const getTicketsPaymentsHistory = async (req, res, next) => {
     // Build main data query (without user JOIN - user is in pool2)
     // We fetch accountCenterCusId from pawning customer table to link with account center
     const dataQuery = `SELECT p.*, p.User AS User_idUser, pt.idPawning_Ticket, pt.Status AS Ticket_Status, 
-                              pt.Customer_idCustomer,pt.Net_Weight, c.accountCenterCusId
+                              pt.Customer_idCustomer,pt.Net_Weight, pt.SEQ_No, c.accountCenterCusId
                        FROM payment p
                        JOIN pawning_ticket pt ON p.Ticket_no COLLATE utf8mb4_unicode_ci = pt.Ticket_No COLLATE utf8mb4_unicode_ci
                        LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer

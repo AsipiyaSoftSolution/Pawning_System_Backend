@@ -34,6 +34,7 @@ app.use(
     origin(origin, cb) {
       if (!origin) return cb(null, true); // same-origin / server-to-server
       if (origin === CLIENT) return cb(null, true); // production frontend
+      if (origin === "https://pawning.asipiya.com") return cb(null, true); // production frontend (asipiya.com)
       if (
         origin === "http://localhost:5173" ||
         origin === "http://127.0.0.1:5173"

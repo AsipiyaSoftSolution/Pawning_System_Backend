@@ -2,6 +2,7 @@ import { errorHandler } from "../utils/errorHandler.js";
 import { pool, pool2 } from "../utils/db.js";
 import { getPaginationData } from "../utils/helper.js";
 import { formatSearchPattern } from "../utils/helper.js";
+import { getCompanyBranches } from "../utils/helper.js";
 import { createPawningTicketLogOnAdditionalCharge } from "../utils/pawning.ticket.logs.js";
 
 // Search tickets by ticket number, customer NIC, or customer name with pagination
@@ -13,15 +14,106 @@ export const searchByTickerNumberCustomerNICOrName = async (req, res, next) => {
     }
 
     const searchPattern = formatSearchPattern(searchTerm); // Format the search term for SQL LIKE query
+    const sanitizedSearch = searchTerm.replace(/[^a-zA-Z0-9]/g, ""); // For NIC search clean up
+    const formattedNIC = formatSearchPattern(sanitizedSearch);
 
-    const [result] = await pool.query(
-      "SELECT pt.idPawning_Ticket, pt.Ticket_No, c.Full_name, c.NIC FROM pawning_ticket pt JOIN customer c on pt.Customer_idCustomer = c.idCustomer WHERE (pt.Ticket_No LIKE ? OR c.NIC LIKE ? OR c.First_Name LIKE ?) AND pt.Branch_idBranch = ? AND pt.Status != '-1' AND pt.Status IS NOT NULL",
-      [searchPattern, searchPattern, searchPattern, req.branchId],
+    // Step 1: Search for matching customers in Account Center (pool2)
+    // Note: Schema doesn't have Full_name, only First_Name and Last_Name
+    const [matchingCustomers] = await pool2.query(
+      `SELECT isPawningUserId, First_Name, Last_Name, Nic 
+       FROM customer 
+       WHERE (Nic LIKE ? OR First_Name LIKE ? OR Last_Name LIKE ?) 
+       AND isPawningUserId IS NOT NULL`,
+      [formattedNIC, searchPattern, searchPattern],
     );
 
-    if (result.length === 0) {
-      return next(errorHandler(404, "No matching tickets found"));
+    const pawningCustomerIds = matchingCustomers.map((c) => c.isPawningUserId);
+
+    // Step 2: Search for tickets in Pawning DB (pool)
+    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Customer_idCustomer, pt.Status 
+                 FROM pawning_ticket pt 
+                 WHERE pt.Branch_idBranch = ? AND pt.Status != '-1' AND pt.Status IS NOT NULL`;
+
+    let queryParams = [req.branchId];
+    let whereConditions = [];
+
+    // Condition 1: Match Ticket Number
+    whereConditions.push("pt.Ticket_No LIKE ?");
+    queryParams.push(searchPattern);
+
+    // Condition 2: Match Customer IDs (from Step 1)
+    if (pawningCustomerIds.length > 0) {
+      const placeholders = pawningCustomerIds.map(() => "?").join(",");
+      whereConditions.push(`pt.Customer_idCustomer IN (${placeholders})`);
+      queryParams.push(...pawningCustomerIds);
     }
+
+    // Combine conditions with OR
+    if (whereConditions.length > 0) {
+      query += ` AND (${whereConditions.join(" OR ")})`;
+    }
+
+    const [tickets] = await pool.query(query, queryParams);
+
+    if (tickets.length === 0) {
+      return res.status(200).json({
+        success: true,
+        ticketSearchResults: [],
+      });
+    }
+
+    // Step 3: Fetch Customer Details from pool2
+    const uniqueCustomerIds = [
+      ...new Set(tickets.map((t) => t.Customer_idCustomer)),
+    ];
+
+    // Get accountCenterCusId from pawning DB
+    const [pawningCustomers] = await pool.query(
+      `SELECT idCustomer, accountCenterCusId FROM customer WHERE idCustomer IN (?)`,
+      [uniqueCustomerIds],
+    );
+
+    const accCenterCusIds = pawningCustomers
+      .map((c) => c.accountCenterCusId)
+      .filter((id) => id);
+    let customerMap = {};
+
+    if (accCenterCusIds.length > 0) {
+      // Fetch details from pool2 - using First_Name, Last_Name
+      const [accDetails] = await pool2.query(
+        `SELECT idCustomer, Nic, First_Name, Last_Name FROM customer WHERE idCustomer IN (?)`,
+        [accCenterCusIds],
+      );
+
+      const accMap = {};
+      accDetails.forEach((c) => {
+        accMap[c.idCustomer] = c;
+      });
+
+      pawningCustomers.forEach((pc) => {
+        if (pc.accountCenterCusId && accMap[pc.accountCenterCusId]) {
+          customerMap[pc.idCustomer] = accMap[pc.accountCenterCusId];
+        }
+      });
+    }
+
+    // Step 4: Format Response
+    const result = tickets.map((t) => {
+      const cus = customerMap[t.Customer_idCustomer] || {};
+      const firstName = cus.First_Name || "";
+      const lastName = cus.Last_Name || "";
+      const fullName =
+        firstName && lastName
+          ? `${firstName} ${lastName}`
+          : firstName || lastName || "Unknown";
+
+      return {
+        idPawning_Ticket: t.idPawning_Ticket,
+        Ticket_No: t.Ticket_No,
+        Full_name: fullName,
+        NIC: cus.Nic || "",
+      };
+    });
 
     res.status(200).json({
       success: true,
@@ -49,7 +141,7 @@ export const getTicketDataById = async (req, res, next) => {
 
     //fetch ticket initial data
     [ticketData] = await pool.query(
-      "SELECT idPawning_Ticket, Ticket_No,Pawning_Product_idPawning_Product,Period,Date_Time,Status,Maturity_date,Pawning_Advance_Amount,Customer_idCustomer,Gross_Weight,Net_Weight,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,User_idUser,Note,Interest_apply_on,Period_Type,SEQ_No FROM pawning_ticket WHERE idPawning_Ticket = ? AND  Branch_idBranch = ?",
+      "SELECT idPawning_Ticket, Ticket_No,Pawning_Product_idPawning_Product,Period,Date_Time,Status,Maturity_date,Pawning_Advance_Amount,Customer_idCustomer,Gross_Weight,Net_Weight,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,User_idUser,Note,Interest_apply_on,Period_Type,SEQ_No,renewReqStatus FROM pawning_ticket WHERE idPawning_Ticket = ? AND  Branch_idBranch = ?",
       [ticketId, req.branchId],
     );
 
@@ -104,18 +196,13 @@ export const getTicketDataById = async (req, res, next) => {
     delete ticketData[0].User_idUser; // remove User_idUser from ticket data
 
     // fetch customer data for the ticket
-    /*
-    [customerData] = await pool.query(
-      "SELECT idCustomer,Full_name,Risk_Level,Mobile_No FROM customer WHERE idCustomer = ? ",
-      [ticketData[0].Customer_idCustomer]
-    );*/
-
-    [customerData] = await pool.query(
-      "SELECT c.idCustomer, c.Full_name, c.Risk_Level, c.Mobile_No, cd.Document_Name, cd.Path FROM customer c LEFT JOIN customer_documents cd ON c.idCustomer = cd.Customer_idCustomer WHERE c.idCustomer = ? AND c.Branch_idBranch = ?",
-      [ticketData[0].Customer_idCustomer, req.branchId],
+    // First get accountCenterCusId from pawning DB
+    const [pawningCustomer] = await pool.query(
+      "SELECT idCustomer, accountCenterCusId FROM customer WHERE idCustomer = ?",
+      [ticketData[0].Customer_idCustomer],
     );
 
-    if (!customerData || customerData.length === 0) {
+    if (pawningCustomer.length === 0) {
       return next(
         errorHandler(
           404,
@@ -125,21 +212,51 @@ export const getTicketDataById = async (req, res, next) => {
       );
     }
 
-    // Collapse potential multiple rows (due to LEFT JOIN) into a single customer object with documents array
-    const baseCustomerRow = customerData[0];
+    // Fetch customer details from Account Center (pool2)
+    // Schema: First_Name, Last_Name, Nic, Contact_No, Customer_Risk_Level (No Full_name)
+    const [accCustomer] = await pool2.query(
+      "SELECT idCustomer, First_Name, Last_Name, Nic, Customer_Risk_Level, Contact_No FROM customer WHERE idCustomer = ?",
+      [pawningCustomer[0].accountCenterCusId],
+    );
+
+    let customerDetails = {};
+    if (accCustomer.length > 0) {
+      const acc = accCustomer[0];
+      const firstName = acc.First_Name || "";
+      const lastName = acc.Last_Name || "";
+      const fullName =
+        firstName && lastName
+          ? `${firstName} ${lastName}`
+          : firstName || lastName || "Unknown";
+
+      customerDetails = {
+        Full_name: fullName,
+        Risk_Level: acc.Customer_Risk_Level,
+        Mobile_No: acc.Contact_No,
+      };
+    } else {
+      customerDetails = {
+        Full_name: "Unknown",
+        Risk_Level: null,
+        Mobile_No: null,
+      };
+    }
+
+    // Fetch customer documents from Pawning DB (pool)
+    const [customerDocs] = await pool.query(
+      "SELECT Document_Name, Path FROM customer_documents WHERE Customer_idCustomer = ?",
+      [ticketData[0].Customer_idCustomer],
+    );
+
     const customer = {
-      idCustomer: baseCustomerRow.idCustomer,
-      Full_name: baseCustomerRow.Full_name,
-      Risk_Level: baseCustomerRow.Risk_Level,
-      Mobile_No: baseCustomerRow.Mobile_No,
-      documents: customerData
-        .filter(
-          (r) => r.Document_Name !== null && r.Document_Name !== undefined,
-        )
-        .map((r) => ({
-          Document_Name: r.Document_Name,
-          Path: r.Path,
-        })),
+      idCustomer: pawningCustomer[0].idCustomer,
+      Full_name: customerDetails.Full_name,
+      Risk_Level: customerDetails.Risk_Level,
+      Mobile_No: customerDetails.Mobile_No,
+      documents: customerDocs.map((r) => ({
+        Document_Name: r.Document_Name,
+        Path: r.Path,
+      })),
     };
     // fetch customer ative,inactive and overdue ticket counts and attach them to customer data
     const [ticketCounts] = await pool.query(
@@ -329,13 +446,14 @@ export const getTicketDataById = async (req, res, next) => {
       return isNaN(n) ? 0 : n;
     }
 
+    console.log(ticketCharges);
     let minimumRenewalAmount =
       safeParse(ticketCharges[0].Interest_Balance) +
       safeParse(ticketCharges[0].Service_Charge_Balance) +
       safeParse(ticketCharges[0].Late_Charges_Balance) +
       safeParse(ticketCharges[0].Additional_Charge_Balance);
 
-    console.log("Minimum Renewal Amount:", minimumRenewalAmount);
+    //console.log("Minimum Renewal Amount:", minimumRenewalAmount);
 
     ticketCharges[0].minimumRenewalAmount = minimumRenewalAmount;
 
@@ -354,6 +472,16 @@ export const getTicketDataById = async (req, res, next) => {
         ticketCharges: ticketCharges[0] || {},
         paymentHistory,
         earlySettlementCharge,
+        isRenewReqEnabled:
+          ticketData[0].Maturity_date <
+            new Date().toISOString().split("T")[0] &&
+          ticketData[0].renewReqStatus === null,
+        canRenew:
+          ticketData[0].Maturity_date <
+            new Date().toISOString().split("T")[0] &&
+          ticketData[0].renewReqStatus === 2,
+        renewState:
+          ticketData[0].Maturity_date < new Date().toISOString().split("T")[0],
       },
     });
   } catch (error) {
@@ -1585,12 +1713,33 @@ export const getTicketsPaymentsHistory = async (req, res, next) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
-    const { start_date, end_date } = req.query;
+    const { start_date, end_date, branchId } = req.query;
 
     // Build base WHERE conditions
-    let baseWhereConditions = "pt.Branch_idBranch = ?";
-    let countParams = [req.branchId];
-    let dataParams = [req.branchId];
+    let baseWhereConditions = "";
+    let countParams = [];
+    let dataParams = [];
+
+    if (req.isHeadBranch) {
+      console.log("Head Branch");
+      if (branchId) {
+        // Head branch viewing a specific branch
+        baseWhereConditions = "pt.Branch_idBranch = ?";
+        countParams.push(branchId);
+        dataParams.push(branchId);
+      } else {
+        // Head branch viewing all company branches
+        const branches = await getCompanyBranches(req.companyId);
+        baseWhereConditions = "pt.Branch_idBranch IN (?)";
+        countParams.push(branches);
+        dataParams.push(branches);
+      }
+    } else {
+      // Regular branch - only their own data
+      baseWhereConditions = "pt.Branch_idBranch = ?";
+      countParams.push(req.branchId);
+      dataParams.push(req.branchId);
+    }
 
     // Add date filter conditions dynamically
     if (start_date) {
@@ -1642,8 +1791,9 @@ export const getTicketsPaymentsHistory = async (req, res, next) => {
     );
 
     // Build main data query (without user JOIN - user is in pool2)
+    // We fetch accountCenterCusId from pawning customer table to link with account center
     const dataQuery = `SELECT p.*, p.User AS User_idUser, pt.idPawning_Ticket, pt.Status AS Ticket_Status, 
-                              c.Full_name AS customerName, c.NIC AS customerNIC, c.Mobile_No AS customerMobile
+                              pt.Customer_idCustomer,pt.Net_Weight, pt.SEQ_No, c.accountCenterCusId
                        FROM payment p
                        JOIN pawning_ticket pt ON p.Ticket_no COLLATE utf8mb4_unicode_ci = pt.Ticket_No COLLATE utf8mb4_unicode_ci
                        LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
@@ -1654,6 +1804,51 @@ export const getTicketsPaymentsHistory = async (req, res, next) => {
     dataParams.push(limit, offset);
 
     const [payments] = await pool.query(dataQuery, dataParams);
+
+    // Fetch customer details from account center
+    if (payments.length > 0) {
+      const accountCenterCusIds = [
+        ...new Set(
+          payments.map((p) => p.accountCenterCusId).filter((id) => id),
+        ),
+      ];
+
+      let customerMap = {};
+      if (accountCenterCusIds.length > 0) {
+        // Schema: First_Name, Last_Name, Nic, Contact_No (No Full_Name)
+        const [accCustomers] = await pool2.query(
+          `SELECT idCustomer, Nic, First_Name, Last_Name, Contact_No FROM customer WHERE idCustomer IN (?)`,
+          [accountCenterCusIds],
+        );
+
+        accCustomers.forEach((c) => {
+          const firstName = c.First_Name || "";
+          const lastName = c.Last_Name || "";
+          const fullName =
+            firstName && lastName
+              ? `${firstName} ${lastName}`
+              : firstName || lastName || "Unknown";
+
+          customerMap[c.idCustomer] = {
+            name: fullName,
+            nic: c.Nic,
+            mobile: c.Contact_No,
+          };
+        });
+      }
+
+      // Attach customer details to payments
+      payments.forEach((payment) => {
+        const cus = customerMap[payment.accountCenterCusId] || {};
+        payment.customerName = cus.name || "Unknown";
+        payment.customerNIC = cus.nic || null;
+        payment.customerMobile = cus.mobile || null;
+
+        // Cleanup internal fields
+        delete payment.Customer_idCustomer;
+        delete payment.accountCenterCusId;
+      });
+    }
 
     // Fetch officer names from pool2 for each payment
     for (let payment of payments) {
@@ -1676,6 +1871,200 @@ export const getTicketsPaymentsHistory = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Error fetching ticket payment history:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// req access for pawning ticket renew
+export const reqAccessForTicketRenew = async (req, res, next) => {
+  try {
+    const ticketId = req.params.ticketId;
+
+    const [ticketData] = await pool.query(
+      "SELECT renewReqStatus FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+      [ticketId, req.branchId],
+    );
+
+    if (!ticketData || ticketData.length === 0) {
+      return next(errorHandler(404, "Ticket not found"));
+    }
+
+    if (ticketData[0].renewReqStatus === 1) {
+      return next(errorHandler(400, "Ticket renewal request already pending"));
+    }
+
+    if (ticketData[0].renewReqStatus === 2) {
+      return next(errorHandler(400, "Ticket renewal request already approved"));
+    }
+
+    if (ticketData[0].renewReqStatus === 3) {
+      return next(errorHandler(400, "Ticket renewal request already rejected"));
+    }
+
+    const [updateReqStatus] = await pool.query(
+      "UPDATE pawning_ticket SET renewReqStatus = 1, renewal_req_created_at = NOW(), renewal_req_created_userId = ? WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+      [req.userId, ticketId, req.branchId],
+    );
+
+    if (!updateReqStatus || updateReqStatus.length === 0) {
+      return next(errorHandler(404, "Ticket not found"));
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Ticket renewal request sent successfully",
+    });
+  } catch (error) {
+    console.log("Error in request access for ticket renewal", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// send req of ticket renewal for approval
+export const sendReqsOfTicketRenewalForApproval = async (req, res, next) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+    const search = req.query.search || "";
+    const dateFrom = req.query.dateFrom;
+    const dateTo = req.query.dateTo;
+    const status = req.query.status || "";
+
+    // Build WHERE conditions - only filter by status if provided, otherwise return all (1, 2, 3)
+    let whereConditions = "Branch_idBranch = ? AND renewReqStatus IS NOT NULL";
+    let params = [req.branchId];
+
+    // Add status filter only if provided
+    if (status) {
+      whereConditions += " AND renewReqStatus = ?";
+      params.push(parseInt(status));
+    }
+
+    // Add search filter for Ticket_No
+    if (search) {
+      whereConditions += " AND Ticket_No LIKE ?";
+      params.push(`%${search}%`);
+    }
+
+    // Add date range filter for renewal_req_created_at
+    if (dateFrom) {
+      whereConditions += " AND DATE(renewal_req_created_at) >= ?";
+      params.push(dateFrom);
+    }
+
+    if (dateTo) {
+      whereConditions += " AND DATE(renewal_req_created_at) <= ?";
+      params.push(dateTo);
+    }
+
+    const paginationData = await getPaginationData(
+      `SELECT idPawning_Ticket FROM pawning_ticket WHERE ${whereConditions}`,
+      params,
+      page,
+      limit,
+    );
+
+    let tickets;
+    [tickets] = await pool.query(
+      `SELECT idPawning_Ticket, Ticket_No, Date_Time, renewal_req_created_at, renewReqStatus, renewal_req_created_userId, renewal_req_approved_at, renewal_req_approved_by FROM pawning_ticket WHERE ${whereConditions} ORDER BY renewal_req_created_at DESC LIMIT ? OFFSET ?`,
+      [...params, limit, offset],
+    );
+
+    for (const ticket of tickets) {
+      // fetch user full_name who created renewal request
+      if (ticket.renewal_req_created_userId) {
+        const [creatorData] = await pool2.query(
+          "SELECT full_name FROM user WHERE idUser = ?",
+          [ticket.renewal_req_created_userId],
+        );
+        ticket.createdByUserName = creatorData[0]?.full_name || null;
+      } else {
+        ticket.createdByUserName = null;
+      }
+
+      // fetch user full_name who approved/rejected (if status is 2 or 3)
+      if (
+        (ticket.renewReqStatus === 2 || ticket.renewReqStatus === 3) &&
+        ticket.renewal_req_approved_by
+      ) {
+        const [approverData] = await pool2.query(
+          "SELECT full_name FROM user WHERE idUser = ?",
+          [ticket.renewal_req_approved_by],
+        );
+        ticket.approvedByUserName = approverData[0]?.full_name || null;
+      } else {
+        ticket.approvedByUserName = null;
+      }
+
+      // Clean up internal IDs from response (optional - keep if you need them)
+      delete ticket.renewal_req_created_userId;
+      delete ticket.renewal_req_approved_by;
+    }
+
+    res.status(200).json({
+      success: true,
+      tickets: tickets || [],
+      pagination: paginationData,
+    });
+  } catch (error) {
+    console.log("Error in fetching ticket renewal requests", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// approve or reject req for ticket renewal
+export const approveOrRejectReqForTicketRenewal = async (req, res, next) => {
+  try {
+    const ticketId = req.params.ticketId;
+    const renewReqStatus = req.body.renewReqStatus;
+
+    // Validate renewReqStatus is either 2 (approved) or 3 (rejected)
+    if (![2, 3].includes(renewReqStatus)) {
+      return next(
+        errorHandler(
+          400,
+          "Invalid renew request status. Must be 2 (approve) or 3 (reject)",
+        ),
+      );
+    }
+
+    const [ticketData] = await pool.query(
+      "SELECT renewReqStatus FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+      [ticketId, req.branchId],
+    );
+
+    if (!ticketData || ticketData.length === 0) {
+      return next(errorHandler(404, "Ticket not found"));
+    }
+
+    if (ticketData[0].renewReqStatus !== 1) {
+      return next(
+        errorHandler(400, "Ticket renewal request is already processed"),
+      );
+    }
+
+    const [updateReqStatus] = await pool.query(
+      "UPDATE pawning_ticket SET renewReqStatus = ?, renewal_req_approved_by = ?, renewal_req_approved_at = NOW() WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+      [renewReqStatus, req.userId, ticketId, req.branchId],
+    );
+
+    if (!updateReqStatus || updateReqStatus.affectedRows === 0) {
+      return next(errorHandler(404, "Failed to update ticket renewal request"));
+    }
+
+    const message =
+      renewReqStatus === 2
+        ? "Ticket renewal request approved successfully"
+        : "Ticket renewal request rejected successfully";
+
+    res.status(200).json({
+      approvedStatus: renewReqStatus,
+      success: true,
+      message,
+    });
+  } catch (error) {
+    console.log("Error in approve/reject ticket renewal request", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

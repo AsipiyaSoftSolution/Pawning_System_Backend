@@ -1,6 +1,6 @@
 import { errorHandler } from "../utils/errorHandler.js";
 import { pool, pool2 } from "../utils/db.js";
-import { getPaginationData } from "../utils/helper.js";
+import { getPaginationData, getCompanyBranches } from "../utils/helper.js";
 
 // Function to get user  data by userId and companyId to display last updated user info when fetching pawning product details
 const returnUserData = async (userId, companyId) => {
@@ -251,22 +251,41 @@ export const getPawningProducts = async (req, res, next) => {
     const page = parseInt(req.query.page) || 1; // Default to page 1
     const limit = parseInt(req.query.limit) || 10; // Default to 10
     const offset = (page - 1) * limit;
-    //console.log("params of get pawning products", req.query);
-    // console.log("page", page, "limit", limit, "offset", offset);
+    const { branchId } = req.query;
+
+    // Build WHERE conditions based on branch access
+    let whereCondition = "";
+    let queryParams = [];
+
+    if (req.isHeadBranch) {
+      if (branchId) {
+        // Head branch viewing a specific branch
+        whereCondition = "Branch_idBranch = ?";
+        queryParams.push(branchId);
+      } else {
+        // Head branch viewing all company branches
+        const branches = await getCompanyBranches(req.companyId);
+        whereCondition = "Branch_idBranch IN (?)";
+        queryParams.push(branches);
+      }
+    } else {
+      // Regular branch - only their own data
+      whereCondition = "Branch_idBranch = ?";
+      queryParams.push(req.branchId);
+    }
 
     const paginationData = await getPaginationData(
-      "SELECT COUNT(*) AS total FROM pawning_product WHERE Branch_idBranch = ?",
-      [req.branchId],
+      `SELECT COUNT(*) AS total FROM pawning_product WHERE ${whereCondition}`,
+      queryParams,
       page,
       limit,
     );
 
     let pawningProducts;
     [pawningProducts] = await pool.query(
-      `SELECT idPawning_Product,Name,Interest_Method,Service_Charge,Early_Settlement_Charge,Late_Charge_Status FROM pawning_product WHERE Branch_idBranch = ? LIMIT ? OFFSET ?`,
-      [req.branchId, limit, offset],
+      `SELECT idPawning_Product, Name, Interest_Method, Service_Charge, Early_Settlement_Charge, Late_Charge_Status, Branch_idBranch FROM pawning_product WHERE ${whereCondition} LIMIT ? OFFSET ?`,
+      [...queryParams, limit, offset],
     );
-    //console.log("fetched pawning products:", pawningProducts);
 
     // find number of active tickets for each product
     for (let product of pawningProducts) {
@@ -336,7 +355,6 @@ export const createPawningProduct = async (req, res, next) => {
     if (!data) {
       return next(errorHandler(400, "Product data is required"));
     }
-    console.log("data received for creating pawning product:", data);
 
     // Ready the data of service charge for pawning product table
     const serviceCharge = data.serviceCharge?.status === "Active" ? 1 : 0;
@@ -466,7 +484,7 @@ export const createPawningProduct = async (req, res, next) => {
           ? data.amount22
           : plan.amount22Carat;
       const [productPlanResult] = await pool.query(
-        "INSERT INTO product_plan (Period_Type,Minimum_Period,Maximum_Period,Minimum_Amount,Maximum_Amount,Interest_type,Interest,Interest_Calculate_After,Service_Charge_Value_type,Service_Charge_Value,Early_Settlement_Charge_Value_type,Early_Settlement_Charge_Value,Late_Charge,Amount_For_22_Caratage,Last_Updated_User,Last_Updated_Time,Pawning_Product_idPawning_Product,stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,interestApplicableMethod,Week_Precentage_Amount_22_Caratage,Month1_Precentage_Amount_22_Caratage,Month3_Precentage_Amount_22_Caratage,Month6_Precentage_Amount_22_Caratage,Month9_Precentage_Amount_22_Caratage,Month12_Precentage_Amount_22_Caratage) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO product_plan (Period_Type,Minimum_Period,Maximum_Period,Minimum_Amount,Maximum_Amount,Interest_type,Interest,Interest_Calculate_After,Service_Charge_Value_type,Service_Charge_Value,Early_Settlement_Charge_Value_type,Early_Settlement_Charge_Value,Late_Charge,Amount_For_22_Caratage,Last_Updated_User,Last_Updated_Time,Pawning_Product_idPawning_Product,stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,interestApplicableMethod,Week_Precentage_Amount_22_Caratage,Month1_Precentage_Amount_22_Caratage,Month3_Precentage_Amount_22_Caratage,Month6_Precentage_Amount_22_Caratage,Month9_Precentage_Amount_22_Caratage,Month12_Precentage_Amount_22_Caratage,noOfStages) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [
           plan.periodType,
           plan.minPeriod,
@@ -506,6 +524,7 @@ export const createPawningProduct = async (req, res, next) => {
           data.percentages?.sixMonths || 0,
           data.percentages?.nineMonths || 0,
           data.percentages?.twelveMonths || 0,
+          plan.numberOfStages || 0,
         ],
       );
 
@@ -789,7 +808,7 @@ export const updatePawningProductById = async (req, res, next) => {
           prepareStageValue(plan.stage3StartDate),
           prepareStageValue(plan.stage3EndDate),
           prepareStageValue(plan.stage4StartDate),
-          prepareStageValue(plan.stage4EndDate) || "To maturity date",
+          prepareStageValue(plan.stage4EndDate),
           // Stage interests
           parseFloat(plan.stage1Interest) || 0,
           parseFloat(plan.stage2Interest) || 0,

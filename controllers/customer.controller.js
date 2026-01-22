@@ -22,37 +22,84 @@ const customerLog = async (idCustomer, date, type, Description, userId) => {
   }
 };
 
-// NIC edit
-export const createCustomer = async (req, res, next) => {
+// Helper function to get customer table's configured fields with their isRequired status
+async function getCustomerTableFields(companyId) {
   try {
-    const requiredFields = [
-      "First_Name",
-      "NIC",
-      "Address1",
-      "Mobile_No",
-      "Work_Place",
-    ];
-    const missingFields = requiredFields.filter(
-      (field) => !req.body.data[field],
+    const [companyCustomerFields] = await pool2.query(
+      "SELECT idCompanyCustomerField, CustomerField_idCustomerField, company_id, isRequired FROM company_customer_fields WHERE company_id = ?",
+      [companyId],
     );
 
-    // Validate required fields
-    if (missingFields.length > 0) {
-      return next(
-        errorHandler(
-          400,
-          `Missing required fields: ${missingFields.join(", ")}`,
-        ),
+    const [customerFields] = await pool2.query(
+      "SELECT idCustomerField, fieldName FROM customer_fields WHERE status = 1",
+    );
+
+    const configuredFields = [];
+
+    for (const field of customerFields) {
+      const companyCustomerField = companyCustomerFields.find(
+        (companyField) =>
+          companyField.CustomerField_idCustomerField === field.idCustomerField,
       );
+      if (companyCustomerField) {
+        configuredFields.push({
+          idCustomerField: field.idCustomerField,
+          fieldName: field.fieldName,
+          isRequired: companyCustomerField.isRequired === 1,
+        });
+      }
+    }
+
+    return configuredFields;
+  } catch (error) {
+    console.error("Error getting customer table fields:", error);
+    throw error;
+  }
+}
+
+// Create a new customer
+export const createCustomer = async (req, res, next) => {
+  // Get connections from both pools for transaction support
+  const connection = await pool.getConnection();
+  const connection2 = await pool2.getConnection();
+
+  try {
+    const { customerData } = req.body;
+
+    // Support both old format (req.body.data) and new format (req.body.customerData)
+    const data = customerData || req.body.data;
+
+    if (!data) {
+      connection.release();
+      connection2.release();
+      return next(errorHandler(400, "Customer data is required"));
+    }
+
+    // Get configured fields for this company
+    const customerTableFields = await getCustomerTableFields(req.companyId);
+
+    // Validate required fields are present
+    for (const field of customerTableFields) {
+      // Skip branch_id / company_id as they are set from req
+      if (field.fieldName === "branch_id" || field.fieldName === "company_id") {
+        continue;
+      }
+      if (field.isRequired && !data[field.fieldName]) {
+        connection.release();
+        connection2.release();
+        return next(errorHandler(400, `${field.fieldName} is required`));
+      }
     }
 
     // Check for existing customer with same NIC
-    const [existingCustomer] = await pool.query(
-      "SELECT 1 FROM customer WHERE NIC = ? AND Branch_idBranch = ? LIMIT 1",
-      [req.body.data.NIC, req.branchId],
+    const [existingCustomer] = await connection2.query(
+      "SELECT 1 FROM customer WHERE Nic = ? AND branch_id = ? LIMIT 1",
+      [data.Nic, req.branchId],
     );
 
     if (existingCustomer.length > 0) {
+      connection.release();
+      connection2.release();
       return next(
         errorHandler(
           409, // Server error code for conflict
@@ -61,85 +108,151 @@ export const createCustomer = async (req, res, next) => {
       );
     }
 
-    // Extract documents and other customer fields
-    const { documents, ...customerFields } = req.body.data;
+    // Extract documents from customer data
+    const { documents, ...customerFields } = data;
 
-    // Prepare customer data
-    const customerData = {
-      ...customerFields,
-      Branch_idBranch: req.branchId,
-      emp_id: req.userId,
-    };
+    // Fields to exclude from dynamic insertion (handled separately)
+    const excludedFields = [
+      "Customer_Group_idCustomer_Group", // Added later after creation
+      "created_at", // Use NOW()
+      "updated_at", // Use NOW()
+      "branch_id", // From req.branchId (different case)
+      "company_id", // From req.companyId
+      "emp_id", // From req.userId
+      "accountCenterCusId", // Will be updated after account center insertion
+    ];
 
-    // Insert customer record to the db
-    const [result] = await pool.query(
-      "INSERT INTO customer SET ?",
-      customerData,
-    );
+    // Build dynamic columns for account center customer
+    const accColumns = [];
+    const accValues = [];
+    const accPlaceholders = [];
 
-    if (!result.insertId) {
-      return next(errorHandler(500, "Failed to create customer record"));
+    for (const field of customerTableFields) {
+      // Skip excluded fields
+      if (excludedFields.includes(field.fieldName)) {
+        continue;
+      }
+
+      if (
+        customerFields[field.fieldName] !== undefined &&
+        customerFields[field.fieldName] !== null
+      ) {
+        accColumns.push(field.fieldName);
+        accValues.push(customerFields[field.fieldName]);
+        accPlaceholders.push("?");
+      }
     }
 
-    // Process documents
-    let fileUploadMessages = [];
-    if (Array.isArray(documents) && documents.length > 0) {
-      fileUploadMessages = await Promise.all(
-        documents.map(async (doc) => {
-          try {
-            if (!doc.file) {
-              return `No file provided for document Type ${doc.Document_Type}`;
-            }
+    // Start transactions on both connections
+    await connection.beginTransaction();
+    await connection2.beginTransaction();
 
-            if (
-              !req.company_documents?.some(
-                (d) => d.idDocument === doc.idDocument,
-              )
-            ) {
-              return `Invalid document type for id ${doc.idDocument}`;
-            }
-
-            const secureUrl = await uploadImage(doc.file);
-            if (!secureUrl) {
-              return `Failed to upload document id ${doc.idDocument}`;
-            }
-
-            const [docResult] = await pool.query(
-              "INSERT INTO customer_documents SET ?",
-              {
-                Customer_idCustomer: result.insertId,
-                Document_Name: doc.Document_Type,
-                Path: secureUrl,
-              },
-            );
-
-            return docResult.affectedRows > 0
-              ? `Document ${doc.Document_Type} uploaded successfully`
-              : `Failed to save document info for id ${doc.idDocument}`;
-          } catch (error) {
-            console.error(`Document upload error:`, error);
-            return `Error processing document ${doc.Document_Type}`;
-          }
-        }),
+    try {
+      // INSERT query for pawning customer
+      const [result] = await connection.query(
+        `INSERT INTO customer (Branch_idBranch, Customer_Number, created_at) VALUES (?, ?, ?)`,
+        [req.branchId, customerFields.cus_number, new Date()],
       );
+
+      const pawningCustomerId = result.insertId;
+
+      // Add system fields for account center customer including isPawningUserId
+      accColumns.push("branch_id", "isPawningUserId", "created_at");
+      accValues.push(req.branchId, pawningCustomerId, new Date());
+      accPlaceholders.push("?", "?", "?");
+
+      // Build and execute dynamic INSERT query for account center customer
+      const accInsertQuery = `INSERT INTO customer (${accColumns.join(", ")}) VALUES (${accPlaceholders.join(", ")})`;
+      const [accInsertRes] = await connection2.query(accInsertQuery, accValues);
+
+      if (!accInsertRes.insertId) {
+        throw new Error("Failed to create customer in account center");
+      }
+
+      const accountCenterCusId = accInsertRes.insertId;
+
+      // Update pawning customer with accountCenterCusId
+      await connection.query(
+        "UPDATE customer SET accountCenterCusId = ? WHERE idCustomer = ?",
+        [accountCenterCusId, pawningCustomerId],
+      );
+
+      // Log the creation (using connection for transaction)
+      await connection.query(
+        "INSERT INTO customer_log (Customer_idCustomer, Date_Time, Type, Description, User_idUser) VALUES (?, ?, ?, ?, ?)",
+        [
+          pawningCustomerId,
+          new Date(),
+          "CREATE",
+          "Customer created",
+          req.userId,
+        ],
+      );
+
+      // Commit both transactions
+      await connection.commit();
+      await connection2.commit();
+
+      // Process documents (after commit, since document upload is external)
+      let fileUploadMessages = [];
+      if (Array.isArray(documents) && documents.length > 0) {
+        fileUploadMessages = await Promise.all(
+          documents.map(async (doc) => {
+            try {
+              if (!doc.file) {
+                return `No file provided for document Type ${doc.Document_Type}`;
+              }
+
+              if (
+                !req.company_documents?.some(
+                  (d) => d.idDocument === doc.idDocument,
+                )
+              ) {
+                return `Invalid document type for id ${doc.idDocument}`;
+              }
+
+              const secureUrl = await uploadImage(doc.file);
+              if (!secureUrl) {
+                return `Failed to upload document id ${doc.idDocument}`;
+              }
+
+              const [docResult] = await pool.query(
+                "INSERT INTO customer_documents SET ?",
+                {
+                  Customer_idCustomer: pawningCustomerId,
+                  Document_Name: doc.Document_Type,
+                  Path: secureUrl,
+                },
+              );
+
+              return docResult.affectedRows > 0
+                ? `Document ${doc.Document_Type} uploaded successfully`
+                : `Failed to save document info for id ${doc.idDocument}`;
+            } catch (error) {
+              console.error(`Document upload error:`, error);
+              return `Error processing document ${doc.Document_Type}`;
+            }
+          }),
+        );
+      }
+
+      res.status(201).json({
+        success: true,
+        message: "Customer created successfully",
+      });
+    } catch (error) {
+      // Rollback both transactions on error
+      await connection.rollback();
+      await connection2.rollback();
+      throw error;
     }
-
-    // Log the creation
-    await customerLog(
-      result.insertId,
-      new Date(),
-      "CREATE",
-      "Customer created",
-      req.userId,
-    );
-
-    res.status(201).json({
-      success: true,
-      message: "Customer created successfully",
-    });
   } catch (error) {
     console.error("Error creating customer:", error);
     return next(errorHandler(500, "Internal Server Error"));
+  } finally {
+    // Always release connections
+    connection.release();
+    connection2.release();
   }
 };
 
@@ -226,61 +339,129 @@ export const getCustomerDataByNIC = async (req, res, next) => {
 
 export const getCustomersForTheBranch = async (req, res, next) => {
   try {
-    const branchId = req.branchId; // extract branchId from the request
+    const branchId = req.branchId;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
     const search = req.query.search || "";
-    let paginationData;
-    let customers;
 
     // Default to the current branch ID; if user is head branch, fetch all company branch IDs
     let branchIds = [branchId];
     if (req.isHeadBranch) {
-      // Get all branch IDs for the company
       const companyBranchIds = await getCompanyBranches(req.companyId);
       if (Array.isArray(companyBranchIds) && companyBranchIds.length > 0) {
         branchIds = companyBranchIds;
       }
     }
 
-    // Use `IN (?)` so it works for single branch or multiple branches
+    // Create branch placeholders for queries
+    const branchPlaceholders = branchIds.map(() => "?").join(",");
+
+    let paginationData;
+    let accountCenterCustomers;
+
+    // Only select essential fields for the customer list
+    const selectFields = `idCustomer, isPawningUserId, First_Name, Last_Name, Nic, Contact_No, created_at`;
+
+    // Search in account center (pool2) since customer details are stored there
     if (search) {
-      paginationData = await getPaginationData(
-        "SELECT COUNT(*) as total FROM customer WHERE Branch_idBranch IN (?) AND (First_Name LIKE ? OR NIC LIKE ? OR Mobile_No LIKE ? OR idCustomer LIKE ?)",
-        [branchIds, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`],
-        page,
-        limit,
+      // Count query for pagination - search in account center
+      const [countResult] = await pool2.query(
+        `SELECT COUNT(*) as total FROM customer 
+         WHERE branch_id IN (${branchPlaceholders}) 
+         AND isPawningUserId IS NOT NULL
+         AND (First_Name LIKE ? OR Nic LIKE ? OR Contact_No LIKE ? OR idCustomer LIKE ?)`,
+        [
+          ...branchIds,
+          `%${search}%`,
+          `%${search}%`,
+          `%${search}%`,
+          `%${search}%`,
+        ],
       );
 
-      // get customers for the branch(es) with search
-      [customers] = await pool.query(
-        "SELECT idCustomer,Full_Name,First_Name,NIC,Address1,Mobile_No,Work_Place,DOB,Status FROM customer WHERE Branch_idBranch IN (?) AND (First_Name LIKE ? OR NIC LIKE ? OR Mobile_No LIKE ? OR idCustomer LIKE ?) LIMIT ?, ?",
+      const total = countResult[0]?.total || 0;
+      paginationData = {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      };
+
+      // Fetch customers from account center with search (only essential fields)
+      [accountCenterCustomers] = await pool2.query(
+        `SELECT ${selectFields} FROM customer 
+         WHERE branch_id IN (${branchPlaceholders}) 
+         AND isPawningUserId IS NOT NULL
+         AND (First_Name LIKE ? OR Nic LIKE ? OR Contact_No LIKE ? OR idCustomer LIKE ?)
+         ORDER BY created_at DESC
+         LIMIT ? OFFSET ?`,
         [
-          branchIds,
+          ...branchIds,
           `%${search}%`,
           `%${search}%`,
           `%${search}%`,
           `%${search}%`,
-          offset,
           limit,
+          offset,
         ],
       );
     } else {
-      // get pagination data for branch(es)
-      paginationData = await getPaginationData(
-        "SELECT COUNT(*) as total FROM customer WHERE Branch_idBranch IN (?)",
-        [branchIds],
-        page,
-        limit,
+      // Count query for pagination - no search
+      const [countResult] = await pool2.query(
+        `SELECT COUNT(*) as total FROM customer 
+         WHERE branch_id IN (${branchPlaceholders}) 
+         AND isPawningUserId IS NOT NULL`,
+        branchIds,
       );
 
-      // get customers for the branch(es)
-      [customers] = await pool.query(
-        "SELECT idCustomer,First_Name,Full_Name,NIC,Address1,Mobile_No,Work_Place,DOB,Status FROM customer WHERE Branch_idBranch IN (?) LIMIT ?, ?",
-        [branchIds, offset, limit],
+      const total = countResult[0]?.total || 0;
+      paginationData = {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      };
+
+      // Fetch customers from account center without search (only essential fields)
+      [accountCenterCustomers] = await pool2.query(
+        `SELECT ${selectFields} FROM customer 
+         WHERE branch_id IN (${branchPlaceholders}) 
+         AND isPawningUserId IS NOT NULL
+         ORDER BY created_at DESC
+         LIMIT ? OFFSET ?`,
+        [...branchIds, limit, offset],
       );
     }
+
+    // Get pawning customer IDs to fetch Customer_Number from pawning DB
+    const pawningCustomerIds = accountCenterCustomers
+      .map((c) => c.isPawningUserId)
+      .filter((id) => id !== null && id !== undefined);
+
+    // Fetch Customer_Number from pawning database
+    let customerNumberMap = new Map();
+    if (pawningCustomerIds.length > 0) {
+      const placeholders = pawningCustomerIds.map(() => "?").join(",");
+      const [pawningCustomers] = await pool.query(
+        `SELECT idCustomer, Customer_Number FROM customer WHERE idCustomer IN (${placeholders})`,
+        pawningCustomerIds,
+      );
+      customerNumberMap = new Map(
+        pawningCustomers.map((c) => [c.idCustomer, c.Customer_Number]),
+      );
+    }
+
+    // Map account center customer data to response format
+    const customers = accountCenterCustomers.map((accCus) => ({
+      idCustomer: accCus.isPawningUserId, // Primary ID (pawning customer ID for compatibility)
+      accountCenterCusId: accCus.idCustomer,
+      First_Name: accCus.First_Name,
+      Last_Name: accCus.Last_Name,
+      Nic: accCus.Nic,
+      Contact_No: accCus.Contact_No,
+      Customer_Number: customerNumberMap.get(accCus.isPawningUserId) || null,
+    }));
 
     res.status(200).json({
       message: "Customers fetched successfully",
@@ -295,53 +476,72 @@ export const getCustomersForTheBranch = async (req, res, next) => {
 
 export const getCustomerById = async (req, res, next) => {
   try {
-    const customerId = req.params.id || req.params.customerId; // extract customerId from the request
-    const branchId = req.branchId; // extract branchId from the request
+    const customerId = req.params.id || req.params.customerId;
+    const branchId = req.branchId;
 
     if (!customerId) {
       return next(errorHandler(400, "Customer ID is required"));
     }
 
-    let customer;
-    let customerQuery;
-    let customerQueryParams;
+    let pawningCustomerQuery;
+    let pawningCustomerQueryParams;
 
     if (req.isHeadBranch === true) {
-      customerQuery = "SELECT * FROM customer WHERE idCustomer = ?";
-      customerQueryParams = [customerId];
+      pawningCustomerQuery = "SELECT * FROM customer WHERE idCustomer = ?";
+      pawningCustomerQueryParams = [customerId];
     } else {
-      customerQuery =
+      pawningCustomerQuery =
         "SELECT * FROM customer WHERE idCustomer = ? AND Branch_idBranch = ?";
-      customerQueryParams = [customerId, branchId];
+      pawningCustomerQueryParams = [customerId, branchId];
     }
 
-    // Fetch customer all data by the customer Id and the branch Id
-    const [customerResult] = await pool.query(
-      customerQuery,
-      customerQueryParams,
+    // Fetch pawning customer data
+    const [pawningCustomerResult] = await pool.query(
+      pawningCustomerQuery,
+      pawningCustomerQueryParams,
     );
 
-    if (customerResult.length === 0) {
+    if (pawningCustomerResult.length === 0) {
       return next(errorHandler(404, "Customer not found"));
     }
 
-    customer = customerResult[0] || {};
+    const pawningCustomer = pawningCustomerResult[0];
 
-    // Then Fetch customer documents
+    // Fetch account center customer data using accountCenterCusId
+    let accountCenterCustomer = null;
+    if (pawningCustomer.accountCenterCusId) {
+      const [accCenterResult] = await pool2.query(
+        "SELECT * FROM customer WHERE idCustomer = ?",
+        [pawningCustomer.accountCenterCusId],
+      );
+      accountCenterCustomer = accCenterResult[0] || null;
+    }
+
+    // Fetch customer documents from pawning DB
     const [documents] = await pool.query(
       "SELECT * FROM customer_documents WHERE Customer_idCustomer = ?",
       [customerId],
     );
 
-    customer.documents = documents || [];
-
     // Fetch the branch name and code
     const [branchRows] = await pool2.query(
-      " SELECT Name, Branch_Code FROM branch WHERE idBranch = ? ",
-      [customer.Branch_idBranch],
+      "SELECT Name, Branch_Code FROM branch WHERE idBranch = ?",
+      [pawningCustomer.Branch_idBranch],
     );
 
-    customer.branchInfo = branchRows[0] || {};
+    // Merge data from both databases using spread operator
+    const customer = {
+      // Spread all account center fields first (if available)
+      ...(accountCenterCustomer || {}),
+      // Override/add specific fields
+      idCustomer: pawningCustomer.idCustomer, // Primary ID (pawning customer ID)
+      accountCenterCusId: pawningCustomer.accountCenterCusId,
+      // Pawning specific data as nested object
+      pawningData: pawningCustomer,
+      // Additional data
+      documents: documents || [],
+      branchInfo: branchRows[0] || {},
+    };
 
     res.status(200).json({
       message: "Customer fetched successfully",
@@ -354,145 +554,219 @@ export const getCustomerById = async (req, res, next) => {
 };
 
 export const editCustomer = async (req, res, next) => {
+  // Get connections from both pools for transaction support
+  const connection = await pool.getConnection();
+  const connection2 = await pool2.getConnection();
+
   try {
     const customerId = req.params.id || req.params.customerId;
     if (!customerId) {
+      connection.release();
+      connection2.release();
       return next(errorHandler(400, "Customer ID is required"));
     }
 
-    // Filter out undefined values and create update object
-    const updateFields = {};
-    const fields = [
-      "Title",
-      "First_Name",
-      "Full_name",
-      "NIC",
-      "DOB",
-      "Address1",
-      "Address2",
-      "Address3",
-      "Postal_Address01",
-      "Postal_Address02",
-      "Postal_Address03",
-      "Mobile_No",
-      "Occupation",
-      "Work_Place",
-      "Phone_No",
-      "Phone_No2",
-      "Status",
-      "Behaviour_Status",
-      "Note",
+    // Support both old format (req.body.data) and new format (req.body.customerData)
+    const data = req.body.customerData || req.body.data;
+
+    if (!data) {
+      connection.release();
+      connection2.release();
+      return next(errorHandler(400, "Customer data is required"));
+    }
+
+    // Get pawning customer to verify existence and get accountCenterCusId
+    const [pawningCustomerResult] = await connection.query(
+      "SELECT idCustomer, accountCenterCusId, Branch_idBranch FROM customer WHERE idCustomer = ? AND Branch_idBranch = ?",
+      [customerId, req.branchId],
+    );
+
+    if (pawningCustomerResult.length === 0) {
+      connection.release();
+      connection2.release();
+      return next(errorHandler(404, "Customer not found"));
+    }
+
+    const pawningCustomer = pawningCustomerResult[0];
+    const accountCenterCusId = pawningCustomer.accountCenterCusId;
+
+    // Get configured fields for this company
+    const customerTableFields = await getCustomerTableFields(req.companyId);
+
+    // Extract documents from customer data
+    const { documents, ...customerFields } = data;
+
+    // Fields to exclude from dynamic update (handled separately or system-managed)
+    const excludedFields = [
+      "Customer_Group_idCustomer_Group",
+      "created_at",
+      "updated_at",
+      "branch_id",
+      "company_id",
+      "emp_id",
+      "accountCenterCusId",
+      "isPawningUserId",
+      "cus_number", // Customer number should not be changed
     ];
 
-    fields.forEach((field) => {
-      if (req.body.data[field] !== undefined) {
-        updateFields[field] = req.body.data[field];
+    // Build dynamic update for account center customer
+    const accUpdateFields = {};
+
+    for (const field of customerTableFields) {
+      // Skip excluded fields
+      if (excludedFields.includes(field.fieldName)) {
+        continue;
       }
-    });
+
+      if (
+        customerFields[field.fieldName] !== undefined &&
+        customerFields[field.fieldName] !== null
+      ) {
+        accUpdateFields[field.fieldName] = customerFields[field.fieldName];
+      }
+    }
 
     // If no fields to update and no documents provided, return an error
-    if (Object.keys(updateFields).length === 0 && !req.body.data.documents) {
+    if (Object.keys(accUpdateFields).length === 0 && !documents) {
+      connection.release();
+      connection2.release();
       return next(errorHandler(400, "No fields to update"));
     }
 
-    // Perform update if there are fields to update
-    if (Object.keys(updateFields).length > 0) {
-      const [result] = await pool.query(
-        "UPDATE customer SET ? WHERE idCustomer = ? AND Branch_idBranch = ?",
-        [updateFields, customerId, req.branchId],
+    // Start transactions on both connections
+    await connection.beginTransaction();
+    await connection2.beginTransaction();
+
+    try {
+      // Update pawning customer (only Customer_Number if provided)
+      if (customerFields.cus_number !== undefined) {
+        await connection.query(
+          "UPDATE customer SET Customer_Number = ? WHERE idCustomer = ?",
+          [customerFields.cus_number, customerId],
+        );
+      }
+
+      // Update account center customer if there are fields to update and accountCenterCusId exists
+      if (Object.keys(accUpdateFields).length > 0 && accountCenterCusId) {
+        const [accResult] = await connection2.query(
+          "UPDATE customer SET ? WHERE idCustomer = ?",
+          [accUpdateFields, accountCenterCusId],
+        );
+
+        if (accResult.affectedRows === 0) {
+          throw new Error("Failed to update customer in account center");
+        }
+      }
+
+      // Log the update (using connection for transaction)
+      await connection.query(
+        "INSERT INTO customer_log (Customer_idCustomer, Date_Time, Type, Description, User_idUser) VALUES (?, ?, ?, ?, ?)",
+        [customerId, new Date(), "UPDATE", "Customer updated", req.userId],
       );
 
-      if (result.affectedRows === 0) {
-        return next(errorHandler(404, "Customer not found or no changes made"));
+      // Commit both transactions
+      await connection.commit();
+      await connection2.commit();
+
+      // Handle document uploads (after commit, since document upload is external)
+      let fileUploadMessages = [];
+      if (documents && Array.isArray(documents)) {
+        const uploadPromises = documents.map(async (doc) => {
+          if (doc.isExisting === false && doc.originalId === undefined) {
+            if (!doc.file) {
+              return `No file provided for document Type ${doc.Document_Type}`;
+            }
+            if (
+              !req.company_documents?.some(
+                (d) => d.idDocument === doc.idDocument,
+              )
+            ) {
+              return `Invalid document type for id ${doc.idDocument}`;
+            }
+            try {
+              // Check if the user has an existing document of this type
+              const [existingDoc] = await pool.query(
+                "SELECT * FROM customer_documents WHERE Document_Name = ? AND Customer_idCustomer = ?",
+                [doc.Document_Type, customerId],
+              );
+              const secureUrl = await uploadImage(doc.file);
+              if (!secureUrl) {
+                return `Failed to upload document id ${doc.idDocument}`;
+              }
+              if (existingDoc.length > 0) {
+                // UPDATE the existing document
+                const [docResult] = await pool.query(
+                  "UPDATE customer_documents SET Path = ? WHERE idCustomer_Documents = ?",
+                  [secureUrl, existingDoc[0].idCustomer_Documents],
+                );
+                return docResult.affectedRows > 0
+                  ? `Document ${doc.Document_Type} updated successfully`
+                  : `Failed to update document info for id ${doc.idDocument}`;
+              } else {
+                // INSERT a new document
+                const [docResult] = await pool.query(
+                  "INSERT INTO customer_documents SET ?",
+                  {
+                    Customer_idCustomer: customerId,
+                    Document_Name: doc.Document_Type,
+                    Path: secureUrl,
+                  },
+                );
+                return docResult.affectedRows > 0
+                  ? `Document ${doc.Document_Type} uploaded successfully`
+                  : `Failed to save document info for id ${doc.idDocument}`;
+              }
+            } catch (error) {
+              console.error(`Document upload error:`, error);
+              return `Error processing document ${doc.Document_Type}`;
+            }
+          }
+          return null;
+        });
+        fileUploadMessages = (await Promise.all(uploadPromises)).filter(
+          Boolean,
+        );
       }
-    }
 
-    // Handle document uploads
-    let fileUploadMessages = [];
-    const { documents } = req.body.data;
+      // Get updated customer details from account center
+      let updatedCustomer = null;
+      if (accountCenterCusId) {
+        const [accCustomerRows] = await pool2.query(
+          "SELECT * FROM customer WHERE idCustomer = ?",
+          [accountCenterCusId],
+        );
+        updatedCustomer = accCustomerRows[0] || null;
+      }
 
-    if (documents && Array.isArray(documents)) {
-      const uploadPromises = documents.map(async (doc) => {
-        if (doc.isExisting === false && doc.originalId === undefined) {
-          if (!doc.file) {
-            return `No file provided for document Type ${doc.Document_Type}`;
-          }
-          if (
-            !req.company_documents.some((d) => d.idDocument === doc.idDocument)
-          ) {
-            return `Invalid document type for id ${doc.idDocument}`;
-          }
-          try {
-            // Check if the user has an existing document of this type
-            const [existingDoc] = await pool.query(
-              "SELECT * FROM customer_documents WHERE Document_Name = ? AND Customer_idCustomer = ?",
-              [doc.Document_Type, customerId],
-            );
-            const secureUrl = await uploadImage(doc.file);
-            if (!secureUrl) {
-              return `Failed to upload document id ${doc.idDocument}`;
+      res.status(200).json({
+        success: true,
+        message:
+          fileUploadMessages.length > 0
+            ? `Customer updated successfully. Document results: ${fileUploadMessages.join(
+                " ; ",
+              )}`
+            : "Customer updated successfully.",
+        customer: updatedCustomer
+          ? {
+              ...updatedCustomer,
+              idCustomer: customerId,
+              accountCenterCusId: accountCenterCusId,
             }
-            if (existingDoc.length > 0) {
-              // UPDATE the existing document
-              const [docResult] = await pool.query(
-                "UPDATE customer_documents SET Path = ? WHERE idCustomer_Documents = ?",
-                [secureUrl, existingDoc[0].idCustomer_Documents],
-              );
-              return docResult.affectedRows > 0
-                ? `Document ${doc.Document_Type} updated successfully`
-                : `Failed to update document info for id ${doc.idDocument}`;
-            } else {
-              // INSERT a new document
-              const [docResult] = await pool.query(
-                "INSERT INTO customer_documents SET ?",
-                {
-                  Customer_idCustomer: customerId,
-                  Document_Name: doc.Document_Type,
-                  Path: secureUrl,
-                },
-              );
-              return docResult.affectedRows > 0
-                ? `Document ${doc.Document_Type} uploaded successfully`
-                : `Failed to save document info for id ${doc.idDocument}`;
-            }
-          } catch (error) {
-            console.error(`Document upload error:`, error);
-            return `Error processing document ${doc.Document_Type}`;
-          }
-        }
-        return null;
+          : { idCustomer: customerId },
       });
-      fileUploadMessages = (await Promise.all(uploadPromises)).filter(Boolean);
+    } catch (error) {
+      // Rollback both transactions on error
+      await connection.rollback();
+      await connection2.rollback();
+      throw error;
     }
-
-    // Get updated customer details
-    const [updatedCustomerRows] = await pool.query(
-      "SELECT idCustomer,First_Name,Full_Name,NIC,Address1,Mobile_No,Work_Place,DOB,Status FROM customer  WHERE idCustomer = ? ",
-      [customerId],
-    );
-
-    // Log the update
-    customerLog(
-      customerId,
-      new Date(),
-      "UPDATE",
-      "Customer updated",
-      req.userId,
-    );
-
-    res.status(200).json({
-      success: true,
-      message:
-        fileUploadMessages.length > 0
-          ? `Customer updated successfully. Document results: ${fileUploadMessages.join(
-              " ; ",
-            )}`
-          : "Customer updated successfully.",
-      customer: updatedCustomerRows[0] || [],
-    });
   } catch (error) {
     console.error("Error editing customer:", error);
     next(errorHandler(500, "Internal Server Error"));
+  } finally {
+    // Always release connections
+    connection.release();
+    connection2.release();
   }
 };
 
@@ -950,17 +1224,58 @@ export const getCustomerCompleteDataById = async (req, res, next) => {
       return next(errorHandler(400, "Customer ID is required"));
     }
 
-    //Fetch Customer Basic Data
-    const [customerResult] = await pool.query(
-      "SELECT * FROM customer WHERE idCustomer = ? AND Branch_idBranch = ?",
-      [customerId, branchId],
+    // Fetch Pawning Customer Basic Data (contains accountCenterCusId)
+    let pawningCustomerQuery;
+    let pawningCustomerQueryParams;
+
+    if (req.isHeadBranch === true) {
+      pawningCustomerQuery = "SELECT * FROM customer WHERE idCustomer = ?";
+      pawningCustomerQueryParams = [customerId];
+    } else {
+      pawningCustomerQuery =
+        "SELECT * FROM customer WHERE idCustomer = ? AND Branch_idBranch = ?";
+      pawningCustomerQueryParams = [customerId, branchId];
+    }
+
+    const [pawningCustomerResult] = await pool.query(
+      pawningCustomerQuery,
+      pawningCustomerQueryParams,
     );
 
-    if (customerResult.length === 0) {
+    if (pawningCustomerResult.length === 0) {
       return next(errorHandler(404, "Customer not found"));
     }
 
-    const customer = customerResult[0];
+    const pawningCustomer = pawningCustomerResult[0];
+
+    // Fetch account center customer data using accountCenterCusId
+    let accountCenterCustomer = null;
+    if (pawningCustomer.accountCenterCusId) {
+      const [accCenterResult] = await pool2.query(
+        "SELECT * FROM customer WHERE idCustomer = ?",
+        [pawningCustomer.accountCenterCusId],
+      );
+      accountCenterCustomer = accCenterResult[0] || null;
+    }
+
+    // Fetch the branch name and code
+    const [branchRows] = await pool2.query(
+      "SELECT Name, Branch_Code FROM branch WHERE idBranch = ?",
+      [pawningCustomer.Branch_idBranch],
+    );
+
+    // Merge data from both databases using spread operator
+    const customer = {
+      // Spread all account center fields first (if available)
+      ...(accountCenterCustomer || {}),
+      // Override/add specific fields
+      idCustomer: pawningCustomer.idCustomer, // Primary ID (pawning customer ID)
+      accountCenterCusId: pawningCustomer.accountCenterCusId,
+      // Pawning specific data as nested object
+      pawningData: pawningCustomer,
+      // Additional data
+      branchInfo: branchRows[0] || {},
+    };
 
     //Fetch Customer Documents
     const [documents] = await pool.query(

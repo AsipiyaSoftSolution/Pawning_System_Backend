@@ -49,7 +49,6 @@ export const getPaginationData = async (
       query,
       queryParams,
     );
-    console.log("Count Result:", countResult);
 
     const totalCount =
       countResult[0]?.count ||

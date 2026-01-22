@@ -28,6 +28,7 @@ import {
   generatePawningTicketNumber,
   checkIfTicketsExistInCompany,
   getCompanyBranchesForTicketFilters,
+  sendOverdueTickets,
 } from "../controllers/pawning.ticket.controller.js";
 const router = express.Router();
 
@@ -174,6 +175,14 @@ router.get(
   checkUserBranchAccess,
   checkUserSelectedHeadBranch,
   sendSettledTickets,
+); // Get all settled pawning tickets
+
+router.get(
+  "/:branchId/overdue-tickets",
+  protectedRoute,
+  checkUserBranchAccess,
+  checkUserSelectedHeadBranch,
+  sendOverdueTickets,
 ); // Get all overdue pawning tickets
 
 router.get(

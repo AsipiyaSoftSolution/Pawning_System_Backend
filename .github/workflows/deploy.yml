@@ -16,24 +16,25 @@ jobs:
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
-          key: ${{ secrets.SSH_KEY }}
-          passphrase: ${{ secrets.SSH_KEY_PASSPHRASE }} # Handles the key's passphrase
+          key: ${{ secrets.SSH_KEY }} # This is your root@windows private key (No Passphrase)
           port: ${{ secrets.PORT }}
           script: |
-            # Start ssh-agent and add the pawning identity key
+            # 1. Start ssh-agent
             eval $(ssh-agent -s)
             
-            # Navigate to the correct directory
+            # 2. Add the Pawning identity key using the passphrase from GitHub Secrets
+            # We use SSH_ASKPASS to pipe the passphrase into ssh-add
+            echo "${{ secrets.SSH_KEY_PASSPHRASE }}" | SSH_ASKPASS_REQUIRE=never ssh-add ~/.ssh/id_ed25519_pawning
+            
+            # 3. Navigate to the project directory
             cd /var/www/Pawning_System_Backend
             
-            # Use the specific identity for the git pull
+            # 4. Pull the latest code using the unlocked key
             GIT_SSH_COMMAND="ssh -i ~/.ssh/id_ed25519_pawning -o IdentitiesOnly=yes" git pull origin main
             
-            # Install production dependencies
+            # 5. Install dependencies and restart service
             npm install --production
-            
-            # Restart the pawning backend service
             sudo systemctl restart pawning-backend
             
-            # Kill ssh-agent
+            # 6. Clean up
             ssh-agent -k

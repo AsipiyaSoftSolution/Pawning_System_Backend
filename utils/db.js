@@ -26,6 +26,7 @@ export const pool = mysql.createPool({
   keepAliveInitialDelay: 10_000, // valid
   maxIdle: 10, // valid in mysql2 v3+
   idleTimeout: 900_000, // valid in mysql2 v3+ (15 min)
+  timezone: "+05:30",
 
   // IMPORTANT: only set ssl if you actually want TLS.
   // Your server currently does not support TLS, so leave it undefined.
@@ -107,6 +108,7 @@ export const pool2 = mysql.createPool({
   keepAliveInitialDelay: 10_000,
   maxIdle: 10,
   idleTimeout: 900_000,
+  timezone: "+05:30",
 
   ...(USE_SSL2 ? { ssl: { rejectUnauthorized: false } } : {}),
 });

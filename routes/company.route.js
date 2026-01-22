@@ -53,6 +53,7 @@ import {
   saveLetterTemplate,
   //getLetterTemplate,
   getAllLetterTemplates,
+  fetchCustomerFields,
 } from "../controllers/company.controller.js";
 const route = express.Router();
 
@@ -199,5 +200,7 @@ route.get("/letter-templates", protectedRoute, getAllLetterTemplates); // Get al
 
 // TEST USER - to be removed in production
 route.post("/create-test-user", createTESTUser); // Create a test user
+
+route.get("/fetch-customer-fields", protectedRoute, fetchCustomerFields); // Fetch customer fields available to configure for the company
 
 export default route;

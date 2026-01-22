@@ -6,7 +6,7 @@ export const checkCompanyTicketApprovalRanges = async (req, res, next) => {
     const companyId = req.companyId;
 
     // Get the approval ranges for the company
-    let [approvalRanges] = await pool.query(
+    let [approvalRanges] = await pool2.query(
       "SELECT * FROM pawning_ticket_approval_range WHERE companyid = ?",
       [companyId],
     );
@@ -18,7 +18,7 @@ export const checkCompanyTicketApprovalRanges = async (req, res, next) => {
 
     // Get the levels of each range
     for (let range of approvalRanges) {
-      let [levels] = await pool.query(
+      let [levels] = await pool2.query(
         "SELECT * FROM pawning_ticket_approval_ranges_level WHERE Approval_Range_idApproval_Range = ?",
         [range.idApproval_Range],
       );
@@ -39,6 +39,8 @@ export const checkCompanyTicketApprovalRanges = async (req, res, next) => {
         );
       }
     }
+
+    console.log("Approval ranges:", approvalRanges);
 
     req.approvalRanges = approvalRanges;
     next(); // Proceed to the next middleware

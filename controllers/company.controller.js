@@ -3774,3 +3774,52 @@ export const getAllLetterTemplates = async (req, res, next) => {
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
+
+// fetch all available customer fields to configure for the company
+export const fetchCustomerFields = async (req, res, next) => {
+  try {
+    let [customerFields] = await pool2.query(
+      "SELECT idCustomerField,fieldName FROM customer_fields WHERE status = 1",
+    );
+
+    if (!customerFields || customerFields.length === 0) {
+      return res.status(200).json({
+        message: "Customer fields fetched successfully",
+        customerFields,
+      });
+    }
+
+    // now we have to check those fields are configured for the company or not
+    const [companyCustomerFields] = await pool2.query(
+      "SELECT idCompanyCustomerField, CustomerField_idCustomerField,company_id,isRequired  FROM company_customer_fields WHERE company_id = ?",
+      [req.companyId],
+    );
+
+    if (companyCustomerFields.length > 0) {
+      // have to map those to customer fields
+      const mappedCustomerFields = customerFields.map((field) => {
+        const companyCustomerField = companyCustomerFields.find(
+          (companyField) =>
+            companyField.CustomerField_idCustomerField ===
+            field.idCustomerField,
+        );
+        return {
+          ...field,
+          isConfigured: !!companyCustomerField,
+          isRequired: companyCustomerField
+            ? Number(companyCustomerField.isRequired) === 1
+            : false,
+        };
+      });
+      customerFields = mappedCustomerFields;
+    }
+
+    res.status(200).json({
+      message: "Customer fields fetched successfully",
+      customerFields,
+    });
+  } catch (error) {
+    console.error("Error fetching customer fields:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};

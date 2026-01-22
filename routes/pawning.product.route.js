@@ -8,6 +8,7 @@ import {
   deletePawningProductById,
   updatePawningProductById,
 } from "../controllers/pawning.product.controller.js";
+import { checkUserSelectedHeadBranch } from "../middlewares/headBranch.middleware.js";
 
 const route = express.Router();
 
@@ -15,35 +16,36 @@ route.post(
   "/:branchId/create",
   protectedRoute,
   checkUserBranchAccess,
-  createPawningProduct
+  createPawningProduct,
 ); // Create a new product for a specific branch */
 
 route.get(
   "/:branchId/:productId",
   protectedRoute,
   checkUserBranchAccess,
-  getPawningProductById
+  getPawningProductById,
 ); // Get a specific product by ID for a specific branch
 
 route.get(
   "/:branchId",
   protectedRoute,
   checkUserBranchAccess,
-  getPawningProducts
+  checkUserSelectedHeadBranch,
+  getPawningProducts,
 ); // Get all products for a specific branch
 
 route.delete(
   "/:branchId/:productId",
   protectedRoute,
   checkUserBranchAccess,
-  deletePawningProductById
+  deletePawningProductById,
 ); // Delete a specific product by ID for a specific branch
 
 route.patch(
   "/:branchId/:productId",
   protectedRoute,
   checkUserBranchAccess,
-  updatePawningProductById
+  updatePawningProductById,
 ); // Update/Edit a specific product by ID for a specific branch
 
 export default route;

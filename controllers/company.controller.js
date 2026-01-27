@@ -3795,6 +3795,14 @@ export const fetchCustomerFields = async (req, res, next) => {
       [req.companyId],
     );
 
+    // Fields that represent separate tables (not direct customer table columns)
+    const separateTableFields = [
+      "Customer_Documents",
+      "Customer_Occupations",
+      "Customer_Family",
+      "Customers_Bank_Accounts",
+    ];
+
     if (companyCustomerFields.length > 0) {
       // have to map those to customer fields
       const mappedCustomerFields = customerFields.map((field) => {
@@ -3803,20 +3811,53 @@ export const fetchCustomerFields = async (req, res, next) => {
             companyField.CustomerField_idCustomerField ===
             field.idCustomerField,
         );
-        return {
+
+        // For fields that represent separate tables, exclude isRequired property
+        // since they're managed in their own tables
+        const isSeparateTableField = separateTableFields.includes(
+          field.fieldName,
+        );
+
+        const baseField = {
           ...field,
           isConfigured: !!companyCustomerField,
-          isRequired: companyCustomerField
-            ? Number(companyCustomerField.isRequired) === 1
-            : false,
         };
+
+        // Only add isRequired for regular customer table fields
+        if (!isSeparateTableField) {
+          baseField.isRequired = companyCustomerField
+            ? Number(companyCustomerField.isRequired) === 1
+            : false;
+        }
+
+        return baseField;
       });
       customerFields = mappedCustomerFields;
     }
 
+    // Check if "Customer_Documents" field exists and fetch documents
+    const customerDocumentsField = customerFields.find(
+      (field) => field.fieldName === "Customer_Documents",
+    );
+
+    if (customerDocumentsField) {
+      const [customerDocuments] = await pool2.query(
+        "SELECT idCustomerDocument,documentName, isRequired FROM customer_documents WHERE companyId = ?",
+        [req.companyId],
+      );
+
+      // Attach documents to the field
+      customerDocumentsField.documents = customerDocuments || [];
+    }
+
+    // Filter to only return configured customer fields
+    const configuredFields = customerFields.filter(
+      (field) => field.isConfigured === true,
+    );
+
     res.status(200).json({
       message: "Customer fields fetched successfully",
-      customerFields,
+      customerFields: configuredFields,
     });
   } catch (error) {
     console.error("Error fetching customer fields:", error);

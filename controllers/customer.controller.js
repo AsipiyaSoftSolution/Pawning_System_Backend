@@ -2,7 +2,7 @@ import { errorHandler } from "../utils/errorHandler.js";
 import { pool, pool2 } from "../utils/db.js";
 import { uploadImage } from "../utils/cloudinary.js";
 import { getPaginationData, getCompanyBranches } from "../utils/helper.js";
-import { accCenterPost, accCenterGet } from "../utils/accCenterApi.js";
+import { accCenterPost, accCenterGet, accCenterPut } from "../utils/accCenterApi.js";
 import { parse } from "path";
 
 const customerLog = async (idCustomer, date, type, Description, userId) => {
@@ -403,15 +403,12 @@ export const getCustomerById = async (req, res, next) => {
 };
 
 export const editCustomer = async (req, res, next) => {
-  // Get connections from both pools for transaction support
   const connection = await pool.getConnection();
-  const connection2 = await pool2.getConnection();
 
   try {
     const customerId = req.params.id || req.params.customerId;
     if (!customerId) {
       connection.release();
-      connection2.release();
       return next(errorHandler(400, "Customer ID is required"));
     }
 
@@ -420,7 +417,6 @@ export const editCustomer = async (req, res, next) => {
 
     if (!data) {
       connection.release();
-      connection2.release();
       return next(errorHandler(400, "Customer data is required"));
     }
 
@@ -432,62 +428,25 @@ export const editCustomer = async (req, res, next) => {
 
     if (pawningCustomerResult.length === 0) {
       connection.release();
-      connection2.release();
       return next(errorHandler(404, "Customer not found"));
     }
 
     const pawningCustomer = pawningCustomerResult[0];
     const accountCenterCusId = pawningCustomer.accountCenterCusId;
 
-    // Get configured fields for this company
-    const customerTableFields = await getCustomerTableFields(req.companyId);
+    if (!accountCenterCusId) {
+       connection.release();
+       return next(errorHandler(400, "This customer is not linked to the Account Center. Cannot update."));
+    }
 
-    // Extract documents from customer data
+    // Extract documents and other fields
     const { documents, ...customerFields } = data;
 
-    // Fields to exclude from dynamic update (handled separately or system-managed)
-    const excludedFields = [
-      "Customer_Group_idCustomer_Group",
-      "created_at",
-      "updated_at",
-      "branch_id",
-      "company_id",
-      "emp_id",
-      "accountCenterCusId",
-      "isPawningUserId",
-      "cus_number", // Customer number should not be changed
-    ];
-
-    // Build dynamic update for account center customer
-    const accUpdateFields = {};
-
-    for (const field of customerTableFields) {
-      // Skip excluded fields
-      if (excludedFields.includes(field.fieldName)) {
-        continue;
-      }
-
-      if (
-        customerFields[field.fieldName] !== undefined &&
-        customerFields[field.fieldName] !== null
-      ) {
-        accUpdateFields[field.fieldName] = customerFields[field.fieldName];
-      }
-    }
-
-    // If no fields to update and no documents provided, return an error
-    if (Object.keys(accUpdateFields).length === 0 && !documents) {
-      connection.release();
-      connection2.release();
-      return next(errorHandler(400, "No fields to update"));
-    }
-
-    // Start transactions on both connections
+    // Start transaction for local updates (Customer_Number)
     await connection.beginTransaction();
-    await connection2.beginTransaction();
 
     try {
-      // Update pawning customer (only Customer_Number if provided)
+      // Update local pawning customer (only Customer_Number if provided)
       if (customerFields.cus_number !== undefined) {
         await connection.query(
           "UPDATE customer SET Customer_Number = ? WHERE idCustomer = ?",
@@ -495,127 +454,64 @@ export const editCustomer = async (req, res, next) => {
         );
       }
 
-      // Update account center customer if there are fields to update and accountCenterCusId exists
-      if (Object.keys(accUpdateFields).length > 0 && accountCenterCusId) {
-        const [accResult] = await connection2.query(
-          "UPDATE customer SET ? WHERE idCustomer = ?",
-          [accUpdateFields, accountCenterCusId],
-        );
+      // Prepare payload for ACC Center API
+      // The provided logic expects customerData to contain customerDocuments, customerOccupations, etc.
+      // We map the incoming 'documents' (if any) to 'customerDocuments' to match the expected API format
+      
+      const apiCustomerData = {
+        ...customerFields,
+         // Map 'documents' to 'customerDocuments' if it exists. 
+         // Note: The frontend might send 'documents' or 'customerDocuments'. We handle both.
+        customerDocuments: documents || customerFields.customerDocuments || [],
+        customerOccupations: customerFields.customerOccupations || [],
+        customerFamily: customerFields.customerFamily || [],
+        customerBankAccounts: customerFields.customerBankAccounts || [],
+      };
 
-        if (accResult.affectedRows === 0) {
-          throw new Error("Failed to update customer in account center");
-        }
-      }
+      // Ensure field names match what the API expects (e.g., if frontend sends mapped fields)
+      
+      const queryParams = new URLSearchParams({
+          asipiyaSoftware: "pawning",
+          companyId: req.companyId.toString(),
+      });
 
-      // Log the update (using connection for transaction)
-      await connection.query(
-        "INSERT INTO customer_log (Customer_idCustomer, Date_Time, Type, Description, User_idUser) VALUES (?, ?, ?, ?, ?)",
-        [customerId, new Date(), "UPDATE", "Customer updated", req.userId],
+      // Call ACC Center API to update customer
+      const accCenterResponse = await accCenterPut(
+        `/customer/update-customer/${accountCenterCusId}?${queryParams.toString()}`,
+        { customerData: apiCustomerData },
+        req.cookies.accessToken
       );
 
-      // Commit both transactions
+      // Log the update locally
+      await connection.query(
+        "INSERT INTO customer_log (Customer_idCustomer, Date_Time, Type, Description, User_idUser) VALUES (?, ?, ?, ?, ?)",
+        [customerId, new Date(), "UPDATE", "Customer updated via Account Center", req.userId],
+      );
+
+      // Commit local transaction
       await connection.commit();
-      await connection2.commit();
-
-      // Handle document uploads (after commit, since document upload is external)
-      let fileUploadMessages = [];
-      if (documents && Array.isArray(documents)) {
-        const uploadPromises = documents.map(async (doc) => {
-          if (doc.isExisting === false && doc.originalId === undefined) {
-            if (!doc.file) {
-              return `No file provided for document Type ${doc.Document_Type}`;
-            }
-            if (
-              !req.company_documents?.some(
-                (d) => d.idDocument === doc.idDocument,
-              )
-            ) {
-              return `Invalid document type for id ${doc.idDocument}`;
-            }
-            try {
-              // Check if the user has an existing document of this type
-              const [existingDoc] = await pool.query(
-                "SELECT * FROM customer_documents WHERE Document_Name = ? AND Customer_idCustomer = ?",
-                [doc.Document_Type, customerId],
-              );
-              const secureUrl = await uploadImage(doc.file);
-              if (!secureUrl) {
-                return `Failed to upload document id ${doc.idDocument}`;
-              }
-              if (existingDoc.length > 0) {
-                // UPDATE the existing document
-                const [docResult] = await pool.query(
-                  "UPDATE customer_documents SET Path = ? WHERE idCustomer_Documents = ?",
-                  [secureUrl, existingDoc[0].idCustomer_Documents],
-                );
-                return docResult.affectedRows > 0
-                  ? `Document ${doc.Document_Type} updated successfully`
-                  : `Failed to update document info for id ${doc.idDocument}`;
-              } else {
-                // INSERT a new document
-                const [docResult] = await pool.query(
-                  "INSERT INTO customer_documents SET ?",
-                  {
-                    Customer_idCustomer: customerId,
-                    Document_Name: doc.Document_Type,
-                    Path: secureUrl,
-                  },
-                );
-                return docResult.affectedRows > 0
-                  ? `Document ${doc.Document_Type} uploaded successfully`
-                  : `Failed to save document info for id ${doc.idDocument}`;
-              }
-            } catch (error) {
-              console.error(`Document upload error:`, error);
-              return `Error processing document ${doc.Document_Type}`;
-            }
-          }
-          return null;
-        });
-        fileUploadMessages = (await Promise.all(uploadPromises)).filter(
-          Boolean,
-        );
-      }
-
-      // Get updated customer details from account center
-      let updatedCustomer = null;
-      if (accountCenterCusId) {
-        const [accCustomerRows] = await pool2.query(
-          "SELECT * FROM customer WHERE idCustomer = ?",
-          [accountCenterCusId],
-        );
-        updatedCustomer = accCustomerRows[0] || null;
-      }
 
       res.status(200).json({
         success: true,
-        message:
-          fileUploadMessages.length > 0
-            ? `Customer updated successfully. Document results: ${fileUploadMessages.join(
-                " ; ",
-              )}`
-            : "Customer updated successfully.",
-        customer: updatedCustomer
-          ? {
-              ...updatedCustomer,
-              idCustomer: customerId,
-              accountCenterCusId: accountCenterCusId,
-            }
-          : { idCustomer: customerId },
+        message: "Customer updated successfully",
+        customer: {
+             idCustomer: customerId,
+             accountCenterCusId: accountCenterCusId,
+             ...apiCustomerData
+        }
       });
     } catch (error) {
-      // Rollback both transactions on error
+      // Rollback local transaction on error (including API failure)
       await connection.rollback();
-      await connection2.rollback();
-      throw error;
+      throw error; // Re-throw to be caught by outer catch
     }
   } catch (error) {
     console.error("Error editing customer:", error);
-    next(errorHandler(500, "Internal Server Error"));
+    // accCenterPut throws errors with status and response if available
+    return next(errorHandler(error.status || 500, error.message || "Internal Server Error"));
   } finally {
-    // Always release connections
+    // Always release connection
     connection.release();
-    connection2.release();
   }
 };
 

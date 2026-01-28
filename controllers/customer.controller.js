@@ -102,6 +102,8 @@ export const createCustomer  = async (req, res, next) => {
           isPawningUserId: pawningCustomerId,
           isMicrofinanceUserId: null,
           isLeasingUserId: null,
+          userId: req.userId,
+          asipiyaSoftware: "Pawning"
         },
       };
 

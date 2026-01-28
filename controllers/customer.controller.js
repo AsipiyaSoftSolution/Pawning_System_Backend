@@ -2,6 +2,7 @@ import { errorHandler } from "../utils/errorHandler.js";
 import { pool, pool2 } from "../utils/db.js";
 import { uploadImage } from "../utils/cloudinary.js";
 import { getPaginationData, getCompanyBranches } from "../utils/helper.js";
+import { accCenterPost } from "../utils/accCenterApi.js";
 import { parse } from "path";
 
 const customerLog = async (idCustomer, date, type, Description, userId) => {
@@ -58,10 +59,9 @@ async function getCustomerTableFields(companyId) {
 }
 
 // Create a new customer
-export const createCustomer = async (req, res, next) => {
-  // Get connections from both pools for transaction support
+export const createCustomer  = async (req, res, next) => {
+  // Get connection from pawning pool only (no direct ACC Center DB access)
   const connection = await pool.getConnection();
-  const connection2 = await pool2.getConnection();
 
   try {
     const { customerData } = req.body;
@@ -71,84 +71,17 @@ export const createCustomer = async (req, res, next) => {
 
     if (!data) {
       connection.release();
-      connection2.release();
       return next(errorHandler(400, "Customer data is required"));
-    }
-
-    // Get configured fields for this company
-    const customerTableFields = await getCustomerTableFields(req.companyId);
-
-    // Validate required fields are present
-    for (const field of customerTableFields) {
-      // Skip branch_id / company_id as they are set from req
-      if (field.fieldName === "branch_id" || field.fieldName === "company_id") {
-        continue;
-      }
-      if (field.isRequired && !data[field.fieldName]) {
-        connection.release();
-        connection2.release();
-        return next(errorHandler(400, `${field.fieldName} is required`));
-      }
-    }
-
-    // Check for existing customer with same NIC
-    const [existingCustomer] = await connection2.query(
-      "SELECT 1 FROM customer WHERE Nic = ? AND branch_id = ? LIMIT 1",
-      [data.Nic, req.branchId],
-    );
-
-    if (existingCustomer.length > 0) {
-      connection.release();
-      connection2.release();
-      return next(
-        errorHandler(
-          409, // Server error code for conflict
-          "Customer with this NIC already exists in this branch",
-        ),
-      );
     }
 
     // Extract documents from customer data
     const { documents, ...customerFields } = data;
 
-    // Fields to exclude from dynamic insertion (handled separately)
-    const excludedFields = [
-      "Customer_Group_idCustomer_Group", // Added later after creation
-      "created_at", // Use NOW()
-      "updated_at", // Use NOW()
-      "branch_id", // From req.branchId (different case)
-      "company_id", // From req.companyId
-      "emp_id", // From req.userId
-      "accountCenterCusId", // Will be updated after account center insertion
-    ];
-
-    // Build dynamic columns for account center customer
-    const accColumns = [];
-    const accValues = [];
-    const accPlaceholders = [];
-
-    for (const field of customerTableFields) {
-      // Skip excluded fields
-      if (excludedFields.includes(field.fieldName)) {
-        continue;
-      }
-
-      if (
-        customerFields[field.fieldName] !== undefined &&
-        customerFields[field.fieldName] !== null
-      ) {
-        accColumns.push(field.fieldName);
-        accValues.push(customerFields[field.fieldName]);
-        accPlaceholders.push("?");
-      }
-    }
-
-    // Start transactions on both connections
+    // Start transaction for pawning database
     await connection.beginTransaction();
-    await connection2.beginTransaction();
 
     try {
-      // INSERT query for pawning customer
+      // Step 1: INSERT minimal data into pawning customer table
       const [result] = await connection.query(
         `INSERT INTO customer (Branch_idBranch, Customer_Number, created_at) VALUES (?, ?, ?)`,
         [req.branchId, customerFields.cus_number, new Date()],
@@ -156,103 +89,76 @@ export const createCustomer = async (req, res, next) => {
 
       const pawningCustomerId = result.insertId;
 
-      // Add system fields for account center customer including isPawningUserId
-      accColumns.push("branch_id", "isPawningUserId", "created_at");
-      accValues.push(req.branchId, pawningCustomerId, new Date());
-      accPlaceholders.push("?", "?", "?");
-
-      // Build and execute dynamic INSERT query for account center customer
-      const accInsertQuery = `INSERT INTO customer (${accColumns.join(", ")}) VALUES (${accPlaceholders.join(", ")})`;
-      const [accInsertRes] = await connection2.query(accInsertQuery, accValues);
-
-      if (!accInsertRes.insertId) {
-        throw new Error("Failed to create customer in account center");
+      if (!pawningCustomerId) {
+        throw new Error("Failed to create customer in pawning database");
       }
 
-      const accountCenterCusId = accInsertRes.insertId;
+      // Step 2: Prepare data for ACC Center API
+      const accCenterPayload = {
+        data: {
+          ...customerFields,
+          companyId: req.companyId,
+          branchId: req.branchId,
+          isPawningUserId: pawningCustomerId,
+          isMicrofinanceUserId: null,
+          isLeasingUserId: null,
+        },
+      };
 
-      // Update pawning customer with accountCenterCusId
+      // Step 3: Call ACC Center API to create customer with all detailed data
+      const accCenterResponse = await accCenterPost(
+        "/customer/create-customer",
+        accCenterPayload,
+        req.cookies.accessToken
+      );
+
+      // Check if API call was successful
+      if (!accCenterResponse.success || !accCenterResponse.customerId) {
+        throw new Error(
+          accCenterResponse.message || "Failed to create customer in ACC Center"
+        );
+      }
+
+      const accountCenterCusId = accCenterResponse.customerId;
+
+      // Step 4: Update pawning customer with accountCenterCusId
       await connection.query(
         "UPDATE customer SET accountCenterCusId = ? WHERE idCustomer = ?",
         [accountCenterCusId, pawningCustomerId],
       );
 
-      // Log the creation (using connection for transaction)
-      await connection.query(
-        "INSERT INTO customer_log (Customer_idCustomer, Date_Time, Type, Description, User_idUser) VALUES (?, ?, ?, ?, ?)",
-        [
-          pawningCustomerId,
-          new Date(),
-          "CREATE",
-          "Customer created",
-          req.userId,
-        ],
-      );
+     
 
-      // Commit both transactions
+      // Commit transaction
       await connection.commit();
-      await connection2.commit();
 
-      // Process documents (after commit, since document upload is external)
-      let fileUploadMessages = [];
-      if (Array.isArray(documents) && documents.length > 0) {
-        fileUploadMessages = await Promise.all(
-          documents.map(async (doc) => {
-            try {
-              if (!doc.file) {
-                return `No file provided for document Type ${doc.Document_Type}`;
-              }
-
-              if (
-                !req.company_documents?.some(
-                  (d) => d.idDocument === doc.idDocument,
-                )
-              ) {
-                return `Invalid document type for id ${doc.idDocument}`;
-              }
-
-              const secureUrl = await uploadImage(doc.file);
-              if (!secureUrl) {
-                return `Failed to upload document id ${doc.idDocument}`;
-              }
-
-              const [docResult] = await pool.query(
-                "INSERT INTO customer_documents SET ?",
-                {
-                  Customer_idCustomer: pawningCustomerId,
-                  Document_Name: doc.Document_Type,
-                  Path: secureUrl,
-                },
-              );
-
-              return docResult.affectedRows > 0
-                ? `Document ${doc.Document_Type} uploaded successfully`
-                : `Failed to save document info for id ${doc.idDocument}`;
-            } catch (error) {
-              console.error(`Document upload error:`, error);
-              return `Error processing document ${doc.Document_Type}`;
-            }
-          }),
-        );
-      }
+      
 
       res.status(201).json({
         success: true,
         message: "Customer created successfully",
+        customerId: pawningCustomerId,
+        accountCenterCusId: accountCenterCusId,
       });
     } catch (error) {
-      // Rollback both transactions on error
+      // Rollback transaction on any error (including API failure)
       await connection.rollback();
-      await connection2.rollback();
-      throw error;
+      console.error("Error in createCustomer transaction:", error);
+      
+      // The accCenterPost utility already adds status and response to errors
+      return next(
+        errorHandler(
+          error.status || 500,
+          error.message || "Failed to create customer"
+        )
+      );
     }
   } catch (error) {
     console.error("Error creating customer:", error);
-    return next(errorHandler(500, "Internal Server Error"));
+    return next(errorHandler(500, error.message || "Internal Server Error"));
   } finally {
-    // Always release connections
+    // Always release connection
     connection.release();
-    connection2.release();
   }
 };
 

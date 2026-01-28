@@ -2,7 +2,7 @@ import { errorHandler } from "../utils/errorHandler.js";
 import { pool, pool2 } from "../utils/db.js";
 import { uploadImage } from "../utils/cloudinary.js";
 import { getPaginationData, getCompanyBranches } from "../utils/helper.js";
-import { accCenterPost } from "../utils/accCenterApi.js";
+import { accCenterPost, accCenterGet } from "../utils/accCenterApi.js";
 import { parse } from "path";
 
 const customerLog = async (idCustomer, date, type, Description, userId) => {
@@ -250,101 +250,46 @@ export const getCustomersForTheBranch = async (req, res, next) => {
     const branchId = req.branchId;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
-    const offset = (page - 1) * limit;
     const search = req.query.search || "";
 
     // Default to the current branch ID; if user is head branch, fetch all company branch IDs
-    let branchIds = [branchId];
+    let userBranches = [branchId];
     if (req.isHeadBranch) {
       const companyBranchIds = await getCompanyBranches(req.companyId);
       if (Array.isArray(companyBranchIds) && companyBranchIds.length > 0) {
-        branchIds = companyBranchIds;
+        userBranches = companyBranchIds;
       }
     }
 
-    // Create branch placeholders for queries
-    const branchPlaceholders = branchIds.map(() => "?").join(",");
+    // Build query parameters for ACC Center API
+    const queryParams = new URLSearchParams({
+      branchId: branchId.toString(),
+      page: page.toString(),
+      limit: limit.toString(),
+      search: search,
+      isHeadBranch: req.isHeadBranch.toString(),
+      asipiyaSoftware: "Pawning",
+      userBranches: JSON.stringify(userBranches),
+    });
 
-    let paginationData;
-    let accountCenterCustomers;
+    // Call ACC Center API to get customers
+    const accCenterResponse = await accCenterGet(
+      `/customer/get-all-customers?${queryParams.toString()}`,
+      req.cookies.accessToken
+    );
 
-    // Only select essential fields for the customer list
-    const selectFields = `idCustomer, isPawningUserId, First_Name, Last_Name, Nic, Contact_No, created_at`;
-
-    // Search in account center (pool2) since customer details are stored there
-    if (search) {
-      // Count query for pagination - search in account center
-      const [countResult] = await pool2.query(
-        `SELECT COUNT(*) as total FROM customer 
-         WHERE branch_id IN (${branchPlaceholders}) 
-         AND isPawningUserId IS NOT NULL
-         AND (First_Name LIKE ? OR Nic LIKE ? OR Contact_No LIKE ? OR idCustomer LIKE ?)`,
-        [
-          ...branchIds,
-          `%${search}%`,
-          `%${search}%`,
-          `%${search}%`,
-          `%${search}%`,
-        ],
-      );
-
-      const total = countResult[0]?.total || 0;
-      paginationData = {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-      };
-
-      // Fetch customers from account center with search (only essential fields)
-      [accountCenterCustomers] = await pool2.query(
-        `SELECT ${selectFields} FROM customer 
-         WHERE branch_id IN (${branchPlaceholders}) 
-         AND isPawningUserId IS NOT NULL
-         AND (First_Name LIKE ? OR Nic LIKE ? OR Contact_No LIKE ? OR idCustomer LIKE ?)
-         ORDER BY created_at DESC
-         LIMIT ? OFFSET ?`,
-        [
-          ...branchIds,
-          `%${search}%`,
-          `%${search}%`,
-          `%${search}%`,
-          `%${search}%`,
-          limit,
-          offset,
-        ],
-      );
-    } else {
-      // Count query for pagination - no search
-      const [countResult] = await pool2.query(
-        `SELECT COUNT(*) as total FROM customer 
-         WHERE branch_id IN (${branchPlaceholders}) 
-         AND isPawningUserId IS NOT NULL`,
-        branchIds,
-      );
-
-      const total = countResult[0]?.total || 0;
-      paginationData = {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-      };
-
-      // Fetch customers from account center without search (only essential fields)
-      [accountCenterCustomers] = await pool2.query(
-        `SELECT ${selectFields} FROM customer 
-         WHERE branch_id IN (${branchPlaceholders}) 
-         AND isPawningUserId IS NOT NULL
-         ORDER BY created_at DESC
-         LIMIT ? OFFSET ?`,
-        [...branchIds, limit, offset],
-      );
-    }
+    // Extract customers and pagination from ACC Center response
+    const accountCenterCustomers = accCenterResponse.customers || [];
+    const paginationData = accCenterResponse.pagination || {
+      total: 0,
+      page,
+      limit,
+      totalPages: 0,
+    };
 
     // Get pawning customer IDs to fetch Customer_Number from pawning DB
     const pawningCustomerIds = accountCenterCustomers
-      .map((c) => c.isPawningUserId)
+      .map((c) => c.idCustomer)
       .filter((id) => id !== null && id !== undefined);
 
     // Fetch Customer_Number from pawning database
@@ -360,15 +305,15 @@ export const getCustomersForTheBranch = async (req, res, next) => {
       );
     }
 
-    // Map account center customer data to response format
+    // Map account center customer data to response format with Customer_Number
     const customers = accountCenterCustomers.map((accCus) => ({
-      idCustomer: accCus.isPawningUserId, // Primary ID (pawning customer ID for compatibility)
-      accountCenterCusId: accCus.idCustomer,
+      idCustomer: accCus.idCustomer, // Primary ID (pawning customer ID)
+      accountCenterCusId: accCus.accountCenterCusId,
       First_Name: accCus.First_Name,
       Last_Name: accCus.Last_Name,
-      Nic: accCus.Nic,
+      Nic: accCus.New_NIC || accCus.Old_NIC, // Use New_NIC or fallback to Old_NIC
       Contact_No: accCus.Contact_No,
-      Customer_Number: customerNumberMap.get(accCus.isPawningUserId) || null,
+      Customer_Number: customerNumberMap.get(accCus.idCustomer) || null,
     }));
 
     res.status(200).json({
@@ -378,7 +323,7 @@ export const getCustomersForTheBranch = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Error fetching customers:", error);
-    return next(errorHandler(500, "Internal Server Error"));
+    return next(errorHandler(error.status || 500, error.message || "Internal Server Error"));
   }
 };
 

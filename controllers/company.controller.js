@@ -3785,13 +3785,13 @@ export const fetchCustomerFields = async (req, res, next) => {
     if (!customerFields || customerFields.length === 0) {
       return res.status(200).json({
         message: "Customer fields fetched successfully",
-        customerFields,
+        customerFields: [],
       });
     }
 
-    // now we have to check those fields are configured for the company or not
+    // Fetch all configured fields for the company (remove SQL filter for software type)
     const [companyCustomerFields] = await pool2.query(
-      "SELECT idCompanyCustomerField, CustomerField_idCustomerField,company_id,isRequired  FROM company_customer_fields WHERE company_id = ? AND asipiya_software = 'pawning'",
+      "SELECT idCompanyCustomerField, CustomerField_idCustomerField, company_id, isRequired, asipiya_software FROM company_customer_fields WHERE company_id = ?",
       [req.companyId],
     );
 
@@ -3806,10 +3806,16 @@ export const fetchCustomerFields = async (req, res, next) => {
     if (companyCustomerFields.length > 0) {
       // have to map those to customer fields
       const mappedCustomerFields = customerFields.map((field) => {
+        // Find if this field is configured for "pawning" (checking comma-separated values)
         const companyCustomerField = companyCustomerFields.find(
           (companyField) =>
             companyField.CustomerField_idCustomerField ===
-            field.idCustomerField,
+              field.idCustomerField &&
+            companyField.asipiya_software &&
+            String(companyField.asipiya_software)
+              .split(",")
+              .map((s) => s.trim().toLowerCase())
+              .includes("pawning"),
         );
 
         // For fields that represent separate tables, exclude isRequired property
@@ -3833,6 +3839,13 @@ export const fetchCustomerFields = async (req, res, next) => {
         return baseField;
       });
       customerFields = mappedCustomerFields;
+    } else {
+      // If no company fields found, mark all as not configured
+      customerFields = customerFields.map((field) => ({
+        ...field,
+        isConfigured: false,
+        isRequired: false,
+      }));
     }
 
     // Check if "Customer_Documents" field exists and fetch documents

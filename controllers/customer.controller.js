@@ -268,7 +268,7 @@ export const getCustomersForTheBranch = async (req, res, next) => {
       limit: limit.toString(),
       search: search,
       isHeadBranch: req.isHeadBranch.toString(),
-      asipiyaSoftware: "Pawning",
+      asipiyaSoftware: "pawning",
       userBranches: JSON.stringify(userBranches),
     });
 

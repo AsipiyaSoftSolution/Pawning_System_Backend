@@ -3791,7 +3791,7 @@ export const fetchCustomerFields = async (req, res, next) => {
 
     // now we have to check those fields are configured for the company or not
     const [companyCustomerFields] = await pool2.query(
-      "SELECT idCompanyCustomerField, CustomerField_idCustomerField,company_id,isRequired  FROM company_customer_fields WHERE company_id = ?",
+      "SELECT idCompanyCustomerField, CustomerField_idCustomerField,company_id,isRequired  FROM company_customer_fields WHERE company_id = ? AND asipiya_software = 'pawning'",
       [req.companyId],
     );
 

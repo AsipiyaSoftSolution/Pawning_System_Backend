@@ -336,38 +336,41 @@ export const getCustomerById = async (req, res, next) => {
       return next(errorHandler(400, "Customer ID is required"));
     }
 
-    let pawningCustomerQuery;
-    let pawningCustomerQueryParams;
-
-    if (req.isHeadBranch === true) {
-      pawningCustomerQuery = "SELECT * FROM customer WHERE idCustomer = ?";
-      pawningCustomerQueryParams = [customerId];
-    } else {
-      pawningCustomerQuery =
-        "SELECT * FROM customer WHERE idCustomer = ? AND Branch_idBranch = ?";
-      pawningCustomerQueryParams = [customerId, branchId];
-    }
-
-    // Fetch pawning customer data
-    const [pawningCustomerResult] = await pool.query(
-      pawningCustomerQuery,
-      pawningCustomerQueryParams,
+    // Fetch pawning customer data to get accountCenterCusId
+    const [customerRows] = await pool.query(
+      "SELECT idCustomer, accountCenterCusId, Customer_Number FROM customer WHERE idCustomer = ? AND Branch_idBranch = ?",
+      [customerId, branchId],
     );
 
-    if (pawningCustomerResult.length === 0) {
+    if (customerRows.length === 0) {
       return next(errorHandler(404, "Customer not found"));
     }
 
-    const pawningCustomer = pawningCustomerResult[0];
+    const pawningCustomer = customerRows[0];
 
-    // Fetch account center customer data using accountCenterCusId
-    let accountCenterCustomer = null;
+    // Call ACC Center API to get complete customer data
+    let accCenterCustomerData = null;
     if (pawningCustomer.accountCenterCusId) {
-      const [accCenterResult] = await pool2.query(
-        "SELECT * FROM customer WHERE idCustomer = ?",
-        [pawningCustomer.accountCenterCusId],
-      );
-      accountCenterCustomer = accCenterResult[0] || null;
+      try {
+        // Build query parameters for ACC Center API
+        const queryParams = new URLSearchParams({
+          asipiyaSoftware: "pawning",
+          companyId: req.companyId.toString(),
+        });
+
+        // Call ACC Center API's getCustomerById endpoint
+        const accCenterResponse = await accCenterGet(
+          `/customer/get-customer/${pawningCustomer.accountCenterCusId}?${queryParams.toString()}`,
+          req.cookies.accessToken
+        );
+
+        // Extract customer data from ACC Center response
+        accCenterCustomerData = accCenterResponse.customer || null;
+      } catch (error) {
+        console.error("Error fetching customer from ACC Center:", error);
+        // Continue without ACC Center data if API call fails
+        accCenterCustomerData = null;
+      }
     }
 
     // Fetch customer documents from pawning DB
@@ -376,33 +379,26 @@ export const getCustomerById = async (req, res, next) => {
       [customerId],
     );
 
-    // Fetch the branch name and code
-    const [branchRows] = await pool2.query(
-      "SELECT Name, Branch_Code FROM branch WHERE idBranch = ?",
-      [pawningCustomer.Branch_idBranch],
-    );
-
-    // Merge data from both databases using spread operator
+    // Merge ACC Center data with pawning-specific data
     const customer = {
       // Spread all account center fields first (if available)
-      ...(accountCenterCustomer || {}),
-      // Override/add specific fields
+      ...(accCenterCustomerData || {}),
+      // Override/add pawning-specific fields
       idCustomer: pawningCustomer.idCustomer, // Primary ID (pawning customer ID)
       accountCenterCusId: pawningCustomer.accountCenterCusId,
-      // Pawning specific data as nested object
-      pawningData: pawningCustomer,
-      // Additional data
+      Customer_Number: pawningCustomer.Customer_Number,
+      // Add pawning documents
       documents: documents || [],
-      branchInfo: branchRows[0] || {},
     };
 
     res.status(200).json({
+      success: true,
       message: "Customer fetched successfully",
       customer,
     });
   } catch (error) {
-    console.error("Error fetching customer by ID:", error);
-    return next(errorHandler(500, "Internal Server Error"));
+    console.error("Error in getCustomerById controller", error);
+    return next(errorHandler(error.status || 500, error.message || "Internal Server Error"));
   }
 };
 
@@ -1066,206 +1062,6 @@ export const blacklistCustomer = async (req, res, next) => {
   }
 };
 
-// Get all data of the customer by ID (personal data, ticket data, payment history, logs)
-export const getCustomerCompleteDataById = async (req, res, next) => {
-  try {
-    const customerId = req.params.id || req.params.customerId;
-    const branchId = req.branchId;
-
-    // Validate customer ID
-    if (!customerId) {
-      return next(errorHandler(400, "Customer ID is required"));
-    }
-
-    // Fetch Pawning Customer Basic Data (contains accountCenterCusId)
-    let pawningCustomerQuery;
-    let pawningCustomerQueryParams;
-
-    if (req.isHeadBranch === true) {
-      pawningCustomerQuery = "SELECT * FROM customer WHERE idCustomer = ?";
-      pawningCustomerQueryParams = [customerId];
-    } else {
-      pawningCustomerQuery =
-        "SELECT * FROM customer WHERE idCustomer = ? AND Branch_idBranch = ?";
-      pawningCustomerQueryParams = [customerId, branchId];
-    }
-
-    const [pawningCustomerResult] = await pool.query(
-      pawningCustomerQuery,
-      pawningCustomerQueryParams,
-    );
-
-    if (pawningCustomerResult.length === 0) {
-      return next(errorHandler(404, "Customer not found"));
-    }
-
-    const pawningCustomer = pawningCustomerResult[0];
-
-    // Fetch account center customer data using accountCenterCusId
-    let accountCenterCustomer = null;
-    if (pawningCustomer.accountCenterCusId) {
-      const [accCenterResult] = await pool2.query(
-        "SELECT * FROM customer WHERE idCustomer = ?",
-        [pawningCustomer.accountCenterCusId],
-      );
-      accountCenterCustomer = accCenterResult[0] || null;
-    }
-
-    // Fetch the branch name and code
-    const [branchRows] = await pool2.query(
-      "SELECT Name, Branch_Code FROM branch WHERE idBranch = ?",
-      [pawningCustomer.Branch_idBranch],
-    );
-
-    // Merge data from both databases using spread operator
-    const customer = {
-      // Spread all account center fields first (if available)
-      ...(accountCenterCustomer || {}),
-      // Override/add specific fields
-      idCustomer: pawningCustomer.idCustomer, // Primary ID (pawning customer ID)
-      accountCenterCusId: pawningCustomer.accountCenterCusId,
-      // Pawning specific data as nested object
-      pawningData: pawningCustomer,
-      // Additional data
-      branchInfo: branchRows[0] || {},
-    };
-
-    //Fetch Customer Documents
-    const [documents] = await pool.query(
-      "SELECT * FROM customer_documents WHERE Customer_idCustomer = ?",
-      [customerId],
-    );
-
-    // Fetch All Customer Tickets including product name and latest comment
-    const [tickets] = await pool.query(
-      `SELECT 
-            pt.idPawning_Ticket,
-            pt.Pawning_Advance_Amount,
-            pt.Ticket_No,
-            pt.SEQ_No,
-            pt.Note,
-            pt.Maturity_date,
-            pt.Status,
-            pt.Period_Type,
-            pt.Period,
-            pt.Date_Time,
-            pp.Name AS Product_Name,
-            tcl.Comment AS Last_Comment,
-            tcl.Date_Time AS Last_Comment_DateTime,
-            tcc.Comment_Count
-         FROM pawning_ticket pt
-         LEFT JOIN pawning_product pp 
-                ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product
-         LEFT JOIN (
-              SELECT tc1.*
-              FROM ticket_comment tc1
-              INNER JOIN (
-                  SELECT Pawning_Ticket_idPawning_Ticket, MAX(idTicket_Comment) AS max_id
-                  FROM ticket_comment
-                  GROUP BY Pawning_Ticket_idPawning_Ticket
-              ) tmax
-              ON tc1.Pawning_Ticket_idPawning_Ticket = tmax.Pawning_Ticket_idPawning_Ticket
-             AND tc1.idTicket_Comment = tmax.max_id
-         ) tcl ON tcl.Pawning_Ticket_idPawning_Ticket = pt.idPawning_Ticket
-         LEFT JOIN (
-              SELECT Pawning_Ticket_idPawning_Ticket, COUNT(*) AS Comment_Count
-              FROM ticket_comment
-              GROUP BY Pawning_Ticket_idPawning_Ticket
-         ) tcc ON tcc.Pawning_Ticket_idPawning_Ticket = pt.idPawning_Ticket
-         WHERE pt.Customer_idCustomer = ?
-         ORDER BY STR_TO_DATE(pt.Date_Time, '%Y-%m-%d') DESC`,
-      [customerId],
-    );
-
-    //  Fetch All Payment History
-    let payments = [];
-
-    if (tickets.length > 0) {
-      const ticketNos = tickets.map((t) => parseInt(t.Ticket_No));
-      const ticketIds = tickets.map((t) => t.idPawning_Ticket);
-
-      const [paymentResults] = await pool.query(
-        `SELECT p.*
-         FROM payment p 
-         WHERE CAST(p.Ticket_No AS UNSIGNED) IN (?)
-         ORDER BY STR_TO_DATE(p.Date_Time, '%Y-%m-%d %H:%i:%s') DESC`,
-        [ticketNos],
-      );
-
-      // Fetch all comments for these tickets and attach to each ticket
-      const [commentsRows] = await pool.query(
-        `SELECT tc.*
-           FROM ticket_comment tc
-          WHERE tc.Pawning_Ticket_idPawning_Ticket IN (?)
-       ORDER BY tc.idTicket_Comment ASC`,
-        [ticketIds],
-      );
-
-      // Fetch user data from pool2 for both payments and comments
-      const userIdsFromPayments = [
-        ...new Set(paymentResults.map((p) => p.User).filter((id) => id)),
-      ];
-      const userIdsFromComments = [
-        ...new Set(commentsRows.map((c) => c.User_idUser).filter((id) => id)),
-      ];
-      const allUserIds = [
-        ...new Set([...userIdsFromPayments, ...userIdsFromComments]),
-      ];
-
-      let userMap = new Map();
-      if (allUserIds.length > 0) {
-        const placeholders = allUserIds.map(() => "?").join(",");
-        const [users] = await pool2.query(
-          `SELECT idUser, full_name FROM user WHERE idUser IN (${placeholders})`,
-          allUserIds,
-        );
-        userMap = new Map(users.map((u) => [u.idUser, u.full_name]));
-      }
-
-      // Map user names to payments
-      payments = paymentResults.map((p) => ({
-        ...p,
-        officer: userMap.get(p.User) || null,
-      }));
-
-      // Group comments by ticket id and map user names
-      const commentsByTicket = new Map();
-      for (const row of commentsRows) {
-        const tId = row.Pawning_Ticket_idPawning_Ticket;
-        if (!commentsByTicket.has(tId)) commentsByTicket.set(tId, []);
-        commentsByTicket.get(tId).push({
-          idTicket_Comment: row.idTicket_Comment,
-          Date_Time: row.Date_Time,
-          Comment: row.Comment,
-          User_idUser: row.User_idUser,
-          userName: userMap.get(row.User_idUser) || null,
-        });
-      }
-
-      // Attach to tickets array
-      for (const t of tickets) {
-        t.comments = commentsByTicket.get(t.idPawning_Ticket) || [];
-      }
-    }
-
-    res.status(200).json({
-      success: true,
-      message: "Customer complete data fetched successfully",
-      kycData: {
-        customer: {
-          ...customer,
-          documents: documents || [],
-        },
-
-        tickets: tickets || [],
-        payments: payments || [],
-      },
-    });
-  } catch (error) {
-    console.error("Error fetching customer complete data:", error);
-    return next(errorHandler(500, "Internal Server Error"));
-  }
-};
 
 // Generate customer number
 export const generateCustomerNumber = async (req, res, next) => {

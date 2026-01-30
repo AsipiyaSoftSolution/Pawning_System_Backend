@@ -59,14 +59,11 @@ async function getCustomerTableFields(companyId) {
 }
 
 // Create a new customer
-export const createCustomer  = async (req, res, next) => {
-  // Get connection from pawning pool only (no direct ACC Center DB access)
+export const createCustomer = async (req, res, next) => {
   const connection = await pool.getConnection();
 
   try {
     const { customerData } = req.body;
-
-    // Support both old format (req.body.data) and new format (req.body.customerData)
     const data = customerData || req.body.data;
 
     if (!data) {
@@ -74,93 +71,143 @@ export const createCustomer  = async (req, res, next) => {
       return next(errorHandler(400, "Customer data is required"));
     }
 
-    // Extract documents from customer data
     const { documents, ...customerFields } = data;
 
-    // Start transaction for pawning database
-    await connection.beginTransaction();
-
+    // Step 0: Check if an approval process exists for "CUSTOMER CREATE"
+    let hasApprovalProcess = false;
     try {
-      // Step 1: INSERT minimal data into pawning customer table
-      const [result] = await connection.query(
-        `INSERT INTO customer (Branch_idBranch, Customer_Number, created_at) VALUES (?, ?, ?)`,
-        [req.branchId, customerFields.cus_number, new Date()],
-      );
+        const approvalCheckParams = new URLSearchParams({
+            companyId: req.companyId.toString(),
+            approvalName: "CUSTOMER CREATE",
+            asipiyaSoftware: "pawning"
+        });
 
-      const pawningCustomerId = result.insertId;
+        const approvalCheckResponse = await accCenterGet(
+            `/customer/check-approval-process?${approvalCheckParams.toString()}`,
+            req.cookies.accessToken 
+        );
+        console.log("approvalCheckResponse", approvalCheckResponse);
 
-      if (!pawningCustomerId) {
-        throw new Error("Failed to create customer in pawning database");
-      }
+        if (approvalCheckResponse.success && approvalCheckResponse.data && approvalCheckResponse.data.length > 0) {
+            hasApprovalProcess = true;
+        }
+    } catch (error) {
+        console.warn("Failed to check approval process, defaulting to approval required flow if safe or handling error:", error);
+        // If we can't check, we might want to default to one way or another. 
+        // For now, let's assume if the check fails, we proceed safely (perhaps logging it).
+        // OR better: if check fails, we can't determine correct flow.
+        connection.release();
+        return next(errorHandler(500, "Failed to determine approval process requirements."));
+    }
 
-      // Step 2: Prepare data for ACC Center API
-      const accCenterPayload = {
-        data: {
-          ...customerFields,
-          companyId: req.companyId,
-          branchId: req.branchId,
-          isPawningUserId: pawningCustomerId,
-          isMicrofinanceUserId: null,
-          isLeasingUserId: null,
-          userId: req.userId,
-          asipiyaSoftware: "Pawning"
-        },
-      };
+    // Step 1: Prepare Common Data
+    const apiCustomerData = {
+      ...customerFields,
+      companyId: req.companyId,
+      branchId: req.branchId,
+      // isPawningUserId will be set based on flow
+      isMicrofinanceUserId: null,
+      isLeasingUserId: null,
+      userId: req.userId,
+      asipiyaSoftware: "pawning",
+      customerDocuments: documents || data.customerDocuments || [],
+      customerOccupations: data.customerOccupations || [],
+      customerFamily: data.customerFamily || [],
+      customerBankAccounts: data.customerBankAccounts || [],
+      Customer_Photo: data.Customer_Photo || null
+    };
 
-      // Step 3: Call ACC Center API to create customer with all detailed data
-      const accCenterResponse = await accCenterPost(
+    console.log("hasApprovalProcess", hasApprovalProcess);
+
+    // FLOW A: Approval Process Exists -> No Local Creation Yet
+    if (hasApprovalProcess) {
+       apiCustomerData.isPawningUserId = null;
+
+       const accCenterPayload = { data: apiCustomerData };
+
+       const accCenterResponse = await accCenterPost(
         "/customer/create-customer",
         accCenterPayload,
         req.cookies.accessToken
-      );
+       );
 
-      // Check if API call was successful
-      if (!accCenterResponse.success || !accCenterResponse.customerId) {
-        throw new Error(
-          accCenterResponse.message || "Failed to create customer in ACC Center"
-        );
-      }
+       if (!accCenterResponse.success) {
+           connection.release();
+           throw new Error(accCenterResponse.message || "Failed to submit customer for approval");
+       }
 
-      const accountCenterCusId = accCenterResponse.customerId;
+       // We expect an approvalRequestId
+       const { approvalRequestId } = accCenterResponse;
 
-      // Step 4: Update pawning customer with accountCenterCusId
-      await connection.query(
-        "UPDATE customer SET accountCenterCusId = ? WHERE idCustomer = ?",
-        [accountCenterCusId, pawningCustomerId],
-      );
-
-     
-
-      // Commit transaction
-      await connection.commit();
-
-      
-
-      res.status(201).json({
-        success: true,
-        message: "Customer created successfully",
-        customerId: pawningCustomerId,
-        accountCenterCusId: accountCenterCusId,
-      });
-    } catch (error) {
-      // Rollback transaction on any error (including API failure)
-      await connection.rollback();
-      console.error("Error in createCustomer transaction:", error);
-      
-      // The accCenterPost utility already adds status and response to errors
-      return next(
-        errorHandler(
-          error.status || 500,
-          error.message || "Failed to create customer"
-        )
-      );
+       connection.release();
+       return res.status(201).json({
+           success: true,
+           message: "Customer creation pending approval",
+           customerId: null,
+           accountCenterCusId: null,
+           approvalRequestId: approvalRequestId
+       });
     }
+
+    // FLOW B: No Approval Process -> Create Local First
+    else {
+        await connection.beginTransaction();
+
+        try {
+            const [result] = await connection.query(
+                `INSERT INTO customer (Branch_idBranch, Customer_Number, created_at) VALUES (?, ?, ?)`,
+                [req.branchId, customerFields.cus_number, new Date()],
+            );
+
+            const pawningCustomerId = result.insertId;
+            if (!pawningCustomerId) {
+                throw new Error("Failed to create customer in pawning database");
+            }
+
+            // Update payload with local ID
+            apiCustomerData.isPawningUserId = pawningCustomerId;
+            const accCenterPayload = { data: apiCustomerData };
+
+            const accCenterResponse = await accCenterPost(
+                "/customer/create-customer",
+                accCenterPayload,
+                req.cookies.accessToken
+            );
+
+            if (!accCenterResponse.success || !accCenterResponse.customerId) {
+                throw new Error(accCenterResponse.message || "Failed to create customer in ACC Center");
+            }
+
+            const accountCenterCusId = accCenterResponse.customerId;
+
+            // Link local record
+            await connection.query(
+                "UPDATE customer SET accountCenterCusId = ? WHERE idCustomer = ?",
+                [accountCenterCusId, pawningCustomerId],
+            );
+
+            await connection.commit();
+            connection.release();
+
+            return res.status(201).json({
+                success: true,
+                message: "Customer created successfully",
+                customerId: pawningCustomerId,
+                accountCenterCusId: accountCenterCusId
+            });
+
+        } catch (error) {
+            await connection.rollback();
+            connection.release();
+            throw error;
+        }
+    }
+
   } catch (error) {
     console.error("Error creating customer:", error);
-    return next(errorHandler(500, error.message || "Internal Server Error"));
-  } finally {
-    // Always release connection
-    connection.release();
+    // Ensure connection is released if logic falls through
+    try { connection.release(); } catch(e) {} 
+    return next(errorHandler(error.status || 500, error.message || "Internal Server Error"));
   }
 };
 

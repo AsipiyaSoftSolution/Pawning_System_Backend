@@ -2,6 +2,7 @@ import express from "express";
 import { protectedRoute } from "../middlewares/auth.middleware.js";
 import {
   createCustomer,
+  createFromApproval,
   getCustomersForTheBranch,
   getCustomerById,
   editCustomer,
@@ -12,7 +13,7 @@ import {
   blacklistCustomer,
   getCustomerPaymentHistory,
   getCustomerTickets,
- // getCustomerCompleteDataById,
+  // getCustomerCompleteDataById,
   generateCustomerNumber,
 } from "../controllers/customer.controller.js";
 import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
@@ -24,14 +25,18 @@ router.post(
   "/:branchId/create",
   protectedRoute,
   checkUserBranchAccess,
-  createCustomer,
+  createCustomer
 ); // Create a new customer
+
+// Called by Account Center when CUSTOMER CREATE approval is fully approved (server-to-server)
+router.post("/:branchId/create-from-approval", createFromApproval);
+
 router.get(
   "/:branchId/customers",
   protectedRoute,
   checkUserBranchAccess,
   checkUserSelectedHeadBranch,
-  getCustomersForTheBranch,
+  getCustomersForTheBranch
 ); // Get customers for a specific branch | or search customers by NIC,Mobile NO, Customer Id or Name
 
 router.get(
@@ -39,7 +44,7 @@ router.get(
   protectedRoute,
   checkUserBranchAccess,
   checkUserSelectedHeadBranch,
-  getCustomerById,
+  getCustomerById
 );
 // Get a customer by ID for a specific branch
 
@@ -47,28 +52,28 @@ router.patch(
   "/:branchId/customer/:id/edit",
   protectedRoute,
   checkUserBranchAccess,
-  editCustomer,
+  editCustomer
 ); // Edit a customer by ID for a specific branch
 
 router.post(
   "/:branchId/check-customer-nic",
   protectedRoute,
   checkUserBranchAccess,
-  checkCustomerByNICWhenCreating,
+  checkCustomerByNICWhenCreating
 ); // Check if a customer with the given NIC exists in the system when creating a new customer
 
 router.get(
   "/:branchId/customer-data-by-nic/:nic",
   protectedRoute,
   checkUserBranchAccess,
-  getCustomerDataByNIC,
+  getCustomerDataByNIC
 ); // Get customer data by NIC if there is a user in the system
 
 router.delete(
   "/:branchId/customer/:customerId/delete-documents/:documentId",
   protectedRoute,
   checkUserBranchAccess,
-  deleteDocuments,
+  deleteDocuments
 );
 
 // get customer logs data by id
@@ -76,7 +81,7 @@ router.get(
   "/:branchId/customer-logs/:customerId",
   protectedRoute,
   checkUserBranchAccess,
-  getCustomerLogsDataById,
+  getCustomerLogsDataById
 );
 
 // get customer payment history
@@ -84,7 +89,7 @@ router.get(
   "/:branchId/customer-payment-history/:customerId",
   protectedRoute,
   checkUserBranchAccess,
-  getCustomerPaymentHistory,
+  getCustomerPaymentHistory
 );
 
 // get customer tickets
@@ -92,7 +97,7 @@ router.get(
   "/:branchId/customer-tickets/:customerId",
   protectedRoute,
   checkUserBranchAccess,
-  getCustomerTickets,
+  getCustomerTickets
 );
 
 /*
@@ -109,7 +114,7 @@ router.patch(
   "/:branchId/blacklist-customer/:customerId",
   protectedRoute,
   checkUserBranchAccess,
-  blacklistCustomer,
+  blacklistCustomer
 );
 
 // generate customer number
@@ -117,7 +122,7 @@ router.get(
   "/:branchId/generate-customer-number",
   protectedRoute,
   checkUserBranchAccess,
-  generateCustomerNumber,
+  generateCustomerNumber
 );
 
 export default router;

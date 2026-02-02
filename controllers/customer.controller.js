@@ -2,14 +2,18 @@ import { errorHandler } from "../utils/errorHandler.js";
 import { pool, pool2 } from "../utils/db.js";
 import { uploadImage } from "../utils/cloudinary.js";
 import { getPaginationData, getCompanyBranches } from "../utils/helper.js";
-import { accCenterPost, accCenterGet, accCenterPut } from "../utils/accCenterApi.js";
+import {
+  accCenterPost,
+  accCenterGet,
+  accCenterPut,
+} from "../utils/accCenterApi.js";
 import { parse } from "path";
 
 const customerLog = async (idCustomer, date, type, Description, userId) => {
   try {
     const [result] = await pool.query(
       "INSERT INTO customer_log (Customer_idCustomer, Date_Time, Type, Description, User_idUser) VALUES (?, ?, ?, ?, ?)",
-      [idCustomer, date, type, Description, userId],
+      [idCustomer, date, type, Description, userId]
     );
 
     if (result.affectedRows === 0) {
@@ -28,11 +32,11 @@ async function getCustomerTableFields(companyId) {
   try {
     const [companyCustomerFields] = await pool2.query(
       "SELECT idCompanyCustomerField, CustomerField_idCustomerField, company_id, isRequired FROM company_customer_fields WHERE company_id = ?",
-      [companyId],
+      [companyId]
     );
 
     const [customerFields] = await pool2.query(
-      "SELECT idCustomerField, fieldName FROM customer_fields WHERE status = 1",
+      "SELECT idCustomerField, fieldName FROM customer_fields WHERE status = 1"
     );
 
     const configuredFields = [];
@@ -40,7 +44,7 @@ async function getCustomerTableFields(companyId) {
     for (const field of customerFields) {
       const companyCustomerField = companyCustomerFields.find(
         (companyField) =>
-          companyField.CustomerField_idCustomerField === field.idCustomerField,
+          companyField.CustomerField_idCustomerField === field.idCustomerField
       );
       if (companyCustomerField) {
         configuredFields.push({
@@ -76,28 +80,33 @@ export const createCustomer = async (req, res, next) => {
     // Step 0: Check if an approval process exists for "CUSTOMER CREATE"
     let hasApprovalProcess = false;
     try {
-        const approvalCheckParams = new URLSearchParams({
-            companyId: req.companyId.toString(),
-            approvalName: "CUSTOMER CREATE",
-            asipiyaSoftware: "pawning"
-        });
+      const approvalCheckParams = new URLSearchParams({
+        companyId: req.companyId.toString(),
+        approvalName: "CREATE CUSTOMER",
+        asipiyaSoftware: "pawning",
+      });
 
-        const approvalCheckResponse = await accCenterGet(
-            `/customer/check-approval-process?${approvalCheckParams.toString()}`,
-            req.cookies.accessToken 
-        );
-        console.log("approvalCheckResponse", approvalCheckResponse);
+      const approvalCheckResponse = await accCenterGet(
+        `/customer/check-approval-process?${approvalCheckParams.toString()}`,
+        req.cookies.accessToken
+      );
+      console.log("approvalCheckResponse", approvalCheckResponse);
 
-        if (approvalCheckResponse.success && approvalCheckResponse.data && approvalCheckResponse.data.length > 0) {
-            hasApprovalProcess = true;
-        }
+      if (approvalCheckResponse.success && approvalCheckResponse.data) {
+        hasApprovalProcess = true;
+      }
     } catch (error) {
-        console.warn("Failed to check approval process, defaulting to approval required flow if safe or handling error:", error);
-        // If we can't check, we might want to default to one way or another. 
-        // For now, let's assume if the check fails, we proceed safely (perhaps logging it).
-        // OR better: if check fails, we can't determine correct flow.
-        connection.release();
-        return next(errorHandler(500, "Failed to determine approval process requirements."));
+      console.warn(
+        "Failed to check approval process, defaulting to approval required flow if safe or handling error:",
+        error
+      );
+      // If we can't check, we might want to default to one way or another.
+      // For now, let's assume if the check fails, we proceed safely (perhaps logging it).
+      // OR better: if check fails, we can't determine correct flow.
+      connection.release();
+      return next(
+        errorHandler(500, "Failed to determine approval process requirements.")
+      );
     }
 
     // Step 1: Prepare Common Data
@@ -114,100 +123,178 @@ export const createCustomer = async (req, res, next) => {
       customerOccupations: data.customerOccupations || [],
       customerFamily: data.customerFamily || [],
       customerBankAccounts: data.customerBankAccounts || [],
-      Customer_Photo: data.Customer_Photo || null
+      Customer_Photo: data.Customer_Photo || null,
     };
 
     console.log("hasApprovalProcess", hasApprovalProcess);
 
     // FLOW A: Approval Process Exists -> No Local Creation Yet
     if (hasApprovalProcess) {
-       apiCustomerData.isPawningUserId = null;
+      apiCustomerData.isPawningUserId = null;
 
-       const accCenterPayload = { data: apiCustomerData };
+      const accCenterPayload = { data: apiCustomerData };
 
-       const accCenterResponse = await accCenterPost(
+      const accCenterResponse = await accCenterPost(
         "/customer/create-customer",
         accCenterPayload,
         req.cookies.accessToken
-       );
+      );
 
-       if (!accCenterResponse.success) {
-           connection.release();
-           throw new Error(accCenterResponse.message || "Failed to submit customer for approval");
-       }
+      if (!accCenterResponse.success) {
+        connection.release();
+        throw new Error(
+          accCenterResponse.message || "Failed to submit customer for approval"
+        );
+      }
 
-       // We expect an approvalRequestId
-       const { approvalRequestId } = accCenterResponse;
+      // We expect an approvalRequestId
+      const { approvalRequestId } = accCenterResponse;
 
-       connection.release();
-       return res.status(201).json({
-           success: true,
-           message: "Customer creation pending approval",
-           customerId: null,
-           accountCenterCusId: null,
-           approvalRequestId: approvalRequestId
-       });
+      connection.release();
+      return res.status(201).json({
+        success: true,
+        message: "Customer creation pending approval",
+        customerId: null,
+        accountCenterCusId: null,
+        approvalRequestId: approvalRequestId,
+      });
     }
 
     // FLOW B: No Approval Process -> Create Local First
     else {
-        await connection.beginTransaction();
+      await connection.beginTransaction();
 
-        try {
-            const [result] = await connection.query(
-                `INSERT INTO customer (Branch_idBranch, Customer_Number, created_at) VALUES (?, ?, ?)`,
-                [req.branchId, customerFields.cus_number, new Date()],
-            );
+      try {
+        const [result] = await connection.query(
+          `INSERT INTO customer (Branch_idBranch, Customer_Number, created_at) VALUES (?, ?, ?)`,
+          [req.branchId, customerFields.cus_number, new Date()]
+        );
 
-            const pawningCustomerId = result.insertId;
-            if (!pawningCustomerId) {
-                throw new Error("Failed to create customer in pawning database");
-            }
-
-            // Update payload with local ID
-            apiCustomerData.isPawningUserId = pawningCustomerId;
-            const accCenterPayload = { data: apiCustomerData };
-
-            const accCenterResponse = await accCenterPost(
-                "/customer/create-customer",
-                accCenterPayload,
-                req.cookies.accessToken
-            );
-
-            if (!accCenterResponse.success || !accCenterResponse.customerId) {
-                throw new Error(accCenterResponse.message || "Failed to create customer in ACC Center");
-            }
-
-            const accountCenterCusId = accCenterResponse.customerId;
-
-            // Link local record
-            await connection.query(
-                "UPDATE customer SET accountCenterCusId = ? WHERE idCustomer = ?",
-                [accountCenterCusId, pawningCustomerId],
-            );
-
-            await connection.commit();
-            connection.release();
-
-            return res.status(201).json({
-                success: true,
-                message: "Customer created successfully",
-                customerId: pawningCustomerId,
-                accountCenterCusId: accountCenterCusId
-            });
-
-        } catch (error) {
-            await connection.rollback();
-            connection.release();
-            throw error;
+        const pawningCustomerId = result.insertId;
+        if (!pawningCustomerId) {
+          throw new Error("Failed to create customer in pawning database");
         }
-    }
 
+        // Update payload with local ID
+        apiCustomerData.isPawningUserId = pawningCustomerId;
+        const accCenterPayload = { data: apiCustomerData };
+
+        const accCenterResponse = await accCenterPost(
+          "/customer/create-customer",
+          accCenterPayload,
+          req.cookies.accessToken
+        );
+
+        if (!accCenterResponse.success || !accCenterResponse.customerId) {
+          throw new Error(
+            accCenterResponse.message ||
+              "Failed to create customer in ACC Center"
+          );
+        }
+
+        const accountCenterCusId = accCenterResponse.customerId;
+
+        // Link local record
+        await connection.query(
+          "UPDATE customer SET accountCenterCusId = ? WHERE idCustomer = ?",
+          [accountCenterCusId, pawningCustomerId]
+        );
+
+        await connection.commit();
+        connection.release();
+
+        return res.status(201).json({
+          success: true,
+          message: "Customer created successfully",
+          customerId: pawningCustomerId,
+          accountCenterCusId: accountCenterCusId,
+        });
+      } catch (error) {
+        await connection.rollback();
+        connection.release();
+        throw error;
+      }
+    }
   } catch (error) {
     console.error("Error creating customer:", error);
     // Ensure connection is released if logic falls through
-    try { connection.release(); } catch(e) {} 
-    return next(errorHandler(error.status || 500, error.message || "Internal Server Error"));
+    try {
+      connection.release();
+    } catch (e) {}
+    return next(
+      errorHandler(
+        error.status || 500,
+        error.message || "Internal Server Error"
+      )
+    );
+  }
+};
+
+/**
+ * Create local Pawning customer from approval (called by Account Center when CUSTOMER CREATE is fully approved).
+ * Creates minimal customer row and sets accountCenterCusId. Uses data from approval payload (selected fields logic can be applied via data shape).
+ */
+export const createFromApproval = async (req, res, next) => {
+  const connection = await pool.getConnection();
+  try {
+    const { accountCenterCusId, data, approvalRequestId } = req.body;
+    const branchId = req.params.branchId
+      ? Number(req.params.branchId)
+      : data?.branchId;
+    if (!accountCenterCusId || !branchId) {
+      connection.release();
+      return next(
+        errorHandler(400, "accountCenterCusId and branchId are required")
+      );
+    }
+    const customerNumber =
+      data?.cus_number ||
+      data?.Customer_Number ||
+      data?.customer_number ||
+      (approvalRequestId ? `APPROVAL-${approvalRequestId}` : null);
+    if (!customerNumber) {
+      connection.release();
+      return next(
+        errorHandler(
+          400,
+          "Customer number (cus_number/Customer_Number) or approvalRequestId required"
+        )
+      );
+    }
+    await connection.beginTransaction();
+    const [result] = await connection.query(
+      `INSERT INTO customer (Branch_idBranch, Customer_Number, created_at) VALUES (?, ?, ?)`,
+      [branchId, customerNumber, new Date()]
+    );
+    const pawningCustomerId = result.insertId;
+    if (!pawningCustomerId) {
+      await connection.rollback();
+      connection.release();
+      return next(errorHandler(500, "Failed to create customer in Pawning"));
+    }
+    await connection.query(
+      "UPDATE customer SET accountCenterCusId = ? WHERE idCustomer = ?",
+      [accountCenterCusId, pawningCustomerId]
+    );
+    await connection.commit();
+    connection.release();
+    return res.status(201).json({
+      success: true,
+      message: "Customer created from approval",
+      customerId: pawningCustomerId,
+      accountCenterCusId: Number(accountCenterCusId),
+    });
+  } catch (error) {
+    try {
+      await connection.rollback();
+    } catch (e) {}
+    connection.release();
+    return next(
+      errorHandler(
+        error.status || 500,
+        error.message || "Internal Server Error"
+      )
+    );
   }
 };
 
@@ -222,7 +309,7 @@ export const checkCustomerByNICWhenCreating = async (req, res, next) => {
     // Get all the branches for this company
     const [branches] = await pool2.query(
       "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
-      [req.companyId],
+      [req.companyId]
     );
 
     if (branches.length === 0) {
@@ -233,7 +320,7 @@ export const checkCustomerByNICWhenCreating = async (req, res, next) => {
 
     const [customer] = await pool.query(
       "SELECT * FROM customer WHERE NIC = ? AND Branch_idBranch IN (?)",
-      [NIC, branches.map((b) => b.idBranch)],
+      [NIC, branches.map((b) => b.idBranch)]
     );
 
     if (customer.length > 0) {
@@ -265,7 +352,7 @@ export const getCustomerDataByNIC = async (req, res, next) => {
     // Fetch customer by NIC
     const [customerRows] = await pool.query(
       "SELECT * FROM customer WHERE NIC = ?",
-      [NIC],
+      [NIC]
     );
 
     if (!customerRows || customerRows.length === 0) {
@@ -277,7 +364,7 @@ export const getCustomerDataByNIC = async (req, res, next) => {
     // Fetch documents for this customer
     const [customerDocuments] = await pool.query(
       "SELECT * FROM customer_documents WHERE Customer_idCustomer = ?",
-      [customer.idCustomer],
+      [customer.idCustomer]
     );
     customer.documents = customerDocuments || [];
 
@@ -345,10 +432,10 @@ export const getCustomersForTheBranch = async (req, res, next) => {
       const placeholders = pawningCustomerIds.map(() => "?").join(",");
       const [pawningCustomers] = await pool.query(
         `SELECT idCustomer, Customer_Number FROM customer WHERE idCustomer IN (${placeholders})`,
-        pawningCustomerIds,
+        pawningCustomerIds
       );
       customerNumberMap = new Map(
-        pawningCustomers.map((c) => [c.idCustomer, c.Customer_Number]),
+        pawningCustomers.map((c) => [c.idCustomer, c.Customer_Number])
       );
     }
 
@@ -370,7 +457,12 @@ export const getCustomersForTheBranch = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Error fetching customers:", error);
-    return next(errorHandler(error.status || 500, error.message || "Internal Server Error"));
+    return next(
+      errorHandler(
+        error.status || 500,
+        error.message || "Internal Server Error"
+      )
+    );
   }
 };
 
@@ -386,7 +478,7 @@ export const getCustomerById = async (req, res, next) => {
     // Fetch pawning customer data to get accountCenterCusId
     const [customerRows] = await pool.query(
       "SELECT idCustomer, accountCenterCusId, Customer_Number FROM customer WHERE idCustomer = ? AND Branch_idBranch = ?",
-      [customerId, branchId],
+      [customerId, branchId]
     );
 
     if (customerRows.length === 0) {
@@ -407,7 +499,9 @@ export const getCustomerById = async (req, res, next) => {
 
         // Call ACC Center API's getCustomerById endpoint
         const accCenterResponse = await accCenterGet(
-          `/customer/get-customer/${pawningCustomer.accountCenterCusId}?${queryParams.toString()}`,
+          `/customer/get-customer/${
+            pawningCustomer.accountCenterCusId
+          }?${queryParams.toString()}`,
           req.cookies.accessToken
         );
 
@@ -423,7 +517,7 @@ export const getCustomerById = async (req, res, next) => {
     // Fetch customer documents from pawning DB
     const [documents] = await pool.query(
       "SELECT * FROM customer_documents WHERE Customer_idCustomer = ?",
-      [customerId],
+      [customerId]
     );
 
     // Merge ACC Center data with pawning-specific data
@@ -445,7 +539,12 @@ export const getCustomerById = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Error in getCustomerById controller", error);
-    return next(errorHandler(error.status || 500, error.message || "Internal Server Error"));
+    return next(
+      errorHandler(
+        error.status || 500,
+        error.message || "Internal Server Error"
+      )
+    );
   }
 };
 
@@ -470,7 +569,7 @@ export const editCustomer = async (req, res, next) => {
     // Get pawning customer to verify existence and get accountCenterCusId
     const [pawningCustomerResult] = await connection.query(
       "SELECT idCustomer, accountCenterCusId, Branch_idBranch FROM customer WHERE idCustomer = ? AND Branch_idBranch = ?",
-      [customerId, req.branchId],
+      [customerId, req.branchId]
     );
 
     if (pawningCustomerResult.length === 0) {
@@ -482,8 +581,13 @@ export const editCustomer = async (req, res, next) => {
     const accountCenterCusId = pawningCustomer.accountCenterCusId;
 
     if (!accountCenterCusId) {
-       connection.release();
-       return next(errorHandler(400, "This customer is not linked to the Account Center. Cannot update."));
+      connection.release();
+      return next(
+        errorHandler(
+          400,
+          "This customer is not linked to the Account Center. Cannot update."
+        )
+      );
     }
 
     // Extract documents and other fields
@@ -497,18 +601,18 @@ export const editCustomer = async (req, res, next) => {
       if (customerFields.cus_number !== undefined) {
         await connection.query(
           "UPDATE customer SET Customer_Number = ? WHERE idCustomer = ?",
-          [customerFields.cus_number, customerId],
+          [customerFields.cus_number, customerId]
         );
       }
 
       // Prepare payload for ACC Center API
       // The provided logic expects customerData to contain customerDocuments, customerOccupations, etc.
       // We map the incoming 'documents' (if any) to 'customerDocuments' to match the expected API format
-      
+
       const apiCustomerData = {
         ...customerFields,
-         // Map 'documents' to 'customerDocuments' if it exists. 
-         // Note: The frontend might send 'documents' or 'customerDocuments'. We handle both.
+        // Map 'documents' to 'customerDocuments' if it exists.
+        // Note: The frontend might send 'documents' or 'customerDocuments'. We handle both.
         customerDocuments: documents || customerFields.customerDocuments || [],
         customerOccupations: customerFields.customerOccupations || [],
         customerFamily: customerFields.customerFamily || [],
@@ -516,10 +620,10 @@ export const editCustomer = async (req, res, next) => {
       };
 
       // Ensure field names match what the API expects (e.g., if frontend sends mapped fields)
-      
+
       const queryParams = new URLSearchParams({
-          asipiyaSoftware: "pawning",
-          companyId: req.companyId.toString(),
+        asipiyaSoftware: "pawning",
+        companyId: req.companyId.toString(),
       });
 
       // Call ACC Center API to update customer
@@ -532,7 +636,13 @@ export const editCustomer = async (req, res, next) => {
       // Log the update locally
       await connection.query(
         "INSERT INTO customer_log (Customer_idCustomer, Date_Time, Type, Description, User_idUser) VALUES (?, ?, ?, ?, ?)",
-        [customerId, new Date(), "UPDATE", "Customer updated via Account Center", req.userId],
+        [
+          customerId,
+          new Date(),
+          "UPDATE",
+          "Customer updated via Account Center",
+          req.userId,
+        ]
       );
 
       // Commit local transaction
@@ -542,10 +652,10 @@ export const editCustomer = async (req, res, next) => {
         success: true,
         message: "Customer updated successfully",
         customer: {
-             idCustomer: customerId,
-             accountCenterCusId: accountCenterCusId,
-             ...apiCustomerData
-        }
+          idCustomer: customerId,
+          accountCenterCusId: accountCenterCusId,
+          ...apiCustomerData,
+        },
       });
     } catch (error) {
       // Rollback local transaction on error (including API failure)
@@ -555,7 +665,12 @@ export const editCustomer = async (req, res, next) => {
   } catch (error) {
     console.error("Error editing customer:", error);
     // accCenterPut throws errors with status and response if available
-    return next(errorHandler(error.status || 500, error.message || "Internal Server Error"));
+    return next(
+      errorHandler(
+        error.status || 500,
+        error.message || "Internal Server Error"
+      )
+    );
   } finally {
     // Always release connection
     connection.release();
@@ -574,7 +689,7 @@ export const deleteDocuments = async (req, res, next) => {
     // Find the document that belongs to this customer
     const [existingDocs] = await pool.query(
       `SELECT * FROM customer_documents WHERE idCustomer_Documents = ? AND Customer_idCustomer = ?`,
-      [documentId, customerId],
+      [documentId, customerId]
     );
 
     if (!existingDocs || existingDocs.length === 0) {
@@ -601,7 +716,7 @@ export const deleteDocuments = async (req, res, next) => {
     // Delete from database
     const [deleteResult] = await pool.query(
       `DELETE FROM customer_documents WHERE idCustomer_Documents = ?`,
-      [documentId],
+      [documentId]
     );
 
     await customerLog(
@@ -609,7 +724,7 @@ export const deleteDocuments = async (req, res, next) => {
       new Date(),
       "DELETE",
       `Customer document deleted. Deleted document: ${documentTypeDeleted}`,
-      req.userId,
+      req.userId
     );
 
     res.status(200).json({
@@ -637,7 +752,7 @@ export const getCustomerLogsDataById = async (req, res, next) => {
        FROM customer_log cl
        WHERE cl.Customer_idCustomer = ?
        ORDER BY STR_TO_DATE(cl.Date_Time, '%Y-%m-%d %H:%i:%s') ASC `,
-      [customerId],
+      [customerId]
     );
 
     // Fetch user data from pool2
@@ -650,7 +765,7 @@ export const getCustomerLogsDataById = async (req, res, next) => {
       const placeholders = userIds.map(() => "?").join(",");
       const [users] = await pool2.query(
         `SELECT idUser, full_name FROM user WHERE idUser IN (${placeholders})`,
-        userIds,
+        userIds
       );
       userMap = new Map(users.map((u) => [u.idUser, u.full_name]));
     }
@@ -692,7 +807,7 @@ export const getCustomerPaymentHistory = async (req, res, next) => {
     // validate start date is before end date
     if (start_date && end_date && new Date(start_date) > new Date(end_date)) {
       return next(
-        errorHandler(400, "Start date must be before or equal to end date."),
+        errorHandler(400, "Start date must be before or equal to end date.")
       );
     }
 
@@ -702,7 +817,7 @@ export const getCustomerPaymentHistory = async (req, res, next) => {
 
     const [ticketNumbers] = await pool.query(
       "SELECT Ticket_No FROM pawning_ticket WHERE Customer_idCustomer = ?",
-      [customerId],
+      [customerId]
     );
     if (ticketNumbers.length === 0) {
       return res.status(200).json({
@@ -760,7 +875,7 @@ export const getCustomerPaymentHistory = async (req, res, next) => {
       countQuery,
       queryParams,
       page,
-      limit,
+      limit
     );
 
     const [paymentResults] = await pool.query(dataQuery + " LIMIT ? OFFSET ?", [
@@ -779,7 +894,7 @@ export const getCustomerPaymentHistory = async (req, res, next) => {
       const placeholders = userIds.map(() => "?").join(",");
       const [users] = await pool2.query(
         `SELECT idUser, full_name FROM user WHERE idUser IN (${placeholders})`,
-        userIds,
+        userIds
       );
       userMap = new Map(users.map((u) => [u.idUser, u.full_name]));
     }
@@ -826,7 +941,7 @@ export const getCustomerTickets = async (req, res, next) => {
     // validate start date is before end date
     if (start_date && end_date && new Date(start_date) > new Date(end_date)) {
       return next(
-        errorHandler(400, "Start date must be before or equal to end date."),
+        errorHandler(400, "Start date must be before or equal to end date.")
       );
     }
 
@@ -842,8 +957,8 @@ export const getCustomerTickets = async (req, res, next) => {
       return next(
         errorHandler(
           400,
-          `Invalid status. Valid statuses are: ${validStatuses.join(", ")}`,
-        ),
+          `Invalid status. Valid statuses are: ${validStatuses.join(", ")}`
+        )
       );
     }
 
@@ -895,7 +1010,7 @@ export const getCustomerTickets = async (req, res, next) => {
       countQuery,
       queryParams,
       page,
-      limit,
+      limit
     );
 
     const [tickets] = await pool.query(dataQuery + " LIMIT ? OFFSET ?", [
@@ -932,7 +1047,7 @@ export const blacklistCustomer = async (req, res, next) => {
     // Check if the customer exists
     const [isExitingCustomer] = await pool.query(
       "SELECT Status, NIC, Branch_idBranch FROM customer WHERE idCustomer = ? AND Branch_idBranch = ?",
-      [customerId, req.branchId],
+      [customerId, req.branchId]
     );
 
     if (isExitingCustomer.length === 0) {
@@ -947,7 +1062,7 @@ export const blacklistCustomer = async (req, res, next) => {
     // if exist check this customer NIC in all company branches
     const [companyBranches] = await pool2.query(
       "SELECT DISTINCT idBranch FROM branch WHERE Company_idCompany = ?",
-      [req.companyId],
+      [req.companyId]
     );
 
     if (companyBranches.length === 0) {
@@ -957,7 +1072,7 @@ export const blacklistCustomer = async (req, res, next) => {
     // get the branch code of the branch where the customer is being blacklisted
     const [branchData] = await pool2.query(
       "SELECT Branch_Code, Name FROM branch WHERE idBranch = ?",
-      [req.branchId],
+      [req.branchId]
     );
 
     const blacklistDate = new Date();
@@ -968,7 +1083,7 @@ export const blacklistCustomer = async (req, res, next) => {
       // Check if this branch has customers with this NIC - get ALL of them
       const [customersInBranch] = await pool.query(
         "SELECT idCustomer FROM customer WHERE NIC = ? AND Branch_idBranch = ?",
-        [isExitingCustomer[0].NIC, branch.idBranch],
+        [isExitingCustomer[0].NIC, branch.idBranch]
       );
 
       // Only update and log if customers exist in this branch
@@ -976,7 +1091,7 @@ export const blacklistCustomer = async (req, res, next) => {
         // update status to 0 (blacklist) for ALL customers with this NIC in this branch
         await pool.query(
           "UPDATE customer SET Status = 0, Blacklist_Reason = ?, Blacklist_Date = ? WHERE NIC = ? AND Branch_idBranch = ?",
-          [reason, blacklistDate, isExitingCustomer[0].NIC, branch.idBranch],
+          [reason, blacklistDate, isExitingCustomer[0].NIC, branch.idBranch]
         );
 
         // Log ONCE per branch, using the first customer ID found in that branch
@@ -985,7 +1100,7 @@ export const blacklistCustomer = async (req, res, next) => {
           blacklistDate,
           "BLACKLIST",
           `Customer blacklisted from Company. By Branch: ${branchData[0].Name} | Branch Code: ${branchData[0].Branch_Code} | Reason: ${reason}`,
-          req.userId,
+          req.userId
         );
 
         logsCreated++;
@@ -1005,7 +1120,6 @@ export const blacklistCustomer = async (req, res, next) => {
   }
 };
 
-
 // Generate customer number
 export const generateCustomerNumber = async (req, res, next) => {
   try {
@@ -1022,14 +1136,14 @@ export const generateCustomerNumber = async (req, res, next) => {
 
     const [customerFormat] = await pool2.query(
       "SELECT * FROM customer_number_formats WHERE company_id = ?",
-      [req.companyId],
+      [req.companyId]
     );
 
     if (customerFormat.length === 0) {
       // No format configured, return simple count for the branch
       const [customerCount] = await pool.query(
         "SELECT COUNT(*) AS count FROM customer WHERE Branch_idBranch = ?",
-        [req.branchId],
+        [req.branchId]
       );
 
       const customerNo = (customerCount[0].count + 1).toString();
@@ -1062,7 +1176,7 @@ export const generateCustomerNumber = async (req, res, next) => {
           // Get the branch number
           const [branch] = await pool2.query(
             "SELECT Branch_Code FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
-            [req.branchId, req.companyId],
+            [req.branchId, req.companyId]
           );
 
           if (branch.length === 0) {
@@ -1075,7 +1189,7 @@ export const generateCustomerNumber = async (req, res, next) => {
         if (part === "Branch's Customer Count") {
           const [customerCount] = await pool.query(
             "SELECT COUNT(*) AS count FROM customer WHERE Branch_idBranch = ?",
-            [req.branchId],
+            [req.branchId]
           );
 
           customerNo += (customerCount[0].count + 1)
@@ -1091,12 +1205,12 @@ export const generateCustomerNumber = async (req, res, next) => {
             // Find all the branches for this specific company
             const [branches] = await pool2.query(
               "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
-              [req.companyId],
+              [req.companyId]
             );
 
             if (branches.length === 0) {
               return next(
-                errorHandler(404, "No branches found for the company"),
+                errorHandler(404, "No branches found for the company")
               );
             }
 
@@ -1104,7 +1218,7 @@ export const generateCustomerNumber = async (req, res, next) => {
             for (const branch of branches) {
               const [branchCustomerCount] = await pool.query(
                 "SELECT COUNT(*) AS count FROM customer WHERE Branch_idBranch = ?",
-                [branch.idBranch],
+                [branch.idBranch]
               );
               customerCount += branchCustomerCount[0].count;
             }
@@ -1141,7 +1255,7 @@ export const generateCustomerNumber = async (req, res, next) => {
              WHERE Branch_idBranch = ? 
              AND YEAR(STR_TO_DATE(created_at, '%Y-%m-%d %H:%i:%s')) = ? 
              AND MONTH(STR_TO_DATE(created_at, '%Y-%m-%d %H:%i:%s')) = ?`,
-            [req.branchId, currentYear, currentMonth],
+            [req.branchId, currentYear, currentMonth]
           );
 
           customerNo += (monthlyCount[0].count + 1).toString().padStart(4, "0");
@@ -1153,7 +1267,7 @@ export const generateCustomerNumber = async (req, res, next) => {
       // Find all the branches for this specific company
       const [branches] = await pool2.query(
         "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
-        [req.companyId],
+        [req.companyId]
       );
 
       if (branches.length === 0) {
@@ -1164,7 +1278,7 @@ export const generateCustomerNumber = async (req, res, next) => {
       for (const branch of branches) {
         const [branchCustomerCount] = await pool.query(
           "SELECT COUNT(*) AS count FROM customer WHERE Branch_idBranch = ?",
-          [branch.idBranch],
+          [branch.idBranch]
         );
         customerCount += branchCustomerCount[0].count;
       }

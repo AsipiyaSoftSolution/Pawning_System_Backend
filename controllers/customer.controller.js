@@ -147,16 +147,12 @@ export const createCustomer = async (req, res, next) => {
         );
       }
 
-      // We expect an approvalRequestId
-      const { approvalRequestId } = accCenterResponse;
-
       connection.release();
       return res.status(201).json({
         success: true,
         message: "Customer creation pending approval",
         customerId: null,
         accountCenterCusId: null,
-        approvalRequestId: approvalRequestId,
       });
     }
 
@@ -237,7 +233,7 @@ export const createCustomer = async (req, res, next) => {
 export const createFromApproval = async (req, res, next) => {
   const connection = await pool.getConnection();
   try {
-    const { accountCenterCusId, data, approvalRequestId } = req.body;
+    const { accountCenterCusId, data } = req.body;
     const branchId = req.params.branchId
       ? Number(req.params.branchId)
       : data?.branchId;
@@ -248,16 +244,13 @@ export const createFromApproval = async (req, res, next) => {
       );
     }
     const customerNumber =
-      data?.cus_number ||
-      data?.Customer_Number ||
-      data?.customer_number ||
-      (approvalRequestId ? `APPROVAL-${approvalRequestId}` : null);
+      data?.cus_number || data?.Customer_Number || data?.customer_number;
     if (!customerNumber) {
       connection.release();
       return next(
         errorHandler(
           400,
-          "Customer number (cus_number/Customer_Number) or approvalRequestId required"
+          "Customer number (cus_number/Customer_Number) required in data"
         )
       );
     }

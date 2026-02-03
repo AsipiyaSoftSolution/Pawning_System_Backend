@@ -1320,7 +1320,7 @@ export const getKycDataForAccountCenter = async (req, res, next) => {
     const pawningCustomer = customerRows[0];
 
     const [pawningTickets] = await pool.query(
-      `SELECT idPawning_Ticket, Ticket_No, Date_Time, Maturity_date, Period, Period_Type, Interest_R, Pawning_Product_idPawning_Product
+      `SELECT idPawning_Ticket, Ticket_No, Date_Time, Maturity_date, Period, Period_Type, Interest_Rate AS Interest_R, Pawning_Product_idPawning_Product
        FROM pawning_ticket
        WHERE Customer_idCustomer = ?
        ORDER BY Date_Time DESC`,

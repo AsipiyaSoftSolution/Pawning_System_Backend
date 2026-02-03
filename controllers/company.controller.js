@@ -14,7 +14,7 @@ export const getCompanyDetails = async (req, res, next) => {
   try {
     const [companyData] = await pool2.query(
       "SELECT * FROM company WHERE idCompany = ?",
-      [req.companyId],
+      [req.companyId]
     );
     if (!companyData[0]) {
       return next(errorHandler(404, "Company not found"));
@@ -40,7 +40,7 @@ export const updateCompanyDetails = async (req, res, next) => {
 
     const [existingCompany] = await pool2.query(
       "SELECT Logo FROM company WHERE idCompany = ?",
-      [req.companyId],
+      [req.companyId]
     );
 
     if (image && image !== null) {
@@ -51,7 +51,7 @@ export const updateCompanyDetails = async (req, res, next) => {
         // uplaod with company id to organize images better
         secureUrl = await uploadImage(
           image,
-          `pawning_system/company_logos/company_${req.companyId}`,
+          `pawning_system/company_logos/company_${req.companyId}`
         );
 
         // delete the previous image from cloudinary if exists
@@ -61,7 +61,7 @@ export const updateCompanyDetails = async (req, res, next) => {
             .slice(-1)[0]
             .split(".")[0];
           await deleteImage(
-            `pawning_system/company_logos/company_${req.companyId}/${publicId}`,
+            `pawning_system/company_logos/company_${req.companyId}/${publicId}`
           );
         }
       }
@@ -73,7 +73,7 @@ export const updateCompanyDetails = async (req, res, next) => {
           .slice(-1)[0]
           .split(".")[0];
         await deleteImage(
-          `pawning_system/company_logos/company_${req.companyId}/${publicId}`,
+          `pawning_system/company_logos/company_${req.companyId}/${publicId}`
         );
       }
     }
@@ -89,13 +89,13 @@ export const updateCompanyDetails = async (req, res, next) => {
         city,
         secureUrl || image,
         req.companyId,
-      ],
+      ]
     );
 
     // SEND UPDATED DATA BACK
     const [updatedCompanyData] = await pool2.query(
       "SELECT * FROM company WHERE idCompany = ?",
-      [req.companyId],
+      [req.companyId]
     );
 
     res.status(200).json({
@@ -119,7 +119,7 @@ export const creteDesignation = async (req, res, next) => {
 
     const [result] = await pool2.query(
       "INSERT INTO designation (Description,Company_idCompany) VALUES (?,?)",
-      [designation, req.companyId],
+      [designation, req.companyId]
     );
 
     if (result.affectedRows === 0) {
@@ -128,7 +128,7 @@ export const creteDesignation = async (req, res, next) => {
 
     const [designationData] = await pool2.query(
       "SELECT * FROM designation WHERE idDesignation = ?",
-      [result.insertId],
+      [result.insertId]
     );
 
     if (!designationData[0]) {
@@ -153,7 +153,7 @@ export const getDesignations = async (req, res, next) => {
     let privilages;
     [designations] = await pool2.query(
       "SELECT * FROM designation WHERE Company_idCompany = ?",
-      [req.companyId],
+      [req.companyId]
     );
 
     if (designations.length === 0) {
@@ -163,13 +163,13 @@ export const getDesignations = async (req, res, next) => {
     for (let designation of designations) {
       [designationPrivilages] = await pool2.query(
         "SELECT * FROM designation_has_user_privilages WHERE Designation_idDesignation = ?",
-        [designation.idDesignation],
+        [designation.idDesignation]
       );
 
       for (let privilage of designationPrivilages) {
         [privilages] = await pool2.query(
           "SELECT * FROM user_privilages WHERE idUser_Privilages = ?",
-          [privilage.User_Privilages_idUser_Privilages],
+          [privilage.User_Privilages_idUser_Privilages]
         );
         designation.Privilages = [
           ...(designation.Privilages || []),
@@ -213,13 +213,13 @@ export const assignPrivileges = async (req, res, next) => {
     const { idDesignation, idUser_privilages } = req.body;
     if (!idDesignation || !idUser_privilages) {
       return next(
-        errorHandler(400, "Designation ID and Privilege ID are required"),
+        errorHandler(400, "Designation ID and Privilege ID are required")
       );
     }
 
     const [result] = await pool2.query(
       "INSERT INTO designation_has_user_privilages (Designation_idDesignation, User_Privilages_idUser_Privilages,Last_Updated_User,Last_Updated_Time) VALUES (?, ?,?, NOW())",
-      [idDesignation, idUser_privilages, req.userId],
+      [idDesignation, idUser_privilages, req.userId]
     );
 
     if (result.affectedRows === 0) {
@@ -245,7 +245,7 @@ export const createArticleType = async (req, res, next) => {
 
     const [existingArticle] = await pool2.query(
       "SELECT * FROM article_types WHERE Description LIKE ? AND Company_idCompany = ?",
-      [articleName, req.companyId],
+      [articleName, req.companyId]
     );
 
     if (existingArticle.length > 0) {
@@ -254,7 +254,7 @@ export const createArticleType = async (req, res, next) => {
 
     const [result] = await pool2.query(
       "INSERT INTO article_types (Description, Company_idCompany,created_at) VALUES (?, ?, now())",
-      [articleName, req.companyId],
+      [articleName, req.companyId]
     );
 
     if (result.affectedRows === 0) {
@@ -263,7 +263,7 @@ export const createArticleType = async (req, res, next) => {
 
     const [articleTypeData] = await pool2.query(
       "SELECT * FROM article_types WHERE idArticle_Types = ?",
-      [result.insertId],
+      [result.insertId]
     );
 
     if (!articleTypeData[0]) {
@@ -298,13 +298,13 @@ export const getArticleTypes = async (req, res, next) => {
         [searchPattern, req.companyId],
         page,
         limit,
-        false,
+        false
       );
 
       // Get paginated data
       [articleTypes] = await pool2.query(
         "SELECT * FROM article_types WHERE Description LIKE ? AND Company_idCompany = ? LIMIT ? OFFSET ?",
-        [`%${searchPattern}%`, req.companyId, limit, offset],
+        [`%${searchPattern}%`, req.companyId, limit, offset]
       );
     } else {
       paginationData = await getPaginationData(
@@ -312,11 +312,11 @@ export const getArticleTypes = async (req, res, next) => {
         [req.companyId],
         page,
         limit,
-        false,
+        false
       );
       [articleTypes] = await pool2.query(
         "SELECT * FROM article_types WHERE Company_idCompany = ? LIMIT ? OFFSET ?",
-        [req.companyId, limit, offset],
+        [req.companyId, limit, offset]
       );
     }
 
@@ -324,7 +324,7 @@ export const getArticleTypes = async (req, res, next) => {
     for (let i = 0; i < articleTypes.length; i++) {
       const [categories] = await pool2.query(
         "SELECT * FROM article_categories WHERE Article_types_idArticle_types = ?",
-        [articleTypes[i].idArticle_Types],
+        [articleTypes[i].idArticle_Types]
       );
 
       // Add categories as an array of description strings to each article type
@@ -357,7 +357,7 @@ export const updateArticleType = async (req, res, next) => {
 
     const [existingArticle] = await pool.query(
       "SELECT * FROM article_types WHERE idArticle_Types = ? AND Company_idCompany = ? ",
-      [idArticleType, req.companyId],
+      [idArticleType, req.companyId]
     );
 
     if (existingArticle.length === 0) {
@@ -366,7 +366,7 @@ export const updateArticleType = async (req, res, next) => {
 
     const [result] = await pool.query(
       "UPDATE article_types SET Description = ?, updated_at = NOW() WHERE idArticle_Types = ? ",
-      [articleName, existingArticle[0].idArticle_Types],
+      [articleName, existingArticle[0].idArticle_Types]
     );
 
     if (result.affectedRows === 0) {
@@ -375,7 +375,7 @@ export const updateArticleType = async (req, res, next) => {
 
     const [updatedArticleType] = await pool.query(
       "SELECT * FROM article_types WHERE idArticle_Types = ?",
-      [existingArticle[0].idArticle_Types],
+      [existingArticle[0].idArticle_Types]
     );
 
     if (!updatedArticleType[0]) {
@@ -402,7 +402,7 @@ export const deleteArticleType = async (req, res, next) => {
 
     const [existingArticle] = await pool.query(
       "SELECT * FROM article_types WHERE idArticle_Types = ? AND Company_idCompany = ?",
-      [idArticleType, req.companyId],
+      [idArticleType, req.companyId]
     );
 
     if (existingArticle.length === 0) {
@@ -412,13 +412,13 @@ export const deleteArticleType = async (req, res, next) => {
     // First delete all associated article categories to avoid foreign key constraint violations
     await pool.query(
       "DELETE FROM article_categories WHERE Article_types_idArticle_types = ?",
-      [existingArticle[0].idArticle_Types],
+      [existingArticle[0].idArticle_Types]
     );
 
     // Then delete the article type
     const [result] = await pool.query(
       "DELETE FROM article_types WHERE idArticle_Types = ?",
-      [existingArticle[0].idArticle_Types],
+      [existingArticle[0].idArticle_Types]
     );
 
     if (result.affectedRows === 0) {
@@ -441,13 +441,13 @@ export const createArticleCategory = async (req, res, next) => {
     const { categoryName, articleTypeId } = req.body;
     if (!categoryName || !articleTypeId) {
       return next(
-        errorHandler(400, "Category name and Article type ID are required"),
+        errorHandler(400, "Category name and Article type ID are required")
       );
     }
 
     const [existingCategory] = await pool.query(
       "SELECT * FROM article_categories WHERE Description Like ? AND Article_types_idArticle_types = ?",
-      [categoryName, articleTypeId],
+      [categoryName, articleTypeId]
     );
 
     if (existingCategory.length > 0) {
@@ -456,12 +456,12 @@ export const createArticleCategory = async (req, res, next) => {
 
     const [result] = await pool.query(
       "INSERT INTO article_categories (Description, Article_types_idArticle_types,created_at) VALUES (?, ?, NOW())",
-      [categoryName, articleTypeId],
+      [categoryName, articleTypeId]
     );
 
     const [newCategory] = await pool.query(
       "SELECT * FROM article_categories WHERE idArticle_Categories = ?",
-      [result.insertId],
+      [result.insertId]
     );
 
     if (!newCategory[0]) {
@@ -490,13 +490,13 @@ export const updateArticleCategory = async (req, res, next) => {
 
     if (!categoryName || !articleTypeId) {
       return next(
-        errorHandler(400, "Category name and Article type ID are required"),
+        errorHandler(400, "Category name and Article type ID are required")
       );
     }
 
     const [existingCategory] = await pool.query(
       "SELECT * FROM article_categories WHERE idArticle_Categories = ? AND Article_types_idArticle_types = ?",
-      [idCategory, articleTypeId],
+      [idCategory, articleTypeId]
     );
 
     if (existingCategory.length === 0) {
@@ -505,12 +505,12 @@ export const updateArticleCategory = async (req, res, next) => {
 
     const [result] = await pool.query(
       "UPDATE article_categories SET Description = ?, updated_at = NOW(), Article_types_idArticle_types = ?  WHERE idArticle_Categories = ?",
-      [categoryName, articleTypeId, existingCategory[0].idArticle_Categories],
+      [categoryName, articleTypeId, existingCategory[0].idArticle_Categories]
     );
 
     const [updatedCategory] = await pool.query(
       "SELECT * FROM article_categories WHERE idArticle_Categories = ?",
-      [existingCategory[0].idArticle_Categories],
+      [existingCategory[0].idArticle_Categories]
     );
 
     if (!updatedCategory[0]) {
@@ -533,13 +533,13 @@ export const deleteArticleCategory = async (req, res, next) => {
     const idCategory = req.params.id;
     if (!idCategory) {
       return next(
-        errorHandler(400, "Article category ID is required to delete"),
+        errorHandler(400, "Article category ID is required to delete")
       );
     }
 
     const [existingCategory] = await pool.query(
       "SELECT * FROM article_categories WHERE idArticle_Categories = ?",
-      [idCategory],
+      [idCategory]
     );
 
     if (existingCategory.length === 0) {
@@ -548,7 +548,7 @@ export const deleteArticleCategory = async (req, res, next) => {
 
     const [result] = await pool.query(
       "DELETE FROM article_categories WHERE idArticle_Categories = ?",
-      [existingCategory[0].idArticle_Categories],
+      [existingCategory[0].idArticle_Categories]
     );
 
     if (result.affectedRows === 0) {
@@ -588,13 +588,13 @@ export const getArticleCategories = async (req, res, next) => {
         [articleTypeId, `%${searchPattern}%`],
         page,
         limit,
-        false,
+        false
       );
 
       // Get data
       [articleCategories] = await pool2.query(
         "SELECT * FROM article_categories WHERE Article_types_idArticle_types = ? AND Description LIKE ? LIMIT ? OFFSET ?",
-        [articleTypeId, `%${searchPattern}%`, limit, offset],
+        [articleTypeId, `%${searchPattern}%`, limit, offset]
       );
     } else {
       paginationData = await getPaginationData(
@@ -602,12 +602,12 @@ export const getArticleCategories = async (req, res, next) => {
         [articleTypeId],
         page,
         limit,
-        false,
+        false
       );
 
       [articleCategories] = await pool2.query(
         "SELECT * FROM article_categories WHERE Article_types_idArticle_types = ? LIMIT ? OFFSET ?",
-        [articleTypeId, limit, offset],
+        [articleTypeId, limit, offset]
       );
     }
 
@@ -647,7 +647,7 @@ export const createUser = async (req, res, next) => {
 
     const [existingUser] = await pool.query(
       "SELECT idUser FROM user WHERE email = ?",
-      [Email],
+      [Email]
     );
     if (existingUser.length > 0) {
       return next(errorHandler(400, "User with this email already exists"));
@@ -656,7 +656,7 @@ export const createUser = async (req, res, next) => {
     // Verify designation exists for this company
     const [designationExists] = await pool.query(
       "SELECT idDesignation FROM designation WHERE idDesignation = ? AND Company_idCompany = ?",
-      [Designation_idDesignation, req.companyId],
+      [Designation_idDesignation, req.companyId]
     );
     if (designationExists.length === 0) {
       return next(errorHandler(404, "Designation not found for this company"));
@@ -670,25 +670,20 @@ export const createUser = async (req, res, next) => {
         branchData.length === 0
       ) {
         return next(
-          errorHandler(400, "Cashier account type requires exactly one branch"),
+          errorHandler(400, "Cashier account type requires exactly one branch")
         );
       }
       if (branchData.length > 1) {
         return next(
           errorHandler(
             400,
-            "Cashier account type can only be assigned to one branch",
-          ),
+            "Cashier account type can only be assigned to one branch"
+          )
         );
       }
     }
 
     const tempPassword = Math.random().toString(36).slice(-8); // Generate a temporary password
-    console.log("Temporary password generated:", tempPassword);
-    // have to send this temp password to the user via email
-    // For now, we will just log it to the console (In production, use a proper email service)
-    console.log(`Temporary password for ${Email}: ${tempPassword}`);
-
     const hashedPassword = await bcrypt.hash(tempPassword, 10); // Hash the temporary password
 
     const [result] = await pool.query(
@@ -700,7 +695,7 @@ export const createUser = async (req, res, next) => {
         Designation_idDesignation,
         req.companyId,
         Contact_no,
-      ],
+      ]
     );
 
     if (result.affectedRows === 0) {
@@ -712,30 +707,30 @@ export const createUser = async (req, res, next) => {
       for (const branch of branchData) {
         const [branchExists] = await pool.query(
           "SELECT 1 FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
-          [branch.idBranch, req.companyId],
+          [branch.idBranch, req.companyId]
         );
         // If any branch does not exist, return an error
         if (branchExists.length === 0) {
           return next(
             errorHandler(
               404,
-              `Branch with ID ${branch.Name} not found for this company`,
-            ),
+              `Branch with ID ${branch.Name} not found for this company`
+            )
           );
         }
 
         // if it exits we have to intert into user_has_branch table
         const [branchAssignment] = await pool.query(
           "INSERT INTO user_has_branch (User_idUser, Branch_idBranch) VALUES (?, ?)",
-          [result.insertId, branch.idBranch],
+          [result.insertId, branch.idBranch]
         );
 
         if (branchAssignment.affectedRows === 0) {
           return next(
             errorHandler(
               500,
-              "Failed to assign user to branch, Please try again",
-            ),
+              "Failed to assign user to branch, Please try again"
+            )
           );
         }
       }
@@ -743,7 +738,7 @@ export const createUser = async (req, res, next) => {
 
     if (accountType && accountType === "cashier") {
       const accountCode = Math.floor(
-        100000 + Math.random() * 900000,
+        100000 + Math.random() * 900000
       ).toString(); // generate a random 6 digit account code
       // create a cashier account for the user - cashiers can only have one branch
       const [cashierAccount] = await pool.query(
@@ -760,7 +755,7 @@ export const createUser = async (req, res, next) => {
           1,
           accountCode,
           1,
-        ],
+        ]
       );
       // create create account log...
       await addAccountCreateLog(
@@ -771,7 +766,7 @@ export const createUser = async (req, res, next) => {
         0,
         0,
         null,
-        req.userId,
+        req.userId
       );
 
       if (cashierAccount.affectedRows === 0) {
@@ -817,7 +812,7 @@ export const getAllUsersForTheBranch = async (req, res, next) => {
     try {
       const [branchRow] = await pool.query(
         "SELECT Name,Branch_Code FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
-        [req.branchId, req.companyId],
+        [req.branchId, req.companyId]
       );
       if (
         branchRow &&
@@ -872,14 +867,14 @@ export const getAllUsersForTheBranch = async (req, res, next) => {
         `SELECT COUNT(DISTINCT u.idUser) as total FROM user u ${whereSql}`,
         paramsForCount,
         page,
-        limit,
+        limit
       );
     } else {
       paginationData = await getPaginationData(
         `SELECT COUNT(DISTINCT u.idUser) as total FROM user u JOIN user_has_branch ub ON u.idUser = ub.User_idUser ${whereSql}`,
         paramsForCount,
         page,
-        limit,
+        limit
       );
     }
 
@@ -900,7 +895,7 @@ export const getAllUsersForTheBranch = async (req, res, next) => {
          ? whereSql
          : whereSql.replace(
              "ub.Branch_idBranch = ?",
-             "ub_filter.Branch_idBranch = ?",
+             "ub_filter.Branch_idBranch = ?"
            )
      }
      GROUP BY u.idUser
@@ -959,12 +954,12 @@ export const updateUser = async (req, res, next) => {
 
     console.log(
       branchData,
-      "this is the branch data in the update user function",
+      "this is the branch data in the update user function"
     );
 
     const [existingUser] = await pool.query(
       "SELECT * FROM user WHERE idUser = ? AND Company_idCompany = ?",
-      [userId, req.companyId],
+      [userId, req.companyId]
     );
 
     if (existingUser.length === 0) {
@@ -974,7 +969,7 @@ export const updateUser = async (req, res, next) => {
     // Verify designation exists for this company
     const [designationExists] = await pool.query(
       "SELECT 1 FROM designation WHERE idDesignation = ? AND Company_idCompany = ?",
-      [Designation_idDesignation, req.companyId],
+      [Designation_idDesignation, req.companyId]
     );
     if (designationExists.length === 0) {
       return next(errorHandler(404, "Designation not found for this company"));
@@ -990,7 +985,7 @@ export const updateUser = async (req, res, next) => {
         full_name,
         userId,
         req.companyId,
-      ],
+      ]
     );
 
     if (result.affectedRows === 0) {
@@ -1004,10 +999,10 @@ export const updateUser = async (req, res, next) => {
       // Get all current branch assignments for the user
       const [currentAssignments] = await pool.query(
         "SELECT Branch_idBranch FROM user_has_branch WHERE User_idUser = ?",
-        [userId],
+        [userId]
       );
       const currentBranchIds = currentAssignments.map(
-        (row) => row.Branch_idBranch,
+        (row) => row.Branch_idBranch
       );
 
       // Get the new branch IDs from the request
@@ -1015,19 +1010,19 @@ export const updateUser = async (req, res, next) => {
 
       // Find branches to delete (in DB but not in new data)
       const branchesToDelete = currentBranchIds.filter(
-        (id) => !newBranchIds.includes(id),
+        (id) => !newBranchIds.includes(id)
       );
 
       // Delete removed branches
       if (branchesToDelete.length > 0) {
         const [deleteResult] = await pool.query(
           "DELETE FROM user_has_branch WHERE User_idUser = ? AND Branch_idBranch IN (?)",
-          [userId, branchesToDelete],
+          [userId, branchesToDelete]
         );
 
         if (deleteResult.affectedRows === 0) {
           return next(
-            errorHandler(500, "Failed to remove user from some branches"),
+            errorHandler(500, "Failed to remove user from some branches")
           );
         }
       }
@@ -1037,7 +1032,7 @@ export const updateUser = async (req, res, next) => {
         // Check if the branch exists
         const [branchExists] = await pool.query(
           "SELECT idBranch FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
-          [branch.idBranch, req.companyId],
+          [branch.idBranch, req.companyId]
         );
 
         // If branch does not exist
@@ -1045,15 +1040,15 @@ export const updateUser = async (req, res, next) => {
           return next(
             errorHandler(
               404,
-              `Branch ID ${branch.Name} not found for this company`,
-            ),
+              `Branch ID ${branch.Name} not found for this company`
+            )
           );
         }
 
         // now check if the user is already assigned to the branch
         const [assignmentExists] = await pool.query(
           "SELECT * FROM user_has_branch WHERE User_idUser = ? AND Branch_idBranch = ?",
-          [userId, branch.idBranch],
+          [userId, branch.idBranch]
         );
 
         // If not assigned, then assign
@@ -1061,7 +1056,7 @@ export const updateUser = async (req, res, next) => {
           // Assign the user to the branch
           const [branchResult] = await pool.query(
             "INSERT INTO user_has_branch (User_idUser, Branch_idBranch) VALUES (?, ?)",
-            [userId, branch.idBranch],
+            [userId, branch.idBranch]
           );
         }
       }
@@ -1092,18 +1087,18 @@ export const createBranch = async (req, res, next) => {
 
     const [existingBranch] = await pool.query(
       "SELECT * FROM branch WHERE Name = ? OR address = ? AND Company_idCompany = ?",
-      [branchName, address, req.companyId],
+      [branchName, address, req.companyId]
     );
 
     if (existingBranch.length > 0) {
       return next(
-        errorHandler(400, "Branch with this name or address already exists"),
+        errorHandler(400, "Branch with this name or address already exists")
       );
     }
 
     const [result] = await pool.query(
       "INSERT INTO branch (Name, Address, Contact_No, Company_idCompany,Status,Branch_Code) VALUES (?, ?, ?, ?, ?,?)",
-      [branchName, address, contact_no, req.companyId, 0, branchCode],
+      [branchName, address, contact_no, req.companyId, 0, branchCode]
     );
 
     if (result.affectedRows === 0) {
@@ -1116,12 +1111,12 @@ export const createBranch = async (req, res, next) => {
     const createAccountWithLog = async (accountData) => {
       const [accountResult] = await pool.query(
         "INSERT INTO accounting_accounts (Account_Name, Account_Type, Created_At, Type, Group_Of_Type, Branch_idBranch, Account_Balance, Status, User_idUser, Account_Code, Parent_Account) VALUES (?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?)",
-        accountData,
+        accountData
       );
 
       const [createdAccount] = await pool.query(
         "SELECT ac.*, u.full_name AS Created_by, (SELECT Account_Name FROM accounting_accounts WHERE idAccounting_Accounts = ac.Parent_Account) AS Parent_Account_Name FROM accounting_accounts ac LEFT JOIN user u ON ac.User_idUser = u.idUser WHERE ac.idAccounting_Accounts = ?",
-        [accountResult.insertId],
+        [accountResult.insertId]
       );
 
       if (!createdAccount[0]) {
@@ -1465,13 +1460,13 @@ export const createBranch = async (req, res, next) => {
         1,
         req.branchId, // head office branch id
         req.userId,
-      ],
+      ]
     );
 
     // Get the created head office account and create log
     const [createdHeadOfficeAccount] = await pool.query(
       "SELECT ac.*, u.full_name AS Created_by, (SELECT Account_Name FROM accounting_accounts WHERE idAccounting_Accounts = ac.Parent_Account) AS Parent_Account_Name FROM accounting_accounts ac LEFT JOIN user u ON ac.User_idUser = u.idUser WHERE ac.idAccounting_Accounts = ?",
-      [headOfficeAccount.insertId],
+      [headOfficeAccount.insertId]
     );
 
     if (!createdHeadOfficeAccount[0]) {
@@ -1486,7 +1481,7 @@ export const createBranch = async (req, res, next) => {
 
     const [newBranch] = await pool.query(
       "SELECT * FROM branch WHERE idBranch = ?",
-      [branchId],
+      [branchId]
     );
 
     if (!newBranch[0]) {
@@ -1519,7 +1514,7 @@ export const updateBranch = async (req, res, next) => {
 
     const [existingBranch] = await pool.query(
       "SELECT * FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
-      [branchId, req.companyId],
+      [branchId, req.companyId]
     );
 
     if (existingBranch.length === 0) {
@@ -1528,7 +1523,7 @@ export const updateBranch = async (req, res, next) => {
 
     const [result] = await pool.query(
       "UPDATE branch SET Name = ?, Address = ?, Contact_No = ?, Branch_Code = ? WHERE idBranch = ? AND Company_idCompany = ?",
-      [branchName, address, contact_no, branchCode, branchId, req.companyId],
+      [branchName, address, contact_no, branchCode, branchId, req.companyId]
     );
 
     if (result.affectedRows === 0) {
@@ -1541,24 +1536,24 @@ export const updateBranch = async (req, res, next) => {
       // Get the account from accounting accounts table where Account's group of type 'Assets', branchId is req.branchId (head office) and Account_Name contains the old branch name
       const [accountToUpdate] = await pool.query(
         "SELECT * FROM accounting_accounts WHERE Branch_idBranch = ? AND Group_Of_Type = 'Assets' AND Account_Name LIKE ?",
-        [req.branchId, `%${existingBranch[0].Name}%`],
+        [req.branchId, `%${existingBranch[0].Name}%`]
       );
 
       if (accountToUpdate.length > 0) {
         const updatedAccountName = accountToUpdate[0].Account_Name.replace(
           existingBranch[0].Name,
-          branchName,
+          branchName
         );
         await pool.query(
           "UPDATE accounting_accounts SET Account_Name = ? WHERE idAccounting_Accounts = ?",
-          [updatedAccountName, accountToUpdate[0].idAccounting_Accounts],
+          [updatedAccountName, accountToUpdate[0].idAccounting_Accounts]
         );
       }
     }
 
     const [updatedBranch] = await pool.query(
       "SELECT * FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
-      [branchId, req.companyId],
+      [branchId, req.companyId]
     );
 
     if (!updatedBranch[0]) {
@@ -1592,7 +1587,7 @@ export const getAllBranches = async (req, res, next) => {
     */
     const [branches] = await pool.query(
       "SELECT * FROM branch WHERE Company_idCompany = ?",
-      [req.companyId],
+      [req.companyId]
     );
 
     res.status(200).json({
@@ -1616,7 +1611,7 @@ export const assignUserToBranch = async (req, res, next) => {
     // Check if the user exists
     const [userExists] = await pool.query(
       "SELECT idUser FROM user WHERE idUser = ? AND Company_idCompany = ?",
-      [userId, req.companyId],
+      [userId, req.companyId]
     );
     if (userExists.length === 0) {
       return next(errorHandler(404, "User not found for this company"));
@@ -1625,7 +1620,7 @@ export const assignUserToBranch = async (req, res, next) => {
     // Check if the branch exists
     const [branchExists] = await pool.query(
       "SELECT idBranch FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
-      [branchId, req.companyId],
+      [branchId, req.companyId]
     );
 
     if (branchExists.length === 0) {
@@ -1635,7 +1630,7 @@ export const assignUserToBranch = async (req, res, next) => {
     // Check if the user is already assigned to the branch
     const [assignmentExists] = await pool.query(
       "SELECT * FROM user_has_branch WHERE User_idUser = ? AND Branch_idBranch = ?",
-      [userId, branchId],
+      [userId, branchId]
     );
 
     if (assignmentExists.length > 0) {
@@ -1645,7 +1640,7 @@ export const assignUserToBranch = async (req, res, next) => {
     // Assign the user to the branch
     const [result] = await pool.query(
       "INSERT INTO user_has_branch (User_idUser, Branch_idBranch) VALUES (?, ?)",
-      [userId, branchId],
+      [userId, branchId]
     );
 
     if (result.affectedRows === 0) {
@@ -1676,7 +1671,7 @@ export const getBranchData = async (req, res, next) => {
 
     const [branchData] = await pool.query(
       "SELECT * FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
-      [branchId, req.companyId],
+      [branchId, req.companyId]
     );
 
     res.status(200).json({
@@ -1693,7 +1688,7 @@ export const getPawningTicketFormat = async (req, res, next) => {
   try {
     const [formatData] = await pool.query(
       "SELECT format_type, format, auto_generate_start_from FROM pawning_ticket_format WHERE company_id = ?",
-      [req.companyId],
+      [req.companyId]
     );
 
     if (formatData.length === 0) {
@@ -1724,7 +1719,7 @@ export const getCustomerNumberFormat = async (req, res, next) => {
   try {
     const [formatData] = await pool.query(
       "SELECT format_type, format, auto_generate_start_from FROM customer_number_formats WHERE company_id = ?",
-      [req.companyId],
+      [req.companyId]
     );
 
     if (formatData.length === 0) {
@@ -1763,7 +1758,7 @@ export const updatePawningTicketNumberFormat = async (req, res, next) => {
 
     if (!pawningTicketNumberFormatType) {
       return next(
-        errorHandler(400, "Pawning Ticket Number Format Type must be provided"),
+        errorHandler(400, "Pawning Ticket Number Format Type must be provided")
       );
     }
 
@@ -1772,14 +1767,14 @@ export const updatePawningTicketNumberFormat = async (req, res, next) => {
       !availableFormatTypes.includes(pawningTicketNumberFormatType)
     ) {
       return next(
-        errorHandler(400, "Invalid Pawning Ticket Number Format Type"),
+        errorHandler(400, "Invalid Pawning Ticket Number Format Type")
       );
     }
 
     // Check if a record already exists for this company
     const [existingFormat] = await pool.query(
       "SELECT id FROM pawning_ticket_format WHERE company_id = ?",
-      [req.companyId],
+      [req.companyId]
     );
 
     let result;
@@ -1788,7 +1783,7 @@ export const updatePawningTicketNumberFormat = async (req, res, next) => {
       if (pawningTicketNumberFormatType === "Custom Format") {
         [result] = await pool.query(
           "UPDATE pawning_ticket_format SET format_type = ?, format = ?, auto_generate_start_from = ? WHERE company_id = ?",
-          [pawningTicketNumberFormatType, null, null, req.companyId],
+          [pawningTicketNumberFormatType, null, null, req.companyId]
         );
       } else {
         [result] = await pool.query(
@@ -1798,7 +1793,7 @@ export const updatePawningTicketNumberFormat = async (req, res, next) => {
             pawningTicketNumberFormat,
             pawningTicketNumberAutoGenerateStartFrom || 1,
             req.companyId,
-          ],
+          ]
         );
       }
     } else {
@@ -1810,7 +1805,7 @@ export const updatePawningTicketNumberFormat = async (req, res, next) => {
           pawningTicketNumberFormatType,
           pawningTicketNumberFormat,
           pawningTicketNumberAutoGenerateStartFrom || 1,
-        ],
+        ]
       );
     }
 
@@ -1828,7 +1823,7 @@ export const updatePawningTicketNumberFormat = async (req, res, next) => {
            JOIN branch b ON pt.Branch_idBranch = b.idBranch
            WHERE b.Company_idCompany = ?
            ORDER BY pt.idPawning_Ticket ASC`,
-          [req.companyId],
+          [req.companyId]
         );
 
         if (existingTickets.length > 0) {
@@ -1854,7 +1849,7 @@ export const updatePawningTicketNumberFormat = async (req, res, next) => {
                 if (part === "Branch Number") {
                   const [branch] = await pool.query(
                     "SELECT Branch_Code FROM branch WHERE idBranch = ?",
-                    [ticket.Branch_idBranch],
+                    [ticket.Branch_idBranch]
                   );
                   newTicketNo += branch[0]?.Branch_Code || "00";
                 }
@@ -1862,7 +1857,7 @@ export const updatePawningTicketNumberFormat = async (req, res, next) => {
                 if (part === "Branch's Customer Count") {
                   const [customerCount] = await pool.query(
                     "SELECT COUNT(*) AS count FROM customer WHERE Branch_idBranch = ?",
-                    [ticket.Branch_idBranch],
+                    [ticket.Branch_idBranch]
                   );
                   newTicketNo += customerCount[0].count
                     .toString()
@@ -1901,12 +1896,12 @@ export const updatePawningTicketNumberFormat = async (req, res, next) => {
             // Update the ticket with the new ticket number
             await pool.query(
               "UPDATE pawning_ticket SET Ticket_No = ? WHERE idPawning_Ticket = ?",
-              [newTicketNo, ticket.idPawning_Ticket],
+              [newTicketNo, ticket.idPawning_Ticket]
             );
           }
 
           console.log(
-            `Updated ${existingTickets.length} existing tickets with new format`,
+            `Updated ${existingTickets.length} existing tickets with new format`
           );
         }
       } catch (updateError) {
@@ -1939,7 +1934,7 @@ export const updateCustomerNumberFormat = async (req, res, next) => {
 
     if (!customerNumberFormatType) {
       return next(
-        errorHandler(400, "Customer Number Format Type must be provided"),
+        errorHandler(400, "Customer Number Format Type must be provided")
       );
     }
 
@@ -1953,7 +1948,7 @@ export const updateCustomerNumberFormat = async (req, res, next) => {
     // Check if a record already exists for this company
     const [existingFormat] = await pool.query(
       "SELECT id FROM customer_number_formats WHERE company_id = ?",
-      [req.companyId],
+      [req.companyId]
     );
 
     let result;
@@ -1962,7 +1957,7 @@ export const updateCustomerNumberFormat = async (req, res, next) => {
       if (customerNumberFormatType === "Custom Format") {
         [result] = await pool.query(
           "UPDATE customer_number_formats SET format_type = ?, format = ?, auto_generate_start_from = ? WHERE company_id = ?",
-          [customerNumberFormatType, null, null, req.companyId],
+          [customerNumberFormatType, null, null, req.companyId]
         );
       } else {
         [result] = await pool.query(
@@ -1972,7 +1967,7 @@ export const updateCustomerNumberFormat = async (req, res, next) => {
             customerNumberFormat,
             customerNumberAutoGenerateStartFrom || 1,
             req.companyId,
-          ],
+          ]
         );
       }
     } else {
@@ -1984,7 +1979,7 @@ export const updateCustomerNumberFormat = async (req, res, next) => {
           customerNumberFormatType,
           customerNumberFormat,
           customerNumberAutoGenerateStartFrom || 1,
-        ],
+        ]
       );
     }
 
@@ -2002,7 +1997,7 @@ export const updateCustomerNumberFormat = async (req, res, next) => {
            JOIN branch b ON c.Branch_idBranch = b.idBranch
            WHERE b.Company_idCompany = ?
            ORDER BY c.idCustomer ASC`,
-          [req.companyId],
+          [req.companyId]
         );
 
         if (existingCustomers.length > 0) {
@@ -2028,7 +2023,7 @@ export const updateCustomerNumberFormat = async (req, res, next) => {
                 if (part === "Branch Number") {
                   const [branch] = await pool.query(
                     "SELECT Branch_Code FROM branch WHERE idBranch = ?",
-                    [customer.Branch_idBranch],
+                    [customer.Branch_idBranch]
                   );
                   newCustomerNo += branch[0]?.Branch_Code || "00";
                 }
@@ -2036,7 +2031,7 @@ export const updateCustomerNumberFormat = async (req, res, next) => {
                 if (part === "Branch's Customer Count") {
                   const [customerCount] = await pool.query(
                     "SELECT COUNT(*) AS count FROM customer WHERE Branch_idBranch = ? AND idCustomer <= ?",
-                    [customer.Branch_idBranch, customer.idCustomer],
+                    [customer.Branch_idBranch, customer.idCustomer]
                   );
                   newCustomerNo += customerCount[0].count
                     .toString()
@@ -2094,7 +2089,7 @@ export const updateCustomerNumberFormat = async (req, res, next) => {
                       customer.idCustomer,
                       currentYear,
                       currentMonth,
-                    ],
+                    ]
                   );
 
                   newCustomerNo += monthlyCount[0].count
@@ -2111,7 +2106,7 @@ export const updateCustomerNumberFormat = async (req, res, next) => {
             // Update the customer with the new customer number
             await pool.query(
               "UPDATE customer SET Customer_Number = ? WHERE idCustomer = ?",
-              [newCustomerNo, customer.idCustomer],
+              [newCustomerNo, customer.idCustomer]
             );
           }
         }
@@ -2139,7 +2134,7 @@ export const createArticleCondition = async (req, res, next) => {
 
     const [existingCondition] = await pool.query(
       "SELECT * FROM article_conditions WHERE Description Like ? AND Company_idCompany = ?",
-      [articleCondition, req.companyId],
+      [articleCondition, req.companyId]
     );
     if (existingCondition.length > 0) {
       return next(errorHandler(400, "Article condition already exists"));
@@ -2147,7 +2142,7 @@ export const createArticleCondition = async (req, res, next) => {
 
     const [result] = await pool.query(
       "INSERT INTO article_conditions (Description, Company_idCompany,created_at) VALUES (?, ?, NOW())",
-      [articleCondition, req.companyId],
+      [articleCondition, req.companyId]
     );
 
     res.status(201).json({
@@ -2172,13 +2167,13 @@ export const getArticlesConditions = async (req, res, next) => {
       [req.companyId],
       page,
       limit,
-      false,
+      false
     );
 
     // Fetch paginated article conditions for the company
     const [conditions] = await pool2.query(
       "SELECT * FROM article_conditions WHERE Company_idCompany = ? LIMIT ? OFFSET ?",
-      [req.companyId, limit, offset],
+      [req.companyId, limit, offset]
     );
 
     res.status(200).json({
@@ -2204,7 +2199,7 @@ export const updateArticleCondition = async (req, res, next) => {
 
     const [existingCondition] = await pool.query(
       "SELECT * FROM article_conditions WHERE idArticle_conditions = ? AND Company_idCompany =?",
-      [articleId, req.companyId],
+      [articleId, req.companyId]
     );
 
     if (existingCondition.length === 0) {
@@ -2213,7 +2208,7 @@ export const updateArticleCondition = async (req, res, next) => {
 
     const [result] = await pool.query(
       "UPDATE article_conditions SET Description = ?, updated_at = NOW() WHERE idArticle_conditions = ?",
-      [articleCondition, existingCondition[0].idArticle_conditions],
+      [articleCondition, existingCondition[0].idArticle_conditions]
     );
     console.log("Update result:", result);
     if (result.affectedRows === 0) {
@@ -2239,7 +2234,7 @@ export const deleteArticleCondition = async (req, res, next) => {
 
     const [existingCondition] = await pool.query(
       "SELECT * FROM article_conditions WHERE idArticle_conditions = ? AND Company_idCompany =?",
-      [articleId, req.companyId],
+      [articleId, req.companyId]
     );
 
     if (existingCondition.length === 0) {
@@ -2248,7 +2243,7 @@ export const deleteArticleCondition = async (req, res, next) => {
 
     const [result] = await pool.query(
       "DELETE FROM article_conditions WHERE idArticle_conditions = ?",
-      [existingCondition[0].idArticle_conditions],
+      [existingCondition[0].idArticle_conditions]
     );
 
     if (result.affectedRows === 0) {
@@ -2269,7 +2264,7 @@ export const deleteArticleCondition = async (req, res, next) => {
 export const getAllPrivilages = async (req, res, next) => {
   try {
     const [privilages] = await pool.query(
-      "SELECT idUser_privilages,Description FROM user_privilages",
+      "SELECT idUser_privilages,Description FROM user_privilages"
     );
 
     if (privilages.length === 0) {
@@ -2311,7 +2306,7 @@ export const createTESTUser = async (req, res, next) => {
 
     const [existingUser] = await pool.query(
       "SELECT idUser FROM user WHERE email = ?",
-      [Email],
+      [Email]
     );
     if (existingUser.length > 0) {
       return next(errorHandler(400, "User with this email already exists"));
@@ -2320,18 +2315,13 @@ export const createTESTUser = async (req, res, next) => {
     // Verify designation exists for this company
     const [designationExists] = await pool.query(
       "SELECT idDesignation FROM designation WHERE idDesignation = ? AND Company_idCompany = ?",
-      [Designation_idDesignation, 3],
+      [Designation_idDesignation, 3]
     );
     if (designationExists.length === 0) {
       return next(errorHandler(404, "Designation not found for this company"));
     }
 
     const tempPassword = Math.random().toString(36).slice(-8); // Generate a temporary password
-    console.log("Temporary password generated:", tempPassword);
-    // have to send this temp password to the user via email
-    // For now, we will just log it to the console (In production, use a proper email service)
-    // console.log(`Temporary password for ${email}: ${tempPassword}`);
-
     const hashedPassword = await bcrypt.hash(tempPassword, 10); // Hash the temporary password
 
     const [result] = await pool.query(
@@ -2343,7 +2333,7 @@ export const createTESTUser = async (req, res, next) => {
         Designation_idDesignation,
         3,
         Contact_no,
-      ],
+      ]
     );
 
     if (result.affectedRows === 0) {
@@ -2352,7 +2342,7 @@ export const createTESTUser = async (req, res, next) => {
 
     const [userAssignToBranch] = await pool.query(
       "INSERT INTO user_has_branch (User_idUser, Branch_idBranch) VALUES (?, ?)",
-      [result.insertId, branchId],
+      [result.insertId, branchId]
     );
 
     res.status(201).json({
@@ -2383,8 +2373,8 @@ export const creteDesignationWithPrivilages = async (req, res, next) => {
       return next(
         errorHandler(
           400,
-          "At least one privilage must be assigned to the designation",
-        ),
+          "At least one privilage must be assigned to the designation"
+        )
       );
     }
 
@@ -2397,8 +2387,8 @@ export const creteDesignationWithPrivilages = async (req, res, next) => {
         return next(
           errorHandler(
             400,
-            "Max Ticket Approve Amount must be a positive number when 'Approve Ticket' privilage is assigned",
-          ),
+            "Max Ticket Approve Amount must be a positive number when 'Approve Ticket' privilage is assigned"
+          )
         );
       }
     }
@@ -2406,19 +2396,19 @@ export const creteDesignationWithPrivilages = async (req, res, next) => {
     // Check if designation already exists for this company
     const [existingDesignation] = await pool.query(
       "SELECT * FROM designation WHERE Description Like ? AND Company_idCompany = ?",
-      [description, req.companyId],
+      [description, req.companyId]
     );
 
     if (existingDesignation.length > 0) {
       return next(
-        errorHandler(400, "Designation with this description already exists"),
+        errorHandler(400, "Designation with this description already exists")
       );
     }
 
     // check if privlages are valid
     const [validPrivilages] = await pool.query(
       `SELECT idUser_privilages FROM user_privilages WHERE idUser_privilages IN (?)`,
-      [privilageIds],
+      [privilageIds]
     );
 
     if (validPrivilages.length !== privilageIds.length) {
@@ -2428,7 +2418,7 @@ export const creteDesignationWithPrivilages = async (req, res, next) => {
     // create the designation
     const [createdDesignation] = await pool.query(
       "INSERT INTO designation (Description, Company_idCompany,pawning_ticket_max_approve_amount) VALUES (?, ?,?)",
-      [description, req.companyId, maxTicketApproveAmount || null],
+      [description, req.companyId, maxTicketApproveAmount || null]
     );
 
     if (createdDesignation.affectedRows === 0) {
@@ -2438,14 +2428,14 @@ export const creteDesignationWithPrivilages = async (req, res, next) => {
     for (const privilageId of privilageIds) {
       const [assignPrivilage] = await pool.query(
         "INSERT INTO designation_has_user_privilages (Designation_idDesignation,User_Privilages_idUser_Privilages,Status,Last_Updated_User,Last_Updated_Time) VALUES(?, ?, ?, ?, NOW())",
-        [createdDesignation.insertId, privilageId, 1, req.userId],
+        [createdDesignation.insertId, privilageId, 1, req.userId]
       );
       if (assignPrivilage.affectedRows === 0) {
         return next(
           errorHandler(
             500,
-            "Failed to assign one or more privilages to the designation, please try again",
-          ),
+            "Failed to assign one or more privilages to the designation, please try again"
+          )
         );
       }
     }
@@ -2453,7 +2443,7 @@ export const creteDesignationWithPrivilages = async (req, res, next) => {
     // Fetch the complete designation data
     const [designationDetails] = await pool.query(
       "SELECT idDesignation, Description, pawning_ticket_max_approve_amount FROM designation WHERE idDesignation = ?",
-      [createdDesignation.insertId],
+      [createdDesignation.insertId]
     );
 
     // Fetch privileges for the designation (same pattern as getDesignationsWithPrivilages)
@@ -2462,7 +2452,7 @@ export const creteDesignationWithPrivilages = async (req, res, next) => {
        FROM designation_has_user_privilages dp
        JOIN user_privilages up ON dp.User_Privilages_idUser_Privilages = up.idUser_privilages
        WHERE dp.Designation_idDesignation = ? AND dp.Status = 1`,
-      [createdDesignation.insertId],
+      [createdDesignation.insertId]
     );
 
     const designationData = {
@@ -2490,7 +2480,7 @@ export const getDesignationsWithPrivilages = async (req, res, next) => {
     // get all designations for the company
     const [designations] = await pool.query(
       "SELECT idDesignation, Description,pawning_ticket_max_approve_amount FROM designation WHERE Company_idCompany = ?",
-      [req.companyId],
+      [req.companyId]
     );
 
     // get privilages for each designation
@@ -2500,7 +2490,7 @@ export const getDesignationsWithPrivilages = async (req, res, next) => {
          FROM designation_has_user_privilages dp
          JOIN user_privilages up ON dp.User_Privilages_idUser_Privilages = up.idUser_privilages
          WHERE dp.Designation_idDesignation = ? AND dp.Status = 1`,
-        [designation.idDesignation],
+        [designation.idDesignation]
       );
       designation.privilages = privilages;
     }
@@ -2537,8 +2527,8 @@ export const updateDesignationWithPrivilages = async (req, res, next) => {
       return next(
         errorHandler(
           400,
-          "At least one privilage must be assigned to the designation",
-        ),
+          "At least one privilage must be assigned to the designation"
+        )
       );
     }
 
@@ -2551,8 +2541,8 @@ export const updateDesignationWithPrivilages = async (req, res, next) => {
         return next(
           errorHandler(
             400,
-            "Max Ticket Approve Amount must be a positive number when 'Approve Ticket' privilage is assigned",
-          ),
+            "Max Ticket Approve Amount must be a positive number when 'Approve Ticket' privilage is assigned"
+          )
         );
       }
     }
@@ -2560,7 +2550,7 @@ export const updateDesignationWithPrivilages = async (req, res, next) => {
     // Check if designation exists for this company
     const [existingDesignation] = await pool.query(
       "SELECT * FROM designation WHERE idDesignation = ? AND Company_idCompany = ?",
-      [desginationId, req.companyId],
+      [desginationId, req.companyId]
     );
 
     if (existingDesignation.length === 0) {
@@ -2570,7 +2560,7 @@ export const updateDesignationWithPrivilages = async (req, res, next) => {
     // check if privlages are valid
     const [validPrivilages] = await pool.query(
       `SELECT idUser_privilages FROM user_privilages WHERE idUser_privilages IN (?)`,
-      [privilageIds],
+      [privilageIds]
     );
 
     if (validPrivilages.length !== privilageIds.length) {
@@ -2580,7 +2570,7 @@ export const updateDesignationWithPrivilages = async (req, res, next) => {
     // update the designation description
     const [updatedDesignation] = await pool.query(
       "UPDATE designation SET Description = ?, pawning_ticket_max_approve_amount = ? WHERE idDesignation = ?",
-      [description, maxTicketApproveAmount || null, desginationId],
+      [description, maxTicketApproveAmount || null, desginationId]
     );
 
     if (updatedDesignation.affectedRows === 0) {
@@ -2590,15 +2580,15 @@ export const updateDesignationWithPrivilages = async (req, res, next) => {
     // check and update privilages if there are any changes
     const [currentPrivilages] = await pool.query(
       "SELECT User_Privilages_idUser_Privilages FROM designation_has_user_privilages WHERE Designation_idDesignation = ? AND Status = 1",
-      [desginationId],
+      [desginationId]
     );
     const currentPrivilageIds = currentPrivilages.map(
-      (row) => row.User_Privilages_idUser_Privilages,
+      (row) => row.User_Privilages_idUser_Privilages
     );
 
     // Find privilages to remove (in DB but not in new data)
     const privilagesToRemove = currentPrivilageIds.filter(
-      (id) => !privilageIds.includes(id),
+      (id) => !privilageIds.includes(id)
     );
 
     // Remove privilages (Make status 0)
@@ -2607,21 +2597,18 @@ export const updateDesignationWithPrivilages = async (req, res, next) => {
         `UPDATE designation_has_user_privilages 
          SET Status = 0, Last_Updated_User = ?, Last_Updated_Time = NOW() 
          WHERE Designation_idDesignation = ? AND User_Privilages_idUser_Privilages IN (?)`,
-        [req.userId, desginationId, privilagesToRemove],
+        [req.userId, desginationId, privilagesToRemove]
       );
 
       if (removeResult.affectedRows === 0) {
         return next(
-          errorHandler(
-            500,
-            "Failed to remove some privilages from designation",
-          ),
+          errorHandler(500, "Failed to remove some privilages from designation")
         );
       }
     }
     // Find privilages to add (in new data but not in DB)
     const privilagesToAdd = privilageIds.filter(
-      (id) => !currentPrivilageIds.includes(id),
+      (id) => !currentPrivilageIds.includes(id)
     );
 
     // Add new privilages or reactivate existing ones
@@ -2629,35 +2616,35 @@ export const updateDesignationWithPrivilages = async (req, res, next) => {
       // First check if a record exists (even if inactive)
       const [existingRecord] = await pool.query(
         "SELECT * FROM designation_has_user_privilages WHERE Designation_idDesignation = ? AND User_Privilages_idUser_Privilages = ?",
-        [desginationId, privilageId],
+        [desginationId, privilageId]
       );
 
       if (existingRecord.length > 0) {
         // Record exists, update it to active
         const [updateResult] = await pool.query(
           "UPDATE designation_has_user_privilages SET Status = 1, Last_Updated_User = ?, Last_Updated_Time = NOW() WHERE Designation_idDesignation = ? AND User_Privilages_idUser_Privilages = ?",
-          [req.userId, desginationId, privilageId],
+          [req.userId, desginationId, privilageId]
         );
         if (updateResult.affectedRows === 0) {
           return next(
             errorHandler(
               500,
-              "Failed to reactivate privilege for the designation, please try again",
-            ),
+              "Failed to reactivate privilege for the designation, please try again"
+            )
           );
         }
       } else {
         // Record doesn't exist, insert new one
         const [addResult] = await pool.query(
           "INSERT INTO designation_has_user_privilages (Designation_idDesignation,User_Privilages_idUser_Privilages,Status,Last_Updated_User,Last_Updated_Time) VALUES(?, ?, ?, ?, NOW())",
-          [desginationId, privilageId, 1, req.userId],
+          [desginationId, privilageId, 1, req.userId]
         );
         if (addResult.affectedRows === 0) {
           return next(
             errorHandler(
               500,
-              "Failed to assign privilege to the designation, please try again",
-            ),
+              "Failed to assign privilege to the designation, please try again"
+            )
           );
         }
       }
@@ -2666,7 +2653,7 @@ export const updateDesignationWithPrivilages = async (req, res, next) => {
     // Fetch the updated designation data
     const [designationDetails] = await pool.query(
       "SELECT idDesignation, Description, pawning_ticket_max_approve_amount FROM designation WHERE idDesignation = ?",
-      [desginationId],
+      [desginationId]
     );
 
     // Fetch privileges for the designation (same pattern as getDesignationsWithPrivilages)
@@ -2675,7 +2662,7 @@ export const updateDesignationWithPrivilages = async (req, res, next) => {
        FROM designation_has_user_privilages dp
        JOIN user_privilages up ON dp.User_Privilages_idUser_Privilages = up.idUser_privilages
        WHERE dp.Designation_idDesignation = ? AND dp.Status = 1`,
-      [desginationId],
+      [desginationId]
     );
 
     const designationData = {
@@ -2708,7 +2695,7 @@ export const deleteDesignationWithPrivilages = async (req, res, next) => {
     // Check if designation exists for this company
     const [existingDesignation] = await pool.query(
       "SELECT * FROM designation WHERE idDesignation = ? AND Company_idCompany = ?",
-      [desginationId, req.companyId],
+      [desginationId, req.companyId]
     );
 
     if (existingDesignation.length === 0) {
@@ -2718,27 +2705,27 @@ export const deleteDesignationWithPrivilages = async (req, res, next) => {
     // Check if any users are assigned to this designation
     const [assignedUsers] = await pool.query(
       "SELECT idUser FROM user WHERE Designation_idDesignation = ? AND Company_idCompany = ?",
-      [desginationId, req.companyId],
+      [desginationId, req.companyId]
     );
     if (assignedUsers.length > 0) {
       return next(
         errorHandler(
           400,
-          "Cannot delete designation assigned to one or more users",
-        ),
+          "Cannot delete designation assigned to one or more users"
+        )
       );
     }
 
     // Delete designation privilages
     const [deletePrivilages] = await pool.query(
       "DELETE FROM designation_has_user_privilages WHERE Designation_idDesignation = ?",
-      [desginationId],
+      [desginationId]
     );
 
     // Delete the designation
     const [deleteDesignation] = await pool.query(
       "DELETE FROM designation WHERE idDesignation = ?",
-      [desginationId],
+      [desginationId]
     );
 
     if (deleteDesignation.affectedRows === 0) {
@@ -2791,17 +2778,14 @@ export const SMSTemplateSaveOrUpdate = async (req, res, next) => {
         templateContent.periodDays === undefined
       ) {
         return next(
-          errorHandler(
-            400,
-            "Period days is required for the selected SMS type",
-          ),
+          errorHandler(400, "Period days is required for the selected SMS type")
         );
       }
     }
 
     const [existingTemplate] = await pool.query(
       "SELECT idsms_Template FROM sms_template WHERE Company_idCompany = ? AND SMS_Type = ?",
-      [req.companyId, templateContent.smsType],
+      [req.companyId, templateContent.smsType]
     );
 
     let createdOrUpdatedTemplate = null;
@@ -2815,7 +2799,7 @@ export const SMSTemplateSaveOrUpdate = async (req, res, next) => {
           templateContent.templateText,
           templateContent.periodDays || null,
           existingTemplate[0].idsms_Template,
-        ],
+        ]
       );
 
       if (updateResult.affectedRows === 0) {
@@ -2824,7 +2808,7 @@ export const SMSTemplateSaveOrUpdate = async (req, res, next) => {
 
       const [updatedTemplate] = await pool.query(
         "SELECT idsms_Template, SMS_Type, Template, Period, Status FROM sms_template WHERE idsms_Template = ?",
-        [existingTemplate[0].idsms_Template],
+        [existingTemplate[0].idsms_Template]
       );
       createdOrUpdatedTemplate = updatedTemplate[0];
 
@@ -2846,7 +2830,7 @@ export const SMSTemplateSaveOrUpdate = async (req, res, next) => {
           templateContent.templateText,
           templateContent.periodDays || null,
           1, // default status to active (1)
-        ],
+        ]
       );
 
       if (insertResult.affectedRows === 0) {
@@ -2855,7 +2839,7 @@ export const SMSTemplateSaveOrUpdate = async (req, res, next) => {
 
       const [newTemplate] = await pool.query(
         "SELECT idsms_Template, SMS_Type, Template, Period, Status FROM sms_template WHERE idsms_Template = ?",
-        [insertResult.insertId],
+        [insertResult.insertId]
       );
       createdOrUpdatedTemplate = newTemplate[0];
 
@@ -2884,7 +2868,7 @@ export const updateSMSTemplateStatus = async (req, res, next) => {
       `UPDATE sms_template 
        SET Status = CASE WHEN Status = 1 THEN 0 ELSE 1 END 
        WHERE idsms_Template = ? AND Company_idCompany = ?`,
-      [templateId, req.companyId],
+      [templateId, req.companyId]
     );
 
     if (updateResult.affectedRows === 0) {
@@ -2912,7 +2896,7 @@ export const getAllSMSTemplates = async (req, res, next) => {
 
     const [template] = await pool.query(
       "SELECT idsms_Template, SMS_Type, Template, Period, Status FROM sms_template WHERE Company_idCompany = ? AND SMS_Type = ?",
-      [req.companyId, type],
+      [req.companyId, type]
     );
 
     res.status(200).json({
@@ -2940,7 +2924,7 @@ export const getAssessedValues = async (req, res, next) => {
        LEFT JOIN user u ON u.idUser = av.Last_Updated_User
        WHERE av.Company_idCompany = ?
        ORDER BY av.Carat ASC`,
-      [req.companyId],
+      [req.companyId]
     );
 
     const values = rows.map((r) => ({
@@ -2991,7 +2975,7 @@ export const bulkUpdateAssessedValues = async (req, res, next) => {
 
         const [byId] = await connection.query(
           `SELECT idAssessed_Value FROM assessed_value WHERE idAssessed_Value = ? AND Company_idCompany = ?`,
-          [idOrCarat, req.companyId],
+          [idOrCarat, req.companyId]
         );
         if (byId.length > 0) {
           recordId = byId[0].idAssessed_Value;
@@ -3002,14 +2986,14 @@ export const bulkUpdateAssessedValues = async (req, res, next) => {
           }
           const [byCarat] = await connection.query(
             `SELECT idAssessed_Value FROM assessed_value WHERE Carat = ? AND Company_idCompany = ?`,
-            [carat, req.companyId],
+            [carat, req.companyId]
           );
           if (byCarat.length > 0) {
             recordId = byCarat[0].idAssessed_Value;
           } else {
             const [insertRes] = await connection.query(
               `INSERT INTO assessed_value (Carat, Amount, Company_idCompany, Last_Updated_Time, Last_Updated_User) VALUES (?, ?, ?, NOW(), ?)`,
-              [carat, amount, req.companyId, req.userId],
+              [carat, amount, req.companyId, req.userId]
             );
             recordId = insertRes.insertId;
           }
@@ -3019,7 +3003,7 @@ export const bulkUpdateAssessedValues = async (req, res, next) => {
           `UPDATE assessed_value 
            SET Amount = ?, Last_Updated_Time = NOW(), Last_Updated_User = ?
            WHERE idAssessed_Value = ? AND Company_idCompany = ?`,
-          [amount, req.userId, recordId, req.companyId],
+          [amount, req.userId, recordId, req.companyId]
         );
 
         if (updateRes.affectedRows === 0) {
@@ -3036,7 +3020,7 @@ export const bulkUpdateAssessedValues = async (req, res, next) => {
            FROM assessed_value av
            LEFT JOIN user u ON u.idUser = av.Last_Updated_User
            WHERE av.idAssessed_Value = ?`,
-          [recordId],
+          [recordId]
         );
         if (row && row[0]) updatedRecords.push(row[0]);
       }
@@ -3086,8 +3070,8 @@ export const createPawningTicketApprovalRange = async (req, res, next) => {
       return next(
         errorHandler(
           400,
-          "Valid end amount is required and must be greater than start amount",
-        ),
+          "Valid end amount is required and must be greater than start amount"
+        )
       );
     }
 
@@ -3102,22 +3086,22 @@ export const createPawningTicketApprovalRange = async (req, res, next) => {
             designation.Designation_idDesignation < 0
           ) {
             return next(
-              errorHandler(400, "Valid Designation ID is required in levels"),
+              errorHandler(400, "Valid Designation ID is required in levels")
             );
           }
 
           // Check if designation exists for this company
           const [existingDesignation] = await pool.query(
             "SELECT 1 FROM designation WHERE idDesignation = ? AND Company_idCompany = ?",
-            [designation.Designation_idDesignation, req.companyId],
+            [designation.Designation_idDesignation, req.companyId]
           );
 
           if (existingDesignation.length === 0) {
             return next(
               errorHandler(
                 404,
-                "An designation in levels was not found for this company, please verify the designations provided",
-              ),
+                "An designation in levels was not found for this company, please verify the designations provided"
+              )
             );
           }
         }
@@ -3127,7 +3111,7 @@ export const createPawningTicketApprovalRange = async (req, res, next) => {
     // Ensure the new range does not overlap existing ranges for this company
     const [existingRanges] = await pool.query(
       "SELECT start_amount, end_amount FROM pawning_ticket_approval_range WHERE companyid = ?",
-      [req.companyId],
+      [req.companyId]
     );
 
     if (existingRanges && existingRanges.length > 0) {
@@ -3143,8 +3127,8 @@ export const createPawningTicketApprovalRange = async (req, res, next) => {
           return next(
             errorHandler(
               400,
-              `Provided range ${newStart} - ${newEnd} overlaps existing range ${existStart} - ${existEnd}`,
-            ),
+              `Provided range ${newStart} - ${newEnd} overlaps existing range ${existStart} - ${existEnd}`
+            )
           );
         }
       }
@@ -3163,7 +3147,7 @@ export const createPawningTicketApprovalRange = async (req, res, next) => {
           rangeWithLevels.start_amount,
           rangeWithLevels.end_amount,
           req.userId,
-        ],
+        ]
       );
 
       if (insertResultoRangeTable.affectedRows === 0) {
@@ -3175,12 +3159,12 @@ export const createPawningTicketApprovalRange = async (req, res, next) => {
       for (const level of rangeWithLevels.levels) {
         const [insertResultToRangesLevelsTable] = await connection.query(
           "INSERT INTO pawning_ticket_approval_ranges_level (Approval_Range_idApproval_Range,level_name,is_head_office_level) VALUES (?,?,?)",
-          [rangeId, level.level_name, level.is_head_office_level ? 1 : 0],
+          [rangeId, level.level_name, level.is_head_office_level ? 1 : 0]
         );
 
         if (insertResultToRangesLevelsTable.affectedRows === 0) {
           throw new Error(
-            "Failed to create pawning ticket approval range level",
+            "Failed to create pawning ticket approval range level"
           );
         }
 
@@ -3189,12 +3173,12 @@ export const createPawningTicketApprovalRange = async (req, res, next) => {
         for (const designation of level.designations) {
           const [insertResultToLevelDesignationsTable] = await connection.query(
             "INSERT INTO pawning_ticket_approval_levels_designations (ApprovalRangeLevel_idApprovalRangeLevel,Designation_idDesignation) VALUES (?,?)",
-            [rangeLevelId, designation.Designation_idDesignation],
+            [rangeLevelId, designation.Designation_idDesignation]
           );
 
           if (insertResultToLevelDesignationsTable.affectedRows === 0) {
             throw new Error(
-              "Failed to assign designation to pawning ticket approval range level",
+              "Failed to assign designation to pawning ticket approval range level"
             );
           }
         }
@@ -3207,14 +3191,14 @@ export const createPawningTicketApprovalRange = async (req, res, next) => {
       try {
         const [createdRanges] = await connection.query(
           "SELECT * FROM pawning_ticket_approval_range WHERE idApproval_Range = ? AND companyid = ?",
-          [rangeId, req.companyId],
+          [rangeId, req.companyId]
         );
         if (createdRanges && createdRanges.length > 0) {
           createdRange = createdRanges[0];
 
           const [levels] = await connection.query(
             "SELECT * FROM pawning_ticket_approval_ranges_level WHERE Approval_Range_idApproval_Range = ?",
-            [createdRange.idApproval_Range],
+            [createdRange.idApproval_Range]
           );
 
           for (let level of levels) {
@@ -3223,7 +3207,7 @@ export const createPawningTicketApprovalRange = async (req, res, next) => {
                FROM pawning_ticket_approval_levels_designations pad
                JOIN designation d ON pad.Designation_idDesignation = d.idDesignation
                WHERE pad.ApprovalRangeLevel_idApprovalRangeLevel = ?`,
-              [level.idApprovalRangeLevel],
+              [level.idApprovalRangeLevel]
             );
             level.designations = designations || [];
           }
@@ -3234,7 +3218,7 @@ export const createPawningTicketApprovalRange = async (req, res, next) => {
         // If fetching the created range fails, still return the success message
         console.error(
           "Error fetching created pawning ticket approval range:",
-          err,
+          err
         );
       }
 
@@ -3260,7 +3244,7 @@ export const getPawningTicketApprovalRanges = async (req, res, next) => {
   try {
     let [ranges] = await pool.query(
       "SELECT * FROM pawning_ticket_approval_range WHERE companyid = ?",
-      [req.companyId],
+      [req.companyId]
     );
 
     if (ranges.length === 0) {
@@ -3273,7 +3257,7 @@ export const getPawningTicketApprovalRanges = async (req, res, next) => {
     for (let range of ranges) {
       let [levels] = await pool.query(
         "SELECT * FROM pawning_ticket_approval_ranges_level WHERE Approval_Range_idApproval_Range = ?",
-        [range.idApproval_Range],
+        [range.idApproval_Range]
       );
 
       for (let level of levels) {
@@ -3282,7 +3266,7 @@ export const getPawningTicketApprovalRanges = async (req, res, next) => {
            FROM pawning_ticket_approval_levels_designations pad
            JOIN designation d ON pad.Designation_idDesignation = d.idDesignation
            WHERE pad.ApprovalRangeLevel_idApprovalRangeLevel = ?`,
-          [level.idApprovalRangeLevel],
+          [level.idApprovalRangeLevel]
         );
         level.designations = designations || [];
       }
@@ -3311,7 +3295,7 @@ export const deletePawningTicketApprovalRange = async (req, res, next) => {
     // Delete the pawning ticket approval range
     const [deleteRange] = await pool.query(
       "DELETE FROM pawning_ticket_approval_range WHERE idApproval_Range = ? AND companyid = ?",
-      [rangeId, req.companyId],
+      [rangeId, req.companyId]
     );
 
     if (deleteRange.affectedRows === 0) {
@@ -3360,8 +3344,8 @@ export const updatePawningTicketApprovalRange = async (req, res, next) => {
       return next(
         errorHandler(
           400,
-          "Valid end amount is required and must be greater than start amount",
-        ),
+          "Valid end amount is required and must be greater than start amount"
+        )
       );
     }
 
@@ -3371,7 +3355,7 @@ export const updatePawningTicketApprovalRange = async (req, res, next) => {
         // Validate level name
         if (!level.level_name || level.level_name.trim() === "") {
           return next(
-            errorHandler(400, "Level name is required for all levels"),
+            errorHandler(400, "Level name is required for all levels")
           );
         }
 
@@ -3383,22 +3367,22 @@ export const updatePawningTicketApprovalRange = async (req, res, next) => {
             designation.Designation_idDesignation < 0
           ) {
             return next(
-              errorHandler(400, "Valid Designation ID is required in levels"),
+              errorHandler(400, "Valid Designation ID is required in levels")
             );
           }
 
           // Check if designation exists for this company
           const [existingDesignation] = await pool.query(
             "SELECT 1 FROM designation WHERE idDesignation = ? AND Company_idCompany = ?",
-            [designation.Designation_idDesignation, req.companyId],
+            [designation.Designation_idDesignation, req.companyId]
           );
 
           if (existingDesignation.length === 0) {
             return next(
               errorHandler(
                 404,
-                `Designation with ID ${designation.Designation_idDesignation} was not found for this company`,
-              ),
+                `Designation with ID ${designation.Designation_idDesignation} was not found for this company`
+              )
             );
           }
         }
@@ -3408,7 +3392,7 @@ export const updatePawningTicketApprovalRange = async (req, res, next) => {
     // Check if the range exists and belongs to the company
     const [existingRange] = await pool.query(
       "SELECT idApproval_Range FROM pawning_ticket_approval_range WHERE idApproval_Range = ? AND companyid = ?",
-      [rangeId, req.companyId],
+      [rangeId, req.companyId]
     );
 
     if (existingRange.length === 0) {
@@ -3430,7 +3414,7 @@ export const updatePawningTicketApprovalRange = async (req, res, next) => {
           req.userId,
           rangeId,
           req.companyId,
-        ],
+        ]
       );
 
       if (updateRangeResult.affectedRows === 0) {
@@ -3441,12 +3425,12 @@ export const updatePawningTicketApprovalRange = async (req, res, next) => {
       console.log("Deleting existing designations and levels...");
       await connection.query(
         "DELETE FROM pawning_ticket_approval_levels_designations WHERE ApprovalRangeLevel_idApprovalRangeLevel IN (SELECT idApprovalRangeLevel FROM pawning_ticket_approval_ranges_level WHERE Approval_Range_idApproval_Range = ?)",
-        [rangeId],
+        [rangeId]
       );
 
       await connection.query(
         "DELETE FROM pawning_ticket_approval_ranges_level WHERE Approval_Range_idApproval_Range = ?",
-        [rangeId],
+        [rangeId]
       );
 
       // Insert new levels (same as create logic)
@@ -3455,7 +3439,7 @@ export const updatePawningTicketApprovalRange = async (req, res, next) => {
 
         const [insertLevelResult] = await connection.query(
           "INSERT INTO pawning_ticket_approval_ranges_level (Approval_Range_idApproval_Range, level_name, is_head_office_level) VALUES (?, ?, ?)",
-          [rangeId, level.level_name, level.is_head_office_level ? 1 : 0],
+          [rangeId, level.level_name, level.is_head_office_level ? 1 : 0]
         );
 
         if (insertLevelResult.affectedRows === 0) {
@@ -3468,12 +3452,12 @@ export const updatePawningTicketApprovalRange = async (req, res, next) => {
         for (const designation of level.designations) {
           const [insertDesignationResult] = await connection.query(
             "INSERT INTO pawning_ticket_approval_levels_designations (ApprovalRangeLevel_idApprovalRangeLevel, Designation_idDesignation) VALUES (?, ?)",
-            [levelId, designation.Designation_idDesignation],
+            [levelId, designation.Designation_idDesignation]
           );
 
           if (insertDesignationResult.affectedRows === 0) {
             throw new Error(
-              `Failed to assign designation to level: ${level.level_name}`,
+              `Failed to assign designation to level: ${level.level_name}`
             );
           }
         }
@@ -3487,7 +3471,7 @@ export const updatePawningTicketApprovalRange = async (req, res, next) => {
         console.log("Fetching updated range...");
         const [updatedRanges] = await connection.query(
           "SELECT * FROM pawning_ticket_approval_range WHERE idApproval_Range = ? AND companyid = ?",
-          [rangeId, req.companyId],
+          [rangeId, req.companyId]
         );
 
         if (updatedRanges && updatedRanges.length > 0) {
@@ -3495,7 +3479,7 @@ export const updatePawningTicketApprovalRange = async (req, res, next) => {
 
           const [levels] = await connection.query(
             "SELECT * FROM pawning_ticket_approval_ranges_level WHERE Approval_Range_idApproval_Range = ?",
-            [updatedRange.idApproval_Range],
+            [updatedRange.idApproval_Range]
           );
 
           for (let level of levels) {
@@ -3504,7 +3488,7 @@ export const updatePawningTicketApprovalRange = async (req, res, next) => {
                FROM pawning_ticket_approval_levels_designations pad
                JOIN designation d ON pad.Designation_idDesignation = d.idDesignation
                WHERE pad.ApprovalRangeLevel_idApprovalRangeLevel = ?`,
-              [level.idApprovalRangeLevel],
+              [level.idApprovalRangeLevel]
             );
             level.designations = designations || [];
           }
@@ -3514,7 +3498,7 @@ export const updatePawningTicketApprovalRange = async (req, res, next) => {
       } catch (err) {
         console.error(
           "Error fetching updated pawning ticket approval range:",
-          err,
+          err
         );
       }
 
@@ -3540,40 +3524,40 @@ export const updatePawningTicketApprovalRange = async (req, res, next) => {
 async function updateLevelDesignations(
   connection,
   levelId,
-  incomingDesignations,
+  incomingDesignations
 ) {
   // Get existing designations
   const [existingDesignations] = await connection.query(
     "SELECT Designation_idDesignation FROM pawning_ticket_approval_levels_designations WHERE ApprovalRangeLevel_idApprovalRangeLevel = ?",
-    [levelId],
+    [levelId]
   );
 
   const existingDesIds = existingDesignations.map(
-    (d) => d.Designation_idDesignation,
+    (d) => d.Designation_idDesignation
   );
   const incomingDesIds = incomingDesignations.map(
-    (d) => d.Designation_idDesignation,
+    (d) => d.Designation_idDesignation
   );
 
   // Designations to delete
   const designationsToDelete = existingDesIds.filter(
-    (id) => !incomingDesIds.includes(id),
+    (id) => !incomingDesIds.includes(id)
   );
   if (designationsToDelete.length > 0) {
     await connection.query(
       "DELETE FROM pawning_ticket_approval_levels_designations WHERE ApprovalRangeLevel_idApprovalRangeLevel = ? AND Designation_idDesignation IN (?)",
-      [levelId, designationsToDelete],
+      [levelId, designationsToDelete]
     );
   }
 
   // Designations to add
   const designationsToAdd = incomingDesIds.filter(
-    (id) => !existingDesIds.includes(id),
+    (id) => !existingDesIds.includes(id)
   );
   for (const desId of designationsToAdd) {
     await connection.query(
       "INSERT INTO pawning_ticket_approval_levels_designations (ApprovalRangeLevel_idApprovalRangeLevel, Designation_idDesignation) VALUES (?, ?)",
-      [levelId, desId],
+      [levelId, desId]
     );
   }
 }
@@ -3582,20 +3566,20 @@ async function updateLevelDesignations(
 export const updateApproveTicketAfterCreationSetting = async (
   req,
   res,
-  next,
+  next
 ) => {
   try {
     const { approveAfterCreation } = req.body;
 
     if (approveAfterCreation === undefined) {
       return next(
-        errorHandler(400, "approveAfterCreation field is required in body"),
+        errorHandler(400, "approveAfterCreation field is required in body")
       );
     }
 
     if (approveAfterCreation !== 0 && approveAfterCreation !== 1) {
       return next(
-        errorHandler(400, "approveAfterCreation must be either 0 or 1"),
+        errorHandler(400, "approveAfterCreation must be either 0 or 1")
       );
     }
 
@@ -3603,12 +3587,12 @@ export const updateApproveTicketAfterCreationSetting = async (
       `UPDATE company 
        SET is_Ticket_Approve_After_Create = ? 
        WHERE idCompany = ?`,
-      [approveAfterCreation, req.companyId],
+      [approveAfterCreation, req.companyId]
     );
 
     if (updateResult.affectedRows === 0) {
       return next(
-        errorHandler(404, "Company not found or setting not updated"),
+        errorHandler(404, "Company not found or setting not updated")
       );
     }
 
@@ -3620,7 +3604,7 @@ export const updateApproveTicketAfterCreationSetting = async (
   } catch (error) {
     console.error(
       "Error updating approve ticket after creation setting:",
-      error,
+      error
     );
     return next(errorHandler(500, "Internal Server Error"));
   }
@@ -3633,7 +3617,7 @@ export const getApproveTicketAfterCreationSetting = async (req, res, next) => {
       `SELECT is_Ticket_Approve_After_Create 
        FROM company 
        WHERE idCompany = ?`,
-      [req.companyId],
+      [req.companyId]
     );
 
     res.status(200).json({
@@ -3644,7 +3628,7 @@ export const getApproveTicketAfterCreationSetting = async (req, res, next) => {
   } catch (error) {
     console.error(
       "Error fetching approve ticket after creation setting:",
-      error,
+      error
     );
     return next(errorHandler(500, "Internal Server Error"));
   }
@@ -3675,7 +3659,7 @@ export const saveLetterTemplate = async (req, res, next) => {
     // Check if template already exists for this company
     const [existingTemplate] = await pool.query(
       "SELECT id FROM letter_templates WHERE company_id = ? AND template_name = ?",
-      [req.companyId, templateName],
+      [req.companyId, templateName]
     );
 
     let result;
@@ -3683,13 +3667,13 @@ export const saveLetterTemplate = async (req, res, next) => {
       // Update existing template
       [result] = await pool.query(
         "UPDATE letter_templates SET template_content = ?, updated_at = NOW() WHERE company_id = ? AND template_name = ?",
-        [templateContent, req.companyId, templateName],
+        [templateContent, req.companyId, templateName]
       );
     } else {
       // Insert new template
       [result] = await pool.query(
         "INSERT INTO letter_templates (company_id, template_name, template_content) VALUES (?, ?, ?)",
-        [req.companyId, templateName, templateContent],
+        [req.companyId, templateName, templateContent]
       );
     }
 
@@ -3747,7 +3731,7 @@ export const getAllLetterTemplates = async (req, res, next) => {
   try {
     const [templates] = await pool.query(
       "SELECT template_name, template_content, created_at, updated_at FROM letter_templates WHERE company_id = ? ORDER BY template_name ASC",
-      [req.companyId],
+      [req.companyId]
     );
 
     // Create an object with all 5 template slots
@@ -3779,7 +3763,7 @@ export const getAllLetterTemplates = async (req, res, next) => {
 export const fetchCustomerFields = async (req, res, next) => {
   try {
     let [customerFields] = await pool2.query(
-      "SELECT idCustomerField,fieldName FROM customer_fields WHERE status = 1",
+      "SELECT idCustomerField,fieldName FROM customer_fields WHERE status = 1"
     );
 
     if (!customerFields || customerFields.length === 0) {
@@ -3792,7 +3776,7 @@ export const fetchCustomerFields = async (req, res, next) => {
     // Fetch all configured fields for the company (remove SQL filter for software type)
     const [companyCustomerFields] = await pool2.query(
       "SELECT idCompanyCustomerField, CustomerField_idCustomerField, company_id, isRequired, asipiya_software FROM company_customer_fields WHERE company_id = ?",
-      [req.companyId],
+      [req.companyId]
     );
 
     // Fields that represent separate tables (not direct customer table columns)
@@ -3815,13 +3799,13 @@ export const fetchCustomerFields = async (req, res, next) => {
             String(companyField.asipiya_software)
               .split(",")
               .map((s) => s.trim().toLowerCase())
-              .includes("pawning"),
+              .includes("pawning")
         );
 
         // For fields that represent separate tables, exclude isRequired property
         // since they're managed in their own tables
         const isSeparateTableField = separateTableFields.includes(
-          field.fieldName,
+          field.fieldName
         );
 
         const baseField = {
@@ -3850,13 +3834,13 @@ export const fetchCustomerFields = async (req, res, next) => {
 
     // Check if "Customer_Documents" field exists and fetch documents
     const customerDocumentsField = customerFields.find(
-      (field) => field.fieldName === "Customer_Documents",
+      (field) => field.fieldName === "Customer_Documents"
     );
 
     if (customerDocumentsField) {
       const [customerDocuments] = await pool2.query(
         "SELECT idCustomerDocument,documentName, isRequired FROM customer_documents WHERE companyId = ?",
-        [req.companyId],
+        [req.companyId]
       );
 
       // Attach documents to the field
@@ -3865,7 +3849,7 @@ export const fetchCustomerFields = async (req, res, next) => {
 
     // Filter to only return configured customer fields
     const configuredFields = customerFields.filter(
-      (field) => field.isConfigured === true,
+      (field) => field.isConfigured === true
     );
 
     res.status(200).json({

@@ -2,9 +2,6 @@ import mysql from "mysql2/promise";
 import dotenv from "dotenv";
 dotenv.config();
 
-console.log("DB_USER:", process.env.DB_USER);
-console.log("DB_PASSWORD:", process.env.DB_PASSWORD);
-
 // Toggle SSL via env if you later move to a server that supports it
 // e.g., DB_SSL=true
 const USE_SSL = String(process.env.DB_SSL || "").toLowerCase() === "true";
@@ -70,13 +67,13 @@ export const connectDB = async () => {
         console.error("Database connection was refused.");
       } else if (error.code === "ETIMEDOUT" || error.code === "ENETUNREACH") {
         console.error(
-          "Cannot reach database server. Check host/port/firewall.",
+          "Cannot reach database server. Check host/port/firewall."
         );
       } else if (error.code === "ER_ACCESS_DENIED_ERROR") {
         console.error("Database credentials are incorrect");
       } else if (error.code === "HANDSHAKE_NO_SSL_SUPPORT") {
         console.error(
-          "Server does not support SSL; remove ssl config or set DB_SSL=false",
+          "Server does not support SSL; remove ssl config or set DB_SSL=false"
         );
       }
 
@@ -134,7 +131,7 @@ export const connectDB2 = async () => {
   while (retries > 0) {
     try {
       console.log(
-        `Attempting to connect to DB2 (account_center)... (${4 - retries}/3)`,
+        `Attempting to connect to DB2 (account_center)... (${4 - retries}/3)`
       );
       const conn = await pool2.getConnection();
       await conn.execute("SELECT 1");
@@ -161,7 +158,7 @@ export const connectDB2 = async () => {
       retries--;
       if (retries > 0) {
         console.log(
-          `Retrying DB2 in 5 seconds... (${retries} attempts remaining)`,
+          `Retrying DB2 in 5 seconds... (${retries} attempts remaining)`
         );
         await new Promise((resolve) => setTimeout(resolve, 5000));
       } else {

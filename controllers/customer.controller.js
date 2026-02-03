@@ -292,6 +292,7 @@ export const createFromApproval = async (req, res, next) => {
 };
 
 // Check if there is a customer in the system when user type the NIC in the frontend
+// Uses Account Center API - customer data is in Account Center
 export const checkCustomerByNICWhenCreating = async (req, res, next) => {
   try {
     const { NIC } = req.body;
@@ -299,24 +300,17 @@ export const checkCustomerByNICWhenCreating = async (req, res, next) => {
       return next(errorHandler(400, "NIC is required"));
     }
 
-    // Get all the branches for this company
-    const [branches] = await pool2.query(
-      "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
-      [req.companyId]
+    const queryParams = new URLSearchParams({
+      companyId: req.companyId.toString(),
+      nic: NIC,
+    });
+
+    const accCenterResponse = await accCenterGet(
+      `/customer/check-nic-exists?${queryParams.toString()}`,
+      req.cookies.accessToken
     );
 
-    if (branches.length === 0) {
-      return next(errorHandler(404, "No branches found for this company"));
-    }
-
-    // Check if there is a customer with the NIC in any of the branches of this company
-
-    const [customer] = await pool.query(
-      "SELECT * FROM customer WHERE NIC = ? AND Branch_idBranch IN (?)",
-      [NIC, branches.map((b) => b.idBranch)]
-    );
-
-    if (customer.length > 0) {
+    if (accCenterResponse.exists) {
       return res.status(200).json({
         message: "Customer found with this NIC in the system",
         success: true,
@@ -333,8 +327,7 @@ export const checkCustomerByNICWhenCreating = async (req, res, next) => {
   }
 };
 
-// Get customer data by NIC if there is a user in the system
-// This function is used to get customer data by NIC when user type the NIC in the frontend and check if there is a customer in the system by above function
+// Get customer data by NIC - uses Account Center API (customer data is in Account Center)
 export const getCustomerDataByNIC = async (req, res, next) => {
   try {
     const NIC = req.params.nic;
@@ -342,24 +335,47 @@ export const getCustomerDataByNIC = async (req, res, next) => {
       return next(errorHandler(400, "NIC is required"));
     }
 
-    // Fetch customer by NIC
-    const [customerRows] = await pool.query(
-      "SELECT * FROM customer WHERE NIC = ?",
-      [NIC]
+    // 1. Find customer by NIC in Account Center
+    const queryParams = new URLSearchParams({
+      companyId: req.companyId.toString(),
+    });
+    const findResponse = await accCenterGet(
+      `/customer/find-customer-by-nic/${encodeURIComponent(
+        NIC
+      )}?${queryParams.toString()}`,
+      req.cookies.accessToken
     );
 
-    if (!customerRows || customerRows.length === 0) {
+    if (!findResponse.idCompany_Customer) {
       return next(errorHandler(404, "Customer not found"));
     }
 
-    const customer = customerRows[0];
+    const idCompany_Customer = findResponse.idCompany_Customer;
+    const isPawningUserId = findResponse.isPawningUserId;
 
-    // Fetch documents for this customer
-    const [customerDocuments] = await pool.query(
-      "SELECT * FROM customer_documents WHERE Customer_idCustomer = ?",
-      [customer.idCustomer]
+    // 2. Get full customer data from Account Center
+    const getCustomerParams = new URLSearchParams({
+      asipiyaSoftware: "pawning",
+      companyId: req.companyId.toString(),
+    });
+    const accCenterResponse = await accCenterGet(
+      `/customer/get-customer/${idCompany_Customer}?${getCustomerParams.toString()}`,
+      req.cookies.accessToken
     );
-    customer.documents = customerDocuments || [];
+
+    const customer = accCenterResponse.customer || {};
+    customer.idCustomer = isPawningUserId ?? idCompany_Customer;
+
+    // 3. Add Pawning-specific documents if customer is linked to Pawning
+    if (isPawningUserId) {
+      const [customerDocuments] = await pool.query(
+        "SELECT * FROM customer_documents WHERE Customer_idCustomer = ?",
+        [isPawningUserId]
+      );
+      customer.documents = customerDocuments || [];
+    } else {
+      customer.documents = customer.documents || [];
+    }
 
     res.status(200).json({
       success: true,
@@ -368,6 +384,9 @@ export const getCustomerDataByNIC = async (req, res, next) => {
     });
   } catch (error) {
     console.log("Error in getCustomerDataByNIC:", error);
+    if (error.status === 404) {
+      return next(errorHandler(404, "Customer not found"));
+    }
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

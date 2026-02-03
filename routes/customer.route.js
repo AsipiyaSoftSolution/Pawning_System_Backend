@@ -13,6 +13,7 @@ import {
   blacklistCustomer,
   getCustomerPaymentHistory,
   getCustomerTickets,
+  getKycDataForAccountCenter,
   // getCustomerCompleteDataById,
   generateCustomerNumber,
 } from "../controllers/customer.controller.js";
@@ -20,6 +21,9 @@ import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
 import { checkUserSelectedHeadBranch } from "../middlewares/headBranch.middleware.js";
 
 const router = express.Router();
+
+// KYC data for Account Center (server-to-server, no auth) - must be before /:branchId
+router.get("/kyc/:customerId", getKycDataForAccountCenter);
 
 router.post(
   "/:branchId/create",

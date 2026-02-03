@@ -1289,3 +1289,51 @@ export const generateCustomerNumber = async (req, res, next) => {
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
+
+/**
+ * KYC data for Account Center (server-to-server, no auth)
+ * Returns customer details and pawning tickets for a given pawning customer ID.
+ * Called by Account Center when fetching KYC details for a customer with isPawningUserId.
+ */
+export const getKycDataForAccountCenter = async (req, res, next) => {
+  try {
+    const customerId = req.params.customerId;
+    if (!customerId) {
+      return next(errorHandler(400, "Customer ID is required"));
+    }
+
+    const [customerRows] = await pool.query(
+      `SELECT idCustomer, Customer_Number, Behaviour_Status, Blacklist_Reason, Blacklist_Date, created_at
+       FROM customer
+       WHERE idCustomer = ?`,
+      [customerId]
+    );
+
+    if (customerRows.length === 0) {
+      return res.status(200).json({
+        success: true,
+        pawningCustomer: null,
+        pawningTickets: [],
+      });
+    }
+
+    const pawningCustomer = customerRows[0];
+
+    const [pawningTickets] = await pool.query(
+      `SELECT idPawning_Ticket, Ticket_No, Date_Time, Maturity_date, Period, Period_Type, Interest_R, Pawning_Product_idPawning_Product
+       FROM pawning_ticket
+       WHERE Customer_idCustomer = ?
+       ORDER BY Date_Time DESC`,
+      [customerId]
+    );
+
+    return res.status(200).json({
+      success: true,
+      pawningCustomer,
+      pawningTickets: pawningTickets || [],
+    });
+  } catch (error) {
+    console.error("Error in getKycDataForAccountCenter:", error);
+    return next(errorHandler(500, error.message || "Internal Server Error"));
+  }
+};

@@ -3832,25 +3832,24 @@ export const fetchCustomerFields = async (req, res, next) => {
       }));
     }
 
-    // Check if "Customer_Documents" field exists and fetch documents
-    const customerDocumentsField = customerFields.find(
-      (field) => field.fieldName === "Customer_Documents"
-    );
-
-    if (customerDocumentsField) {
-      const [customerDocuments] = await pool2.query(
-        "SELECT idCustomerDocument,documentName, isRequired FROM customer_documents WHERE companyId = ?",
-        [req.companyId]
-      );
-
-      // Attach documents to the field
-      customerDocumentsField.documents = customerDocuments || [];
-    }
-
     // Filter to only return configured customer fields
-    const configuredFields = customerFields.filter(
+    let configuredFields = customerFields.filter(
       (field) => field.isConfigured === true
     );
+
+    // If Customer_Documents is configured, fetch document types for Pawning from customer_documents
+    const customerDocumentsField = configuredFields.find(
+      (f) => f.fieldName === "Customer_Documents"
+    );
+    if (customerDocumentsField) {
+      const [docTypes] = await pool2.query(
+        `SELECT idCustomerDocument, documentName, isRequired, asipiyaSoftware 
+         FROM customer_documents 
+         WHERE companyId = ? AND (asipiyaSoftware = 'pawning' OR asipiyaSoftware IS NULL)`,
+        [req.companyId]
+      );
+      customerDocumentsField.documents = docTypes || [];
+    }
 
     res.status(200).json({
       message: "Customer fields fetched successfully",

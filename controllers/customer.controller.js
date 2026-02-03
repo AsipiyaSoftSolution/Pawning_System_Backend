@@ -584,11 +584,18 @@ export const getCustomerById = async (req, res, next) => {
       }
     }
 
-    // Fetch customer documents from pawning DB
-    const [documents] = await pool.query(
+    // Fetch customer documents from pawning DB (legacy)
+    const [pawningDocuments] = await pool.query(
       "SELECT * FROM customer_documents WHERE Customer_idCustomer = ?",
       [customerId]
     );
+
+    // Prefer Account Center documents (company_customer_documents) when available;
+    // fall back to Pawning customer_documents for legacy data
+    const documents =
+      accCenterCustomerData?.documents?.length > 0
+        ? accCenterCustomerData.documents
+        : pawningDocuments || [];
 
     // Fetch branch info for head office view (branch table is in Account Center DB)
     let branchInfo = null;
@@ -699,9 +706,10 @@ export const editCustomer = async (req, res, next) => {
 
       const apiCustomerData = {
         ...customerFields,
-        // Map 'documents' to 'customerDocuments' if it exists.
-        // Note: The frontend might send 'documents' or 'customerDocuments'. We handle both.
-        customerDocuments: documents || customerFields.customerDocuments || [],
+        // Prefer customerDocuments (frontend's merged array with new + existing docs) over
+        // documents (raw from form, which can be stale and lacks new uploads).
+        customerDocuments:
+          customerFields.customerDocuments ?? documents ?? [],
         customerOccupations: customerFields.customerOccupations || [],
         customerFamily: customerFields.customerFamily || [],
         customerBankAccounts: customerFields.customerBankAccounts || [],

@@ -40,13 +40,19 @@ app.use(
         origin === "http://127.0.0.1:5173"
       )
         return cb(null, true); // dev
+      // Account Center server-to-server (create-from-approval)
+      if (
+        origin === "http://localhost:8000" ||
+        origin === "http://127.0.0.1:8000"
+      )
+        return cb(null, true);
       return cb(new Error(`CORS blocked: ${origin}`));
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
     optionsSuccessStatus: 204,
-  }),
+  })
 );
 
 app.use(express.json({ limit: "10mb" }));

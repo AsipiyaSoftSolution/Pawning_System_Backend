@@ -462,20 +462,33 @@ export const getCustomersForTheBranch = async (req, res, next) => {
 export const getCustomerById = async (req, res, next) => {
   try {
     const customerId = req.params.id || req.params.customerId;
-    const branchId = req.branchId;
+    const userBranches = req.branches || [];
 
     if (!customerId) {
       return next(errorHandler(400, "Customer ID is required"));
     }
 
-    // Fetch pawning customer data to get accountCenterCusId
+    // Fetch pawning customer by idCustomer (unique). When head branch is selected,
+    // the customer list shows customers from all branches, so we cannot filter by
+    // the URL branchId alone. Instead, look up by idCustomer and verify the
+    // customer's branch is in the user's allowed branches.
     const [customerRows] = await pool.query(
-      "SELECT idCustomer, accountCenterCusId, Customer_Number FROM customer WHERE idCustomer = ? AND Branch_idBranch = ?",
-      [customerId, branchId]
+      "SELECT idCustomer, accountCenterCusId, Customer_Number, Branch_idBranch FROM customer WHERE idCustomer = ?",
+      [customerId]
     );
 
     if (customerRows.length === 0) {
       return next(errorHandler(404, "Customer not found"));
+    }
+
+    // Ensure user has access to the customer's branch
+    const customerBranchId = customerRows[0].Branch_idBranch;
+    if (
+      userBranches.length > 0 &&
+      customerBranchId != null &&
+      !userBranches.some((b) => Number(b) === Number(customerBranchId))
+    ) {
+      return next(errorHandler(403, "Access denied to this customer"));
     }
 
     const pawningCustomer = customerRows[0];
@@ -513,6 +526,22 @@ export const getCustomerById = async (req, res, next) => {
       [customerId]
     );
 
+    // Fetch branch info for head office view (branch table is in Account Center DB)
+    let branchInfo = null;
+    if (customerBranchId != null) {
+      try {
+        const [branchRows] = await pool2.query(
+          "SELECT idBranch, Name, Branch_Code FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
+          [customerBranchId, req.companyId]
+        );
+        if (branchRows.length > 0) {
+          branchInfo = branchRows[0];
+        }
+      } catch (err) {
+        console.warn("Could not fetch branch info:", err?.message);
+      }
+    }
+
     // Merge ACC Center data with pawning-specific data
     const customer = {
       // Spread all account center fields first (if available)
@@ -523,6 +552,8 @@ export const getCustomerById = async (req, res, next) => {
       Customer_Number: pawningCustomer.Customer_Number,
       // Add pawning documents
       documents: documents || [],
+      // Branch where customer is registered (for head office view)
+      branchInfo,
     };
 
     res.status(200).json({
@@ -1303,7 +1334,8 @@ export const getKycDataForAccountCenter = async (req, res, next) => {
     }
 
     const [customerRows] = await pool.query(
-      `SELECT idCustomer, Customer_Number, Behaviour_Status, Blacklist_Reason, Blacklist_Date, created_at
+      `SELECT idCustomer, Customer_Number, First_Name, Last_Name, Nic, Contact_No, Email, Address, Address_02, Address_03,
+         Behaviour_Status, Blacklist_Reason, Blacklist_Date, Status, created_at
        FROM customer
        WHERE idCustomer = ?`,
       [customerId]

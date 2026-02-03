@@ -78,18 +78,39 @@ export const createCustomer = async (req, res, next) => {
     const { documents, ...customerFields } = data;
 
     // Step 0: Check if an approval process exists for "CUSTOMER CREATE"
-    let hasApprovalProcess = false;
-    try {
-      const approvalCheckParams = new URLSearchParams({
-        companyId: req.companyId.toString(),
-        approvalName: "CREATE CUSTOMER",
-        asipiyaSoftware: "pawning",
-      });
-
-      const approvalCheckResponse = await accCenterGet(
-        `/customer/check-approval-process?${approvalCheckParams.toString()}`,
-        req.cookies.accessToken
+    const accessToken = req.accessToken || req.cookies?.accessToken;
+    if (!accessToken) {
+      connection.release();
+      return next(
+        errorHandler(
+          401,
+          "Authentication token is required for customer creation."
+        )
       );
+    }
+
+    let hasApprovalProcess = false;
+    const approvalCheckParams = new URLSearchParams({
+      companyId: req.companyId.toString(),
+      approvalName: "CREATE CUSTOMER",
+      asipiyaSoftware: "pawning",
+    });
+    const approvalCheckUrl = `/customer/check-approval-process?${approvalCheckParams.toString()}`;
+
+    const fetchApprovalCheck = () =>
+      accCenterGet(approvalCheckUrl, accessToken);
+
+    try {
+      let approvalCheckResponse;
+      try {
+        approvalCheckResponse = await fetchApprovalCheck();
+      } catch (firstError) {
+        console.warn(
+          "First approval check attempt failed, retrying once:",
+          firstError?.message || firstError
+        );
+        approvalCheckResponse = await fetchApprovalCheck();
+      }
       console.log("approvalCheckResponse", approvalCheckResponse);
 
       if (approvalCheckResponse.success && approvalCheckResponse.data) {
@@ -97,12 +118,9 @@ export const createCustomer = async (req, res, next) => {
       }
     } catch (error) {
       console.warn(
-        "Failed to check approval process, defaulting to approval required flow if safe or handling error:",
-        error
+        "Failed to check approval process after retry:",
+        error?.message || error
       );
-      // If we can't check, we might want to default to one way or another.
-      // For now, let's assume if the check fails, we proceed safely (perhaps logging it).
-      // OR better: if check fails, we can't determine correct flow.
       connection.release();
       return next(
         errorHandler(500, "Failed to determine approval process requirements.")
@@ -137,7 +155,7 @@ export const createCustomer = async (req, res, next) => {
       const accCenterResponse = await accCenterPost(
         "/customer/create-customer",
         accCenterPayload,
-        req.cookies.accessToken
+        accessToken
       );
 
       if (!accCenterResponse.success) {
@@ -178,7 +196,7 @@ export const createCustomer = async (req, res, next) => {
         const accCenterResponse = await accCenterPost(
           "/customer/create-customer",
           accCenterPayload,
-          req.cookies.accessToken
+          accessToken
         );
 
         if (!accCenterResponse.success || !accCenterResponse.customerId) {

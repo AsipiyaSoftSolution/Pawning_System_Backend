@@ -325,7 +325,7 @@ export const checkCustomerByNICWhenCreating = async (req, res, next) => {
 
     const accCenterResponse = await accCenterGet(
       `/customer/check-nic-exists?${queryParams.toString()}`,
-      req.cookies.accessToken
+      req.accessToken || req.cookies?.accessToken
     );
 
     if (accCenterResponse.exists) {
@@ -342,6 +342,33 @@ export const checkCustomerByNICWhenCreating = async (req, res, next) => {
   } catch (error) {
     console.error("Error checking customer by NIC:", error);
     next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// Check if customer exists for creation (same company/branch check) - for Pawning/Microfinance/Leasing
+export const checkCustomerExistsForCreation = async (req, res, next) => {
+  try {
+    const nic = (req.query.nic || req.body?.NIC || "").trim();
+    if (!nic) {
+      return next(errorHandler(400, "NIC is required"));
+    }
+    const accessToken = req.accessToken || req.cookies?.accessToken;
+    if (!accessToken) {
+      return next(errorHandler(401, "Authentication required"));
+    }
+    const queryParams = new URLSearchParams({
+      companyId: req.companyId.toString(),
+      branchId: req.branchId.toString(),
+      nic,
+    });
+    const accCenterResponse = await accCenterGet(
+      `/customer/check-exists-for-creation?${queryParams.toString()}`,
+      accessToken
+    );
+    return res.status(200).json(accCenterResponse);
+  } catch (error) {
+    console.error("Error in checkCustomerExistsForCreation:", error);
+    return next(errorHandler(500, "Internal Server Error"));
   }
 };
 

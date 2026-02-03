@@ -7,6 +7,7 @@ import {
   getCustomerById,
   editCustomer,
   checkCustomerByNICWhenCreating,
+  checkCustomerExistsForCreation,
   getCustomerDataByNIC,
   deleteDocuments,
   getCustomerLogsDataById,
@@ -65,6 +66,13 @@ router.post(
   checkUserBranchAccess,
   checkCustomerByNICWhenCreating
 ); // Check if a customer with the given NIC exists in the system when creating a new customer
+
+router.get(
+  "/:branchId/check-exists-for-creation",
+  protectedRoute,
+  checkUserBranchAccess,
+  checkCustomerExistsForCreation
+); // Check if customer exists (same company/branch) - blocks creation if exists
 
 router.get(
   "/:branchId/customer-data-by-nic/:nic",

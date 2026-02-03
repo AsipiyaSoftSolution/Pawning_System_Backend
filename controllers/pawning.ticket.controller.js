@@ -1486,6 +1486,7 @@ export const getTicketDataById = async (req, res, next) => {
       customerData = [
         {
           idCustomer: pawningCustomer[0].idCustomer,
+          pawningCustomerId: ticketData[0].Customer_idCustomer, // Pawning customer id for KYC/Account Center
           NIC: accCus.Nic,
           Full_name:
             accCus.First_Name && accCus.Last_Name
@@ -1511,6 +1512,7 @@ export const getTicketDataById = async (req, res, next) => {
       customerData = [
         {
           idCustomer: pawningCustomer[0].idCustomer,
+          pawningCustomerId: ticketData[0].Customer_idCustomer,
           NIC: null,
           Full_name: "Unknown Customer",
           Address1: null,

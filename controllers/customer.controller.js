@@ -1344,6 +1344,10 @@ export const generateCustomerNumber = async (req, res, next) => {
  * KYC data for Account Center (server-to-server, no auth)
  * Returns customer details and pawning tickets for a given pawning customer ID.
  * Called by Account Center when fetching KYC details for a customer with isPawningUserId.
+ *
+ * Pawning customer table has only basic fields (idCustomer, Customer_Number, Behaviour_Status, etc.).
+ * Full customer data (First_Name, Last_Name, Nic, Contact_No, Email, Address) lives in
+ * Account Center company_customer table, linked via accountCenterCusId = idCompany_Customer.
  */
 export const getKycDataForAccountCenter = async (req, res, next) => {
   try {
@@ -1352,36 +1356,39 @@ export const getKycDataForAccountCenter = async (req, res, next) => {
       return next(errorHandler(400, "Customer ID is required"));
     }
 
-    const [customerRows] = await pool.query(
-      `SELECT idCustomer, Customer_Number, First_Name, Last_Name, Nic, Contact_No, Email, Address, Address_02, Address_03,
-         Behaviour_Status, Blacklist_Reason, Blacklist_Date, Status, created_at
-       FROM customer
-       WHERE idCustomer = ?`,
-      [customerId]
-    );
-
-    if (customerRows.length === 0) {
-      return res.status(200).json({
-        success: true,
-        pawningCustomer: null,
-        pawningTickets: [],
-      });
+    const customerIdNum = parseInt(customerId, 10);
+    if (isNaN(customerIdNum)) {
+      return next(errorHandler(400, "Invalid customer ID"));
     }
 
-    const pawningCustomer = customerRows[0];
+    // 1. Fetch basic data from Pawning customer (only columns that exist)
+    const [[pawningRows], [pawningTickets]] = await Promise.all([
+      pool.query(
+        `SELECT idCustomer, Customer_Number, Behaviour_Status
+         FROM customer
+         WHERE idCustomer = ?`,
+        [customerIdNum]
+      ),
+      pool.query(
+        `SELECT idPawning_Ticket, Ticket_No,Date_Time,Maturity_date
+         FROM pawning_ticket
+         WHERE Customer_idCustomer = ?
+         ORDER BY Date_Time DESC`,
+        [customerIdNum]
+      ),
+    ]);
 
-    const [pawningTickets] = await pool.query(
-      `SELECT idPawning_Ticket, Ticket_No, Date_Time, Maturity_date, Period, Period_Type, Interest_Rate AS Interest_R, Pawning_Product_idPawning_Product
-       FROM pawning_ticket
-       WHERE Customer_idCustomer = ?
-       ORDER BY Date_Time DESC`,
-      [customerId]
-    );
+    const pawningBasic =
+      pawningRows && pawningRows.length > 0 ? pawningRows[0] : null;
+    const tickets = Array.isArray(pawningTickets) ? pawningTickets : [];
+
+    // Account Center handles full customer data; Pawning API returns only basic fields + tickets
+    const pawningCustomer = pawningBasic || null;
 
     return res.status(200).json({
       success: true,
       pawningCustomer,
-      pawningTickets: pawningTickets || [],
+      pawningTickets: tickets,
     });
   } catch (error) {
     console.error("Error in getKycDataForAccountCenter:", error);

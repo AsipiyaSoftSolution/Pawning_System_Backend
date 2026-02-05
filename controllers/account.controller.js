@@ -1,5 +1,5 @@
 import { errorHandler } from "../utils/errorHandler.js";
-import { accCenterGet } from "../utils/accCenterApi.js";
+import { subsystemApi } from "../api/accountCenterApi.js";
 
 // Get Cash and Bank Accounts for the branch (via Account Center subsystem API)
 export const getCashAndBankAccounts = async (req, res, next) => {
@@ -9,8 +9,9 @@ export const getCashAndBankAccounts = async (req, res, next) => {
       return next(errorHandler(401, "Unauthorized"));
     }
 
-    const resData = await accCenterGet(
-      `/subsystem/cash-and-bank-accounts?branchId=${req.branchId}&companyId=${req.companyId}`,
+    const resData = await subsystemApi.cashAndBankAccounts(
+      req.branchId,
+      req.companyId,
       accessToken
     );
 

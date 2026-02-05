@@ -1,6 +1,6 @@
 import { errorHandler } from "../utils/errorHandler.js";
 import { pool, pool2 } from "../utils/db.js";
-import { accCenterGet } from "../utils/accCenterApi.js";
+import { subsystemApi, customerApi } from "../api/accountCenterApi.js";
 
 /** Fetch company_customer data by Pawning customer ids via Account Center subsystem API */
 async function fetchCustomersByPawningIds(
@@ -12,13 +12,12 @@ async function fetchCustomersByPawningIds(
   const ids = [...new Set(pawningCustomerIds)].filter((id) => id);
   if (ids.length === 0) return [];
   try {
-    const res = await accCenterGet(
-      `/subsystem/customers-by-pawning-ids?ids=${ids.join(
-        ","
-      )}&companyId=${companyId}`,
+    const res = await subsystemApi.customersByPawningIds(
+      ids,
+      companyId,
       accessToken
     );
-    return res.customers || [];
+    return res?.customers || [];
   } catch (e) {
     console.error("fetchCustomersByPawningIds:", e);
     return [];
@@ -29,11 +28,11 @@ async function fetchCustomersByPawningIds(
 async function fetchBranchesForTicketFilters(companyId, accessToken) {
   if (!companyId || !accessToken) return [];
   try {
-    const res = await accCenterGet(
-      `/subsystem/branches-for-ticket-filters?companyId=${companyId}`,
+    const res = await subsystemApi.branchesForTicketFilters(
+      companyId,
       accessToken
     );
-    return res.branches || [];
+    return res?.branches || [];
   } catch (e) {
     console.error("fetchBranchesForTicketFilters:", e);
     return [];
@@ -44,11 +43,8 @@ async function fetchBranchesForTicketFilters(companyId, accessToken) {
 async function fetchBranchesByCompany(companyId, accessToken) {
   if (!companyId || !accessToken) return [];
   try {
-    const res = await accCenterGet(
-      `/subsystem/branches?companyId=${companyId}`,
-      accessToken
-    );
-    return res.branches || [];
+    const res = await subsystemApi.branches(companyId, accessToken);
+    return res?.branches || [];
   } catch (e) {
     console.error("fetchBranchesByCompany:", e);
     return [];
@@ -61,11 +57,8 @@ async function fetchBranchNamesByIds(branchIds, accessToken) {
   const ids = [...new Set(branchIds)].filter((id) => id);
   if (ids.length === 0) return [];
   try {
-    const res = await accCenterGet(
-      `/subsystem/branch-names?ids=${ids.join(",")}`,
-      accessToken
-    );
-    return res.branches || [];
+    const res = await subsystemApi.branchNames(ids, accessToken);
+    return res?.branches || [];
   } catch (e) {
     console.error("fetchBranchNamesByIds:", e);
     return [];
@@ -81,11 +74,12 @@ async function findPawningIdsByNicFromAccCenter(
 ) {
   if (!nic || !companyId || !accessToken) return [];
   try {
-    let url = `/subsystem/find-pawning-ids-by-nic?nic=${encodeURIComponent(
-      nic
-    )}&companyId=${companyId}`;
-    if (branchId != null) url += `&branchId=${branchId}`;
-    const res = await accCenterGet(url, accessToken);
+    const res = await subsystemApi.findPawningIdsByNic(
+      nic,
+      companyId,
+      branchId,
+      accessToken
+    );
     return (res.isPawningUserIds || []).map((id) => ({ isPawningUserId: id }));
   } catch (e) {
     console.error("findPawningIdsByNicFromAccCenter:", e);
@@ -100,11 +94,11 @@ async function fetchCustomerStatusFromAccCenter(
 ) {
   if (!companyCustomerId || !accessToken) return null;
   try {
-    const res = await accCenterGet(
-      `/subsystem/customer-status/${companyCustomerId}`,
+    const res = await subsystemApi.customerStatus(
+      companyCustomerId,
       accessToken
     );
-    return res.Status;
+    return res?.Status;
   } catch (e) {
     console.error("fetchCustomerStatusFromAccCenter:", e);
     return null;
@@ -115,11 +109,7 @@ async function fetchCustomerStatusFromAccCenter(
 async function fetchCompanySettingsFromAccCenter(companyId, accessToken) {
   if (!companyId || !accessToken) return null;
   try {
-    const res = await accCenterGet(
-      `/subsystem/company-settings/${companyId}`,
-      accessToken
-    );
-    return res;
+    return await subsystemApi.companySettings(companyId, accessToken);
   } catch (e) {
     console.error("fetchCompanySettingsFromAccCenter:", e);
     return null;
@@ -130,13 +120,8 @@ async function fetchCompanySettingsFromAccCenter(companyId, accessToken) {
 async function fetchAssessedValueFromAccCenter(companyId, carat, accessToken) {
   if (!companyId || !carat || !accessToken) return null;
   try {
-    const res = await accCenterGet(
-      `/subsystem/assessed-value?companyId=${companyId}&carat=${encodeURIComponent(
-        carat
-      )}`,
-      accessToken
-    );
-    return res.Amount;
+    const res = await subsystemApi.assessedValue(companyId, carat, accessToken);
+    return res?.Amount;
   } catch (e) {
     console.error("fetchAssessedValueFromAccCenter:", e);
     return null;
@@ -149,11 +134,8 @@ async function fetchUserNamesByIds(userIds, accessToken) {
   const ids = [...new Set(userIds)].filter((id) => id);
   if (ids.length === 0) return [];
   try {
-    const res = await accCenterGet(
-      `/subsystem/user-names?ids=${ids.join(",")}`,
-      accessToken
-    );
-    return res.users || [];
+    const res = await subsystemApi.userNames(ids, accessToken);
+    return res?.users || [];
   } catch (e) {
     console.error("fetchUserNamesByIds:", e);
     return [];
@@ -164,11 +146,8 @@ async function fetchUserNamesByIds(userIds, accessToken) {
 async function fetchArticleTypeById(id, accessToken) {
   if (!id || !accessToken) return null;
   try {
-    const res = await accCenterGet(
-      `/subsystem/article-type/${id}`,
-      accessToken
-    );
-    return res.articleType;
+    const res = await subsystemApi.articleType(id, accessToken);
+    return res?.articleType;
   } catch (e) {
     console.error("fetchArticleTypeById:", e);
     return null;
@@ -179,11 +158,8 @@ async function fetchArticleTypeById(id, accessToken) {
 async function fetchArticleCategoryById(id, accessToken) {
   if (!id || !accessToken) return null;
   try {
-    const res = await accCenterGet(
-      `/subsystem/article-category/${id}`,
-      accessToken
-    );
-    return res.articleCategory;
+    const res = await subsystemApi.articleCategory(id, accessToken);
+    return res?.articleCategory;
   } catch (e) {
     console.error("fetchArticleCategoryById:", e);
     return null;
@@ -194,11 +170,8 @@ async function fetchArticleCategoryById(id, accessToken) {
 async function fetchTicketFormatFromAccCenter(companyId, accessToken) {
   if (!companyId || !accessToken) return null;
   try {
-    const res = await accCenterGet(
-      `/subsystem/ticket-format/${companyId}`,
-      accessToken
-    );
-    return res.ticketFormat;
+    const res = await subsystemApi.ticketFormat(companyId, accessToken);
+    return res?.ticketFormat;
   } catch (e) {
     console.error("fetchTicketFormatFromAccCenter:", e);
     return null;
@@ -215,13 +188,12 @@ async function fetchCustomersByCompanyCustomerIds(
   const ids = [...new Set(companyCustomerIds)].filter((id) => id);
   if (ids.length === 0) return [];
   try {
-    const res = await accCenterGet(
-      `/subsystem/customers-by-company-customer-ids?ids=${ids.join(
-        ","
-      )}&companyId=${companyId}`,
+    const res = await subsystemApi.customersByCompanyCustomerIds(
+      ids,
+      companyId,
       accessToken
     );
-    return res.customers || [];
+    return res?.customers || [];
   } catch (e) {
     console.error("fetchCustomersByCompanyCustomerIds:", e);
     return [];
@@ -887,10 +859,9 @@ export const searchCustomerByNIC = async (req, res, next) => {
       branchId: req.branchId.toString(),
     });
 
-    const accCenterResponse = await accCenterGet(
-      `/customer/search-by-nic/${encodeURIComponent(
-        NIC
-      )}?${queryParams.toString()}`,
+    const accCenterResponse = await customerApi.searchByNic(
+      NIC,
+      Object.fromEntries(queryParams),
       req.cookies.accessToken
     );
 
@@ -4363,8 +4334,9 @@ export const generatePawningTicketNumber = async (req, res, next) => {
 
         // If it's a format component, process it
         if (part === "Branch Number") {
-          const branchRes = await accCenterGet(
-            `/subsystem/branch/${req.branchId}?companyId=${req.companyId}`,
+          const branchRes = await subsystemApi.branch(
+            req.branchId,
+            req.companyId,
             req.cookies?.accessToken
           );
           if (!branchRes?.branch) {
@@ -4374,8 +4346,9 @@ export const generatePawningTicketNumber = async (req, res, next) => {
         }
 
         if (part === "Branch's Customer Count") {
-          const countRes = await accCenterGet(
-            `/subsystem/customer-count-by-branch?branchId=${req.branchId}&companyId=${req.companyId}`,
+          const countRes = await subsystemApi.customerCountByBranch(
+            req.branchId,
+            req.companyId,
             req.cookies?.accessToken
           );
           const count = countRes?.count ?? 0;

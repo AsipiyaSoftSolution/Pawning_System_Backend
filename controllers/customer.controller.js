@@ -2,11 +2,7 @@ import { errorHandler } from "../utils/errorHandler.js";
 import { pool, pool2 } from "../utils/db.js";
 import { uploadImage } from "../utils/cloudinary.js";
 import { getPaginationData, getCompanyBranches } from "../utils/helper.js";
-import {
-  accCenterPost,
-  accCenterGet,
-  accCenterPut,
-} from "../utils/accCenterApi.js";
+import { customerApi, approvalApi } from "../api/accountCenterApi.js";
 import { parse } from "path";
 
 const customerLog = async (idCustomer, date, type, Description, userId) => {
@@ -90,15 +86,14 @@ export const createCustomer = async (req, res, next) => {
     }
 
     let hasApprovalProcess = false;
-    const approvalCheckParams = new URLSearchParams({
+    const approvalCheckParams = {
       companyId: req.companyId.toString(),
       approvalName: "CREATE CUSTOMER",
       asipiyaSoftware: "pawning",
-    });
-    const approvalCheckUrl = `/customer/check-approval-process?${approvalCheckParams.toString()}`;
+    };
 
     const fetchApprovalCheck = () =>
-      accCenterGet(approvalCheckUrl, accessToken);
+      approvalApi.checkApprovalProcess(approvalCheckParams, accessToken);
 
     try {
       let approvalCheckResponse;
@@ -152,8 +147,7 @@ export const createCustomer = async (req, res, next) => {
 
       const accCenterPayload = { data: apiCustomerData };
 
-      const accCenterResponse = await accCenterPost(
-        "/customer/create-customer",
+      const accCenterResponse = await customerApi.createCustomer(
         accCenterPayload,
         accessToken
       );
@@ -193,8 +187,7 @@ export const createCustomer = async (req, res, next) => {
         apiCustomerData.isPawningUserId = pawningCustomerId;
         const accCenterPayload = { data: apiCustomerData };
 
-        const accCenterResponse = await accCenterPost(
-          "/customer/create-customer",
+        const accCenterResponse = await customerApi.createCustomer(
           accCenterPayload,
           accessToken
         );
@@ -318,13 +311,13 @@ export const checkCustomerByNICWhenCreating = async (req, res, next) => {
       return next(errorHandler(400, "NIC is required"));
     }
 
-    const queryParams = new URLSearchParams({
+    const queryParams = {
       companyId: req.companyId.toString(),
       nic: NIC,
-    });
+    };
 
-    const accCenterResponse = await accCenterGet(
-      `/customer/check-nic-exists?${queryParams.toString()}`,
+    const accCenterResponse = await customerApi.checkNicExists(
+      queryParams,
       req.accessToken || req.cookies?.accessToken
     );
 
@@ -356,13 +349,13 @@ export const checkCustomerExistsForCreation = async (req, res, next) => {
     if (!accessToken) {
       return next(errorHandler(401, "Authentication required"));
     }
-    const queryParams = new URLSearchParams({
+    const queryParams = {
       companyId: req.companyId.toString(),
       branchId: req.branchId.toString(),
       nic,
-    });
-    const accCenterResponse = await accCenterGet(
-      `/customer/check-exists-for-creation?${queryParams.toString()}`,
+    };
+    const accCenterResponse = await customerApi.checkExistsForCreation(
+      queryParams,
       accessToken
     );
     return res.status(200).json(accCenterResponse);
@@ -381,14 +374,10 @@ export const getCustomerDataByNIC = async (req, res, next) => {
     }
 
     // 1. Find customer by NIC in Account Center
-    const queryParams = new URLSearchParams({
-      companyId: req.companyId.toString(),
-    });
-    const findResponse = await accCenterGet(
-      `/customer/find-customer-by-nic/${encodeURIComponent(
-        NIC
-      )}?${queryParams.toString()}`,
-      req.cookies.accessToken
+    const findResponse = await customerApi.findCustomerByNic(
+      NIC,
+      { companyId: req.companyId.toString() },
+      req.accessToken || req.cookies?.accessToken
     );
 
     if (!findResponse.idCompany_Customer) {
@@ -399,13 +388,10 @@ export const getCustomerDataByNIC = async (req, res, next) => {
     const isPawningUserId = findResponse.isPawningUserId;
 
     // 2. Get full customer data from Account Center
-    const getCustomerParams = new URLSearchParams({
-      asipiyaSoftware: "pawning",
-      companyId: req.companyId.toString(),
-    });
-    const accCenterResponse = await accCenterGet(
-      `/customer/get-customer/${idCompany_Customer}?${getCustomerParams.toString()}`,
-      req.cookies.accessToken
+    const accCenterResponse = await customerApi.getCustomer(
+      idCompany_Customer,
+      { asipiyaSoftware: "pawning", companyId: req.companyId.toString() },
+      req.accessToken || req.cookies?.accessToken
     );
 
     const customer = accCenterResponse.customer || {};
@@ -464,9 +450,9 @@ export const getCustomersForTheBranch = async (req, res, next) => {
     });
 
     // Call ACC Center API to get customers
-    const accCenterResponse = await accCenterGet(
-      `/customer/get-all-customers?${queryParams.toString()}`,
-      req.cookies.accessToken
+    const accCenterResponse = await customerApi.getAllCustomers(
+      Object.fromEntries(queryParams),
+      req.accessToken || req.cookies?.accessToken
     );
 
     // Extract customers and pagination from ACC Center response
@@ -562,17 +548,16 @@ export const getCustomerById = async (req, res, next) => {
     if (pawningCustomer.accountCenterCusId) {
       try {
         // Build query parameters for ACC Center API
-        const queryParams = new URLSearchParams({
+        const queryParams = {
           asipiyaSoftware: "pawning",
           companyId: req.companyId.toString(),
-        });
+        };
 
         // Call ACC Center API's getCustomerById endpoint
-        const accCenterResponse = await accCenterGet(
-          `/customer/get-customer/${
-            pawningCustomer.accountCenterCusId
-          }?${queryParams.toString()}`,
-          req.cookies.accessToken
+        const accCenterResponse = await customerApi.getCustomer(
+          pawningCustomer.accountCenterCusId,
+          queryParams,
+          req.accessToken || req.cookies?.accessToken
         );
 
         // Extract customer data from ACC Center response
@@ -708,8 +693,7 @@ export const editCustomer = async (req, res, next) => {
         ...customerFields,
         // Prefer customerDocuments (frontend's merged array with new + existing docs) over
         // documents (raw from form, which can be stale and lacks new uploads).
-        customerDocuments:
-          customerFields.customerDocuments ?? documents ?? [],
+        customerDocuments: customerFields.customerDocuments ?? documents ?? [],
         customerOccupations: customerFields.customerOccupations || [],
         customerFamily: customerFields.customerFamily || [],
         customerBankAccounts: customerFields.customerBankAccounts || [],
@@ -717,16 +701,17 @@ export const editCustomer = async (req, res, next) => {
 
       // Ensure field names match what the API expects (e.g., if frontend sends mapped fields)
 
-      const queryParams = new URLSearchParams({
+      const queryParams = {
         asipiyaSoftware: "pawning",
         companyId: req.companyId.toString(),
-      });
+      };
 
       // Call ACC Center API to update customer
-      const accCenterResponse = await accCenterPut(
-        `/customer/update-customer/${accountCenterCusId}?${queryParams.toString()}`,
+      const accCenterResponse = await customerApi.updateCustomer(
+        accountCenterCusId,
+        queryParams,
         { customerData: apiCustomerData },
-        req.cookies.accessToken
+        req.accessToken || req.cookies?.accessToken
       );
 
       // Log the update locally

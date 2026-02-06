@@ -2,7 +2,7 @@ name: Deploy Pawning Backend to DigitalOcean
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
   deploy:
@@ -16,25 +16,23 @@ jobs:
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
-          key: ${{ secrets.SSH_KEY }} # This is your root@windows private key (No Passphrase)
           port: ${{ secrets.PORT }}
+          key: ${{ secrets.SSH_KEY }}
+          passphrase: ${{ secrets.SSH_KEY_PASSPHRASE }}
           script: |
-            # 1. Start ssh-agent
+            cd /var/www/apps/node/Pawning_System_Backend
+
+            # Set up SSH agent and add the GitHub SSH key with passphrase
             eval $(ssh-agent -s)
-            
-            # 2. Add the Pawning identity key using the passphrase from GitHub Secrets
-            # We use SSH_ASKPASS to pipe the passphrase into ssh-add
-            echo "${{ secrets.SSH_KEY_PASSPHRASE }}" | SSH_ASKPASS_REQUIRE=never ssh-add ~/.ssh/id_ed25519_pawning
-            
-            # 3. Navigate to the project directory
-            cd /var/www/Pawning_System_Backend
-            
-            # 4. Pull the latest code using the unlocked key
-            GIT_SSH_COMMAND="ssh -i ~/.ssh/id_ed25519_pawning -o IdentitiesOnly=yes" git pull origin main
-            
-            # 5. Install dependencies and restart service
-            npm install --production
-            sudo systemctl restart pawning-backend
-            
-            # 6. Clean up
+            echo "${{ secrets.SSH_KEY_PASSPHRASE }}" | SSH_ASKPASS_REQUIRE=never ssh-add ~/.ssh/id_ed25519_github_soap
+
+            # Use the SSH key for git operations
+            GIT_SSH_COMMAND="ssh -i ~/.ssh/id_ed25519_github_soap -o IdentitiesOnly=yes" git pull origin main
+
+            # Clean up ssh-agent
             ssh-agent -k
+
+            npm install --production
+
+            # Restart the docker container
+            docker restart pawning_backend

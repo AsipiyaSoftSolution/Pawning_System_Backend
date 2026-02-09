@@ -109,11 +109,18 @@ export const createCustomer = async (req, res, next) => {
       console.log("approvalCheckResponse", approvalCheckResponse);
 
       // Account Center returns approvalProcess property, not data
-      if (approvalCheckResponse.success && approvalCheckResponse.approvalProcess) {
+      if (
+        approvalCheckResponse.success &&
+        approvalCheckResponse.approvalProcess
+      ) {
         hasApprovalProcess = true;
-        console.log("[Customer Create] Approval process found, will submit for approval");
+        console.log(
+          "[Customer Create] Approval process found, will submit for approval",
+        );
       } else {
-        console.log("[Customer Create] No approval process configured, creating directly");
+        console.log(
+          "[Customer Create] No approval process configured, creating directly",
+        );
       }
     } catch (error) {
       console.warn(
@@ -147,8 +154,10 @@ export const createCustomer = async (req, res, next) => {
 
     // FLOW A: Approval Process Exists -> Submit Approval Request (don't create customer yet)
     if (hasApprovalProcess) {
-      console.log("[Customer Create] Submitting customer creation for approval...");
-      
+      console.log(
+        "[Customer Create] Submitting customer creation for approval...",
+      );
+
       const approvalPayload = {
         companyId: req.companyId,
         branchId: req.branchId,
@@ -226,8 +235,6 @@ export const createCustomer = async (req, res, next) => {
         return res.status(201).json({
           success: true,
           message: "Customer created successfully",
-          customerId: pawningCustomerId,
-          accountCenterCusId: accountCenterCusId,
         });
       } catch (error) {
         await connection.rollback();

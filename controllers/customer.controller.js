@@ -108,19 +108,8 @@ export const createCustomer = async (req, res, next) => {
       }
       console.log("approvalCheckResponse", approvalCheckResponse);
 
-      // Account Center returns approvalProcess property, not data
-      if (
-        approvalCheckResponse.success &&
-        approvalCheckResponse.approvalProcess
-      ) {
+      if (approvalCheckResponse.success && approvalCheckResponse.data) {
         hasApprovalProcess = true;
-        console.log(
-          "[Customer Create] Approval process found, will submit for approval",
-        );
-      } else {
-        console.log(
-          "[Customer Create] No approval process configured, creating directly",
-        );
       }
     } catch (error) {
       console.warn(
@@ -152,31 +141,21 @@ export const createCustomer = async (req, res, next) => {
 
     console.log("hasApprovalProcess", hasApprovalProcess);
 
-    // FLOW A: Approval Process Exists -> Submit Approval Request (don't create customer yet)
+    // FLOW A: Approval Process Exists -> No Local Creation Yet
     if (hasApprovalProcess) {
-      console.log(
-        "[Customer Create] Submitting customer creation for approval...",
-      );
+      apiCustomerData.isPawningUserId = null;
 
-      const approvalPayload = {
-        companyId: req.companyId,
-        branchId: req.branchId,
-        userId: req.userId,
-        asipiyaSoftware: "pawning",
-        approvalName: "CUSTOMER CREATE",
-        description: `Customer creation request: ${customerFields.First_Name || ""} ${customerFields.Last_Name || ""} (NIC: ${customerFields.Nic || customerFields.New_NIC || "N/A"})`,
-        data: apiCustomerData,
-      };
+      const accCenterPayload = { data: apiCustomerData };
 
-      const approvalResponse = await approvalApi.submitApprovalRequest(
-        approvalPayload,
+      const accCenterResponse = await customerApi.createCustomer(
+        accCenterPayload,
         accessToken,
       );
 
-      if (!approvalResponse.success) {
+      if (!accCenterResponse.success) {
         connection.release();
         throw new Error(
-          approvalResponse.message || "Failed to submit customer for approval",
+          accCenterResponse.message || "Failed to submit customer for approval",
         );
       }
 
@@ -184,7 +163,6 @@ export const createCustomer = async (req, res, next) => {
       return res.status(201).json({
         success: true,
         message: "Customer creation pending approval",
-        approvalRequestId: approvalResponse.approvalRequestId,
         customerId: null,
         accountCenterCusId: null,
       });
@@ -235,6 +213,8 @@ export const createCustomer = async (req, res, next) => {
         return res.status(201).json({
           success: true,
           message: "Customer created successfully",
+          customerId: pawningCustomerId,
+          accountCenterCusId: accountCenterCusId,
         });
       } catch (error) {
         await connection.rollback();

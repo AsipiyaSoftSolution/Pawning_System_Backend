@@ -760,7 +760,7 @@ export const editCustomer = async (req, res, next) => {
       customerBankAccounts: customerFields.customerBankAccounts || [],
     };
 
-    console.log("hasApprovalProcess for update:", hasApprovalProcess);
+   
 
     // FLOW A: Approval Process Exists -> Submit for approval, no direct update
     if (hasApprovalProcess) {
@@ -821,6 +821,7 @@ export const editCustomer = async (req, res, next) => {
       res.status(200).json({
         success: true,
         message:"Customer updated successfully"
+       
         
       });
     } catch (error) {

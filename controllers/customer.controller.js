@@ -730,9 +730,9 @@ export const editCustomer = async (req, res, next) => {
         );
         approvalCheckResponse = await fetchApprovalCheck();
       }
-      console.log("approvalCheckResponse for update:", approvalCheckResponse);
+      
 
-      if (approvalCheckResponse.success && approvalCheckResponse.data) {
+      if (approvalCheckResponse.success && approvalCheckResponse.approvalProcess) {
         hasApprovalProcess = true;
       }
     } catch (error) {
@@ -764,6 +764,7 @@ export const editCustomer = async (req, res, next) => {
 
     // FLOW A: Approval Process Exists -> Submit for approval, no direct update
     if (hasApprovalProcess) {
+     
       const approvalPayload = {
         companyId: req.companyId,
         branchId: req.branchId,
@@ -778,6 +779,7 @@ export const editCustomer = async (req, res, next) => {
         approvalPayload,
         accessToken,
       );
+     
 
       if (!approvalResponse.success) {
         connection.release();

@@ -15,6 +15,9 @@ export const approvalApi = {
     const qs = new URLSearchParams(params).toString();
     return accCenterGet(`/approval/check-approval-process?${qs}`, accessToken);
   },
+  submitApprovalRequest: (data, accessToken) => {
+    return accCenterPost("/approval/submit-approval-request", data, accessToken);
+  },
 };
 
 // ─── Customer ──────────────────────────────────────────────────────────────

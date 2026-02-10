@@ -3,12 +3,13 @@ import { protectedRoute } from "../middlewares/auth.middleware.js";
 import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
 import {
   createPawningProduct,
+  createPawningProductForBranches,
   getPawningProductById,
   getPawningProducts,
   deletePawningProductById,
   updatePawningProductById,
 } from "../controllers/pawning.product.controller.js";
-import { checkUserSelectedHeadBranch } from "../middlewares/headBranch.middleware.js";
+import { checkUserSelectedHeadBranch, requireHeadBranch } from "../middlewares/headBranch.middleware.js";
 
 const route = express.Router();
 
@@ -18,6 +19,15 @@ route.post(
   checkUserBranchAccess,
   createPawningProduct,
 ); // Create a new product for a specific branch */
+
+route.post(
+  "/:branchId/create-for-branches",
+  protectedRoute,
+  checkUserBranchAccess,
+  checkUserSelectedHeadBranch,
+  requireHeadBranch,
+  createPawningProductForBranches,
+); // Head office: create same product for multiple branches (body: { data, branchIds }) */
 
 route.get(
   "/:branchId/:productId",

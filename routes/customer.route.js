@@ -3,6 +3,7 @@ import { protectedRoute } from "../middlewares/auth.middleware.js";
 import {
   createCustomer,
   createFromApproval,
+  customerUpdatedAfterApproval,
   getCustomersForTheBranch,
   getCustomerById,
   editCustomer,
@@ -35,6 +36,9 @@ router.post(
 
 // Called by Account Center when CUSTOMER CREATE approval is fully approved (server-to-server)
 router.post("/:branchId/create-from-approval", createFromApproval);
+
+// Called by Account Center when CUSTOMER DETAILS UPDATE approval is fully approved (server-to-server)
+router.post("/:branchId/customer-updated-after-approval", customerUpdatedAfterApproval);
 
 router.get(
   "/:branchId/customers",

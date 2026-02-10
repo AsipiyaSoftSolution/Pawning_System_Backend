@@ -302,6 +302,30 @@ export const createFromApproval = async (req, res, next) => {
   }
 };
 
+/**
+ * Called by Account Center when CUSTOMER DETAILS UPDATE approval is fully approved.
+ * Currently no local Pawning data to update, but returns success so Account Center can log it.
+ * In the future, add any Pawning-specific update logic here.
+ */
+export const customerUpdatedAfterApproval = async (req, res, next) => {
+  try {
+    const { accountCenterCusId, systemCustomerId, data } = req.body;
+    console.log(
+      `[Approval] Customer update notification received from Account Center: accountCenterCusId=${accountCenterCusId}, systemCustomerId=${systemCustomerId}`,
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Customer update acknowledged by Pawning",
+    });
+  } catch (error) {
+    console.error("Error in customerUpdatedAfterApproval:", error);
+    return next(
+      errorHandler(error.status || 500, error.message || "Internal Server Error"),
+    );
+  }
+};
+
 // Check if there is a customer in the system when user type the NIC in the frontend
 // Uses Account Center API - customer data is in Account Center
 export const checkCustomerByNICWhenCreating = async (req, res, next) => {

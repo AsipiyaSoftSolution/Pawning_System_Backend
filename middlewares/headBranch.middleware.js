@@ -24,3 +24,12 @@ export const checkUserSelectedHeadBranch = async (req, res, next) => {
     return next(errorHandler(500, "Internal server error"));
   }
 };
+
+/** Must be used after checkUserSelectedHeadBranch. Returns 403 if current branch is not head office. */
+export const requireHeadBranch = (req, res, next) => {
+  if (req.isHeadBranch) {
+    next();
+  } else {
+    return next(errorHandler(403, "This action is only available when head office branch is selected"));
+  }
+};

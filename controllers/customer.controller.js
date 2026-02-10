@@ -302,6 +302,30 @@ export const createFromApproval = async (req, res, next) => {
   }
 };
 
+/**
+ * Called by Account Center when CUSTOMER DETAILS UPDATE approval is fully approved.
+ * Currently no local Pawning data to update, but returns success so Account Center can log it.
+ * In the future, add any Pawning-specific update logic here.
+ */
+export const customerUpdatedAfterApproval = async (req, res, next) => {
+  try {
+    const { accountCenterCusId, systemCustomerId, data } = req.body;
+    console.log(
+      `[Approval] Customer update notification received from Account Center: accountCenterCusId=${accountCenterCusId}, systemCustomerId=${systemCustomerId}`,
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Customer update acknowledged by Pawning",
+    });
+  } catch (error) {
+    console.error("Error in customerUpdatedAfterApproval:", error);
+    return next(
+      errorHandler(error.status || 500, error.message || "Internal Server Error"),
+    );
+  }
+};
+
 // Check if there is a customer in the system when user type the NIC in the frontend
 // Uses Account Center API - customer data is in Account Center
 export const checkCustomerByNICWhenCreating = async (req, res, next) => {
@@ -673,70 +697,134 @@ export const editCustomer = async (req, res, next) => {
     // Extract documents and other fields
     const { documents, ...customerFields } = data;
 
-    // Start transaction for local updates (Customer_Number)
-    await connection.beginTransaction();
+    // Step 0: Check if an approval process exists for "CUSTOMER DETAILS UPDATE"
+    const accessToken = req.accessToken || req.cookies?.accessToken;
+    if (!accessToken) {
+      connection.release();
+      return next(
+        errorHandler(
+          401,
+          "Authentication token is required for customer update.",
+        ),
+      );
+    }
+
+    let hasApprovalProcess = false;
+    const approvalCheckParams = {
+      companyId: req.companyId.toString(),
+      approvalName: "CUSTOMER DETAILS UPDATE",
+      asipiyaSoftware: "pawning",
+    };
+
+    const fetchApprovalCheck = () =>
+      approvalApi.checkApprovalProcess(approvalCheckParams, accessToken);
 
     try {
-      // Update local pawning customer (only Customer_Number if provided)
-      if (customerFields.cus_number !== undefined) {
-        await connection.query(
-          "UPDATE customer SET Customer_Number = ? WHERE idCustomer = ?",
-          [customerFields.cus_number, customerId],
+      let approvalCheckResponse;
+      try {
+        approvalCheckResponse = await fetchApprovalCheck();
+      } catch (firstError) {
+        console.warn(
+          "First approval check attempt failed, retrying once:",
+          firstError?.message || firstError,
+        );
+        approvalCheckResponse = await fetchApprovalCheck();
+      }
+      
+
+      if (approvalCheckResponse.success && approvalCheckResponse.approvalProcess) {
+        hasApprovalProcess = true;
+      }
+    } catch (error) {
+      console.warn(
+        "Failed to check approval process after retry:",
+        error?.message || error,
+      );
+      connection.release();
+      return next(
+        errorHandler(500, "Failed to determine approval process requirements."),
+      );
+    }
+
+    // Prepare API payload (common for both flows)
+    const apiCustomerData = {
+      ...customerFields,
+      customerId: accountCenterCusId,
+      companyId: req.companyId,
+      branchId: req.branchId,
+      userId: req.userId,
+      asipiyaSoftware: "pawning",
+      customerDocuments: customerFields.customerDocuments ?? documents ?? [],
+      customerOccupations: customerFields.customerOccupations || [],
+      customerFamily: customerFields.customerFamily || [],
+      customerBankAccounts: customerFields.customerBankAccounts || [],
+    };
+
+   
+
+    // FLOW A: Approval Process Exists -> Submit for approval, no direct update
+    if (hasApprovalProcess) {
+     
+      const approvalPayload = {
+        companyId: req.companyId,
+        branchId: req.branchId,
+        userId: req.userId,
+        asipiyaSoftware: "pawning",
+        approvalName: "CUSTOMER DETAILS UPDATE",
+        description: `Customer update for Account Center ID: ${accountCenterCusId}`,
+        data: apiCustomerData,
+      };
+
+      const approvalResponse = await approvalApi.submitApprovalRequest(
+        approvalPayload,
+        accessToken,
+      );
+     
+
+      if (!approvalResponse.success) {
+        connection.release();
+        throw new Error(
+          approvalResponse.message || "Failed to submit customer update for approval",
         );
       }
 
-      // Prepare payload for ACC Center API
-      // The provided logic expects customerData to contain customerDocuments, customerOccupations, etc.
-      // We map the incoming 'documents' (if any) to 'customerDocuments' to match the expected API format
+      connection.release();
+      return res.status(200).json({
+        success: true,
+        message: "Customer update pending approval",
+       
+      });
+    }
 
-      const apiCustomerData = {
-        ...customerFields,
-        // Prefer customerDocuments (frontend's merged array with new + existing docs) over
-        // documents (raw from form, which can be stale and lacks new uploads).
-        customerDocuments: customerFields.customerDocuments ?? documents ?? [],
-        customerOccupations: customerFields.customerOccupations || [],
-        customerFamily: customerFields.customerFamily || [],
-        customerBankAccounts: customerFields.customerBankAccounts || [],
-      };
+    // FLOW B: No Approval Process -> Update directly
+    await connection.beginTransaction();
 
-      // Ensure field names match what the API expects (e.g., if frontend sends mapped fields)
+    try {
+     
 
       const queryParams = {
         asipiyaSoftware: "pawning",
         companyId: req.companyId.toString(),
       };
 
-      // Call ACC Center API to update customer
+      // Call ACC Center API to update customer directly
       const accCenterResponse = await customerApi.updateCustomer(
         accountCenterCusId,
         queryParams,
         { customerData: apiCustomerData },
-        req.accessToken || req.cookies?.accessToken,
+        accessToken,
       );
 
-      // Log the update locally
-      await connection.query(
-        "INSERT INTO customer_log (Customer_idCustomer, Date_Time, Type, Description, User_idUser) VALUES (?, ?, ?, ?, ?)",
-        [
-          customerId,
-          new Date(),
-          "UPDATE",
-          "Customer updated via Account Center",
-          req.userId,
-        ],
-      );
+     
 
       // Commit local transaction
       await connection.commit();
 
       res.status(200).json({
         success: true,
-        message: "Customer updated successfully",
-        customer: {
-          idCustomer: customerId,
-          accountCenterCusId: accountCenterCusId,
-          ...apiCustomerData,
-        },
+        message:"Customer updated successfully"
+       
+        
       });
     } catch (error) {
       // Rollback local transaction on error (including API failure)

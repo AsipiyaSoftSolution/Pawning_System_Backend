@@ -348,6 +348,153 @@ export const deletePawningProductById = async (req, res, next) => {
   }
 };
 
+/**
+ * Internal helper: create one pawning product for a single branch.
+ * Used by createPawningProduct (single branch) and createPawningProductForBranches (head office).
+ * @param {number} branchId - Branch_idBranch
+ * @param {object} data - Product payload (same as create body.data)
+ * @param {number} userId - Last_Updated_User
+ * @returns {Promise<number>} inserted pawning_product id
+ */
+async function createOnePawningProductForBranch(branchId, data, userId) {
+  const serviceCharge = data.serviceCharge?.status === "Active" ? 1 : 0;
+  const serviceChargeCreateAs = data.serviceCharge?.chargeType || "inactive";
+  const serviceChargeValueType = data.serviceCharge?.valueType || "inactive";
+  const serviceChargeValue = data.serviceCharge?.value || 0;
+
+  const earlySettlementCharge =
+    data.earlysettlementsData?.newEarlySettlement?.status === "Active" ? 1 : 0;
+  const earlySettlementChargeCreateAs =
+    data.earlysettlementsData?.newEarlySettlement?.chargeType || "inactive";
+
+  let earlySettlementChargeValueType = null;
+  let earlySettlementChargeValue = null;
+  if (earlySettlementChargeCreateAs === "inactive") {
+    earlySettlementChargeValueType = "inactive";
+    earlySettlementChargeValue = 0;
+  }
+  if (earlySettlementChargeCreateAs === "Charge For Product") {
+    earlySettlementChargeValueType =
+      data.earlysettlementsData?.newEarlySettlement?.valueType || "inactive";
+    earlySettlementChargeValue =
+      data.earlysettlementsData?.newEarlySettlement?.value || "inactive";
+  }
+
+  const lateCharge = data.lateCharge?.status === "Active" ? 1 : 0;
+  const lateChargeCreateAs = data.lateCharge?.chargeType || "inactive";
+  const lateChargePresentage = data.lateCharge?.percentage || 0;
+
+  const [result] = await pool.query(
+    "INSERT INTO pawning_product (Branch_idBranch,Name,Service_Charge,Service_Charge_Create_As,Service_Charge_Value_type,Service_Charge_Value,Early_Settlement_Charge,Early_Settlement_Charge_Create_As,Early_Settlement_Charge_Value_type,Early_Settlement_Charge_Value,Late_Charge_Status,Late_Charge_Create_As,Late_Charge,Interest_Method,Last_Updated_User,Last_Updated_Time) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    [
+      branchId,
+      data.productName || "Unnamed Product",
+      serviceCharge,
+      serviceChargeCreateAs,
+      serviceChargeCreateAs === "Charge For Product Item"
+        ? "N/A"
+        : serviceChargeValueType,
+      serviceChargeCreateAs === "Charge For Product Item"
+        ? "N/A"
+        : serviceChargeValue,
+      earlySettlementCharge,
+      earlySettlementChargeCreateAs,
+      earlySettlementChargeValueType,
+      earlySettlementChargeValue,
+      lateCharge,
+      lateChargeCreateAs,
+      lateChargePresentage,
+      data.interestMethod || null,
+      userId,
+      new Date(),
+    ],
+  );
+
+  if (result.affectedRows === 0) throw new Error("Failed to create pawning product");
+  const productId = result.insertId;
+
+  if (earlySettlementChargeCreateAs === "Charge For Settlement Amount") {
+    const earlySettlements = data.earlysettlementsData?.earlySettlements;
+    if (!earlySettlements) {
+      throw new Error(
+        "Early settlement data is required for settlement amount charges",
+      );
+    }
+    const settlementsArray = Array.isArray(earlySettlements)
+      ? earlySettlements
+      : [earlySettlements];
+    for (const settlement of settlementsArray) {
+      const fromAmount = settlement.lessThan || 0;
+      const toAmount = settlement.endAmount || 0;
+      const valueType = settlement.valueType || null;
+      const value = settlement.value || null;
+      await pool.query(
+        "INSERT INTO early_settlement_charges (From_Amount,To_Amount,Value_Type,Amount,Pawning_Product_idPawning_Product) VALUES (?,?,?,?,?)",
+        [fromAmount, toAmount, valueType, value, productId],
+      );
+    }
+  }
+
+  const interestMethod = data.interestMethod || null;
+  const productPlans = data.productItems;
+  if (!productPlans || productPlans.length === 0) {
+    throw new Error("At least one product item is required");
+  }
+
+  for (const plan of productPlans) {
+    const amount22CaratValue =
+      interestMethod === "Interest For Pawning Amount"
+        ? data.amount22
+        : plan.amount22Carat;
+    await pool.query(
+      "INSERT INTO product_plan (Period_Type,Minimum_Period,Maximum_Period,Minimum_Amount,Maximum_Amount,Interest_type,Interest,Interest_Calculate_After,Service_Charge_Value_type,Service_Charge_Value,Early_Settlement_Charge_Value_type,Early_Settlement_Charge_Value,Late_Charge,Amount_For_22_Caratage,Last_Updated_User,Last_Updated_Time,Pawning_Product_idPawning_Product,stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,interestApplicableMethod,Week_Precentage_Amount_22_Caratage,Month1_Precentage_Amount_22_Caratage,Month3_Precentage_Amount_22_Caratage,Month6_Precentage_Amount_22_Caratage,Month9_Precentage_Amount_22_Caratage,Month12_Precentage_Amount_22_Caratage,noOfStages) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      [
+        plan.periodType,
+        plan.minPeriod,
+        plan.maxPeriod,
+        plan.minAmount,
+        plan.maxAmount,
+        plan.interestType,
+        plan.interest || 0,
+        plan.interestAfter,
+        plan.serviceChargeValueType || serviceChargeValueType || "inactive",
+        plan.serviceChargeValue || serviceChargeValue || 0,
+        plan.earlySettlementChargeValueType ||
+          earlySettlementChargeValueType ||
+          "inactive",
+        plan.earlySettlementChargeValue || earlySettlementChargeValue || 0,
+        plan.lateChargePerDay || lateChargePresentage || 0,
+        amount22CaratValue,
+        userId,
+        new Date(),
+        productId,
+        plan.stage1StartDate || 0,
+        plan.stage1EndDate || null,
+        plan.stage2StartDate || null,
+        plan.stage2EndDate || null,
+        plan.stage3StartDate || null,
+        plan.stage3EndDate || null,
+        plan.stage4StartDate || null,
+        plan.stage4EndDate || null,
+        parseFloat(plan.stage1Interest) || 0,
+        parseFloat(plan.stage2Interest) || 0,
+        parseFloat(plan.stage3Interest) || 0,
+        parseFloat(plan.stage4Interest) || 0,
+        plan.interestApplicableMethod || null,
+        data.percentages?.oneWeek || 0,
+        data.percentages?.oneMonth || 0,
+        data.percentages?.threeMonths || 0,
+        data.percentages?.sixMonths || 0,
+        data.percentages?.nineMonths || 0,
+        data.percentages?.twelveMonths || 0,
+        plan.numberOfStages || 0,
+      ],
+    );
+  }
+
+  return productId;
+}
+
 // Create a new pawning product for a specific branch
 export const createPawningProduct = async (req, res, next) => {
   try {
@@ -355,192 +502,107 @@ export const createPawningProduct = async (req, res, next) => {
     if (!data) {
       return next(errorHandler(400, "Product data is required"));
     }
-
-    // Ready the data of service charge for pawning product table
-    const serviceCharge = data.serviceCharge?.status === "Active" ? 1 : 0;
-    const serviceChargeCreateAs = data.serviceCharge?.chargeType || "inactive";
-    const serviceChargeValueType = data.serviceCharge?.valueType || "inactive";
-    const serviceChargeValue = data.serviceCharge?.value || 0;
-
-    // Ready the data of early settlement for pawning product table and early settlement charges table
-    const earlySettlementCharge =
-      data.earlysettlementsData?.newEarlySettlement?.status === "Active"
-        ? 1
-        : 0;
-    const earlySettlementChargeCreateAs =
-      data.earlysettlementsData?.newEarlySettlement?.chargeType || "inactive";
-
-    let earlySettlementChargeValueType = null;
-    let earlySettlementChargeValue = null;
-    // Handle inactive early settlement charge
-    if (earlySettlementChargeCreateAs === "inactive") {
-      earlySettlementChargeValueType = "inactive";
-      earlySettlementChargeValue = 0;
-    }
-
-    // Handle different early settlement charge types
-    if (earlySettlementChargeCreateAs === "Charge For Product") {
-      earlySettlementChargeValueType =
-        data.earlysettlementsData?.newEarlySettlement?.valueType || "inactive";
-      earlySettlementChargeValue =
-        data.earlysettlementsData?.newEarlySettlement?.value || "inactive";
-    }
-
-    // Ready the late charge data for pawning product table
-    const lateCharge = data.lateCharge.status === "Active" ? 1 : 0;
-    const lateChargeCreateAs = data.lateCharge.chargeType || "inactive";
-    const lateChargePresentage = data.lateCharge.percentage || 0;
-
-    // Insert into Pawning product table first
-    const [result] = await pool.query(
-      "INSERT INTO pawning_product (Branch_idBranch,Name,Service_Charge,Service_Charge_Create_As,Service_Charge_Value_type,Service_Charge_Value,Early_Settlement_Charge,Early_Settlement_Charge_Create_As,Early_Settlement_Charge_Value_type,Early_Settlement_Charge_Value,Late_Charge_Status,Late_Charge_Create_As,Late_Charge,Interest_Method,Last_Updated_User,Last_Updated_Time) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-      [
-        req.branchId,
-        data.productName || "Unnamed Product",
-        serviceCharge,
-        serviceChargeCreateAs,
-        serviceChargeCreateAs === "Charge For Product Item"
-          ? "N/A" // if charge type is "Charge For Product Item", service charge value type should be in product plan table
-          : serviceChargeValueType,
-        serviceChargeCreateAs === "Charge For Product Item"
-          ? "N/A"
-          : serviceChargeValue,
-        earlySettlementCharge,
-        earlySettlementChargeCreateAs,
-        earlySettlementChargeValueType,
-        earlySettlementChargeValue,
-        lateCharge,
-        lateChargeCreateAs,
-        lateChargePresentage,
-        data.interestMethod || null,
-        req.userId,
-        new Date(),
-      ],
+    const productId = await createOnePawningProductForBranch(
+      req.branchId,
+      data,
+      req.userId,
     );
-
-    if (result.affectedRows === 0) {
-      return next(errorHandler(500, "Failed to create pawning product"));
-    }
-
-    // Handle early settlement charges if charge type is "Charge For Settlement Amount"
-    if (earlySettlementChargeCreateAs === "Charge For Settlement Amount") {
-      const earlySettlements = data.earlysettlementsData?.earlySettlements;
-
-      if (!earlySettlements) {
-        return next(
-          errorHandler(
-            400,
-            "Early settlement data is required for settlement amount charges",
-          ),
-        );
-      }
-
-      // Convert to array if it's a single object
-      const settlementsArray = Array.isArray(earlySettlements)
-        ? earlySettlements
-        : [earlySettlements];
-
-      // Insert multiple early settlement charges
-      const insertPromises = settlementsArray.map(async (settlement) => {
-        const fromAmount = settlement.lessThan || 0;
-        const toAmount = settlement.endAmount || 0;
-        const valueType = settlement.valueType || null;
-        const value = settlement.value || null;
-
-        const [earlySettlementResult] = await pool.query(
-          "INSERT INTO early_settlement_charges (From_Amount,To_Amount,Value_Type,Amount,Pawning_Product_idPawning_Product) VALUES (?,?,?,?,?)",
-          [fromAmount, toAmount, valueType, value, result.insertId],
-        );
-
-        if (earlySettlementResult.affectedRows === 0) {
-          throw new Error("Failed to create early settlement charge record");
-        }
-
-        return earlySettlementResult;
-      });
-
-      // Wait for all insertions to complete
-      try {
-        await Promise.all(insertPromises);
-      } catch (error) {
-        console.error("Error inserting early settlement charges:", error);
-        return next(
-          errorHandler(500, "Failed to create early settlement charges"),
-        );
-      }
-    }
-
-    const interestMethod = data.interestMethod || null;
-    // Insert into product plan table
-    const productPlans = data.productItems;
-
-    if (!productPlans || productPlans.length === 0) {
-      return next(errorHandler(400, "At least one product item is required"));
-    }
-
-    for (const plan of productPlans) {
-      const amount22CaratValue =
-        interestMethod === "Interest For Pawning Amount"
-          ? data.amount22
-          : plan.amount22Carat;
-      const [productPlanResult] = await pool.query(
-        "INSERT INTO product_plan (Period_Type,Minimum_Period,Maximum_Period,Minimum_Amount,Maximum_Amount,Interest_type,Interest,Interest_Calculate_After,Service_Charge_Value_type,Service_Charge_Value,Early_Settlement_Charge_Value_type,Early_Settlement_Charge_Value,Late_Charge,Amount_For_22_Caratage,Last_Updated_User,Last_Updated_Time,Pawning_Product_idPawning_Product,stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,interestApplicableMethod,Week_Precentage_Amount_22_Caratage,Month1_Precentage_Amount_22_Caratage,Month3_Precentage_Amount_22_Caratage,Month6_Precentage_Amount_22_Caratage,Month9_Precentage_Amount_22_Caratage,Month12_Precentage_Amount_22_Caratage,noOfStages) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        [
-          plan.periodType,
-          plan.minPeriod,
-          plan.maxPeriod,
-          plan.minAmount,
-          plan.maxAmount,
-          plan.interestType,
-          plan.interest || 0,
-          plan.interestAfter,
-          plan.serviceChargeValueType || serviceChargeValueType || "inactive",
-          plan.serviceChargeValue || serviceChargeValue || 0,
-          plan.earlySettlementChargeValueType ||
-            earlySettlementChargeValueType ||
-            "inactive",
-          plan.earlySettlementChargeValue || earlySettlementChargeValue || 0,
-          plan.lateChargePerDay || lateChargePresentage || 0,
-          amount22CaratValue,
-          req.userId,
-          new Date(),
-          result.insertId,
-          plan.stage1StartDate || 0, // Use 0 for stage 1 because it is mandatory to start from day 0
-          plan.stage1EndDate || null,
-          plan.stage2StartDate || null,
-          plan.stage2EndDate || null,
-          plan.stage3StartDate || null,
-          plan.stage3EndDate || null,
-          plan.stage4StartDate || null,
-          plan.stage4EndDate || null,
-          parseFloat(plan.stage1Interest) || 0,
-          parseFloat(plan.stage2Interest) || 0,
-          parseFloat(plan.stage3Interest) || 0,
-          parseFloat(plan.stage4Interest) || 0,
-          plan.interestApplicableMethod || null,
-          data.percentages?.oneWeek || 0,
-          data.percentages?.oneMonth || 0,
-          data.percentages?.threeMonths || 0,
-          data.percentages?.sixMonths || 0,
-          data.percentages?.nineMonths || 0,
-          data.percentages?.twelveMonths || 0,
-          plan.numberOfStages || 0,
-        ],
-      );
-
-      if (productPlanResult.affectedRows === 0) {
-        return next(errorHandler(500, "Failed to create product plan"));
-      }
-    }
-
-    // Return success response
     res.status(201).json({
       success: true,
       message: "Pawning product created successfully",
+      pawningProduct: { idPawning_Product: productId, Branch_idBranch: req.branchId },
     });
-  } catch (error) {
-    console.error("Error creating pawning product:", error);
-    return next(errorHandler(500, "Internal Server Error"));
+  } catch (err) {
+    if (err.message === "At least one product item is required") {
+      return next(errorHandler(400, err.message));
+    }
+    if (err.message?.includes("Early settlement")) {
+      return next(errorHandler(400, err.message));
+    }
+    console.error("Error creating pawning product:", err);
+    return next(errorHandler(500, err.message || "Internal Server Error"));
+  }
+};
+
+/**
+ * Head office only: create the same pawning product for multiple branches.
+ * POST body: { data, branchIds: number[] }
+ */
+export const createPawningProductForBranches = async (req, res, next) => {
+  try {
+    const { data, branchIds } = req.body;
+    if (!data) {
+      return next(errorHandler(400, "Product data is required"));
+    }
+    if (!Array.isArray(branchIds) || branchIds.length === 0) {
+      return next(
+        errorHandler(400, "branchIds array with at least one branch is required"),
+      );
+    }
+    const userBranchIds = (req.branches || []).map((id) =>
+      typeof id === "string" ? parseInt(id, 10) : id,
+    );
+    const headBranchId =
+      typeof req.branchId === "string"
+        ? parseInt(req.branchId, 10)
+        : req.branchId;
+    const validBranchIds = branchIds.filter((id) => {
+      const num = typeof id === "string" ? parseInt(id, 10) : id;
+      return (
+        !Number.isNaN(num) &&
+        userBranchIds.includes(num) &&
+        num !== headBranchId
+      );
+    });
+    if (validBranchIds.length === 0) {
+      return next(
+        errorHandler(
+          400,
+          "No valid branch IDs. Each must be in your branch access and not the head office branch.",
+        ),
+      );
+    }
+
+    const created = [];
+    const errors = [];
+    for (const branchId of validBranchIds) {
+      try {
+        const productId = await createOnePawningProductForBranch(
+          branchId,
+          data,
+          req.userId,
+        );
+        created.push({ branchId, productId });
+      } catch (err) {
+        console.error(`Error creating product for branch ${branchId}:`, err);
+        errors.push({ branchId, message: err.message || "Failed to create" });
+      }
+    }
+
+    if (created.length === 0) {
+      return next(
+        errorHandler(
+          500,
+          "Failed to create product for any branch. " +
+            (errors[0]?.message || ""),
+        ),
+      );
+    }
+
+    res.status(201).json({
+      success: true,
+      message: `Pawning product created for ${created.length} branch(es).`,
+      createdCount: created.length,
+      createdBranchIds: created.map((c) => c.branchId),
+      createdProducts: created,
+      errors:
+        errors.length > 0
+          ? errors
+          : undefined,
+    });
+  } catch (err) {
+    console.error("Error in createPawningProductForBranches:", err);
+    return next(errorHandler(500, err.message || "Internal Server Error"));
   }
 };
 

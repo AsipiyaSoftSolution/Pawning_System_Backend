@@ -2909,24 +2909,30 @@ export const getApprovedPawningTickets = async (req, res, next) => {
           tickets.map((t) => t.Customer_idCustomer).filter((id) => id),
         ),
       ];
-      const accCustomers = await fetchCustomersByPawningIds(
-        pawningCusIds,
-        req.companyId,
-        req.cookies?.accessToken,
-      );
+      const accCustomers =
+        await subsystemApi.customerDataForPawningSideTicketPages(
+          pawningCusIds,
+          req.cookies?.accessToken,
+        );
+
       const customerMap = new Map(
-        accCustomers.map((c) => [c.isPawningUserId, c]),
+        accCustomers.data.map((c) => [c.isPawningUserId, c]),
       );
 
       tickets.forEach((ticket) => {
         const cusData = customerMap.get(ticket.Customer_idCustomer);
-        ticket.Full_name = cusData
-          ? cusData.First_Name && cusData.Last_Name
-            ? `${cusData.First_Name} ${cusData.Last_Name}`
-            : cusData.First_Name || cusData.Last_Name || null
-          : null;
-        ticket.NIC = cusData?.Nic || null;
-        ticket.Mobile_No = cusData?.Contact_No || null;
+        if (cusData) {
+          ticket.Full_name = cusData.Full_Name;
+          ticket.NIC = cusData.New_NIC || cusData.Old_NIC;
+          ticket.Mobile_No = cusData.Contact_No_01 || cusData.Contact_No_02;
+        } else {
+          console.warn(
+            `Warning: Customer data not found for ticket ${ticket.idPawning_Ticket}, Customer_idCustomer: ${ticket.Customer_idCustomer}`,
+          );
+          ticket.Full_name = "Unknown Customer";
+          ticket.NIC = "N/A";
+          ticket.Mobile_No = "N/A";
+        }
         delete ticket.Customer_idCustomer;
         delete ticket.accountCenterCusId;
       });

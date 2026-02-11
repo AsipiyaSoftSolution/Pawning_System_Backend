@@ -29,6 +29,7 @@ import {
   checkIfTicketsExistInCompany,
   getCompanyBranchesForTicketFilters,
   sendOverdueTickets,
+  getCustomerTickets,
 } from "../controllers/pawning.ticket.controller.js";
 const router = express.Router();
 
@@ -219,4 +220,11 @@ router.get(
   protectedRoute,
   getCompanyBranchesForTicketFilters,
 ); // Get company branches for ticket page filters
+
+router.get(
+  "/:branchId/customer-ticket-history/:customerId",
+  protectedRoute,
+  checkUserBranchAccess,
+  getCustomerTickets,
+);
 export default router;

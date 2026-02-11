@@ -16,7 +16,11 @@ export const approvalApi = {
     return accCenterGet(`/approval/check-approval-process?${qs}`, accessToken);
   },
   submitApprovalRequest: (data, accessToken) => {
-    return accCenterPost("/approval/submit-approval-request", data, accessToken);
+    return accCenterPost(
+      "/approval/submit-approval-request",
+      data,
+      accessToken,
+    );
   },
 };
 
@@ -34,16 +38,16 @@ export const customerApi = {
     const qs = new URLSearchParams(params).toString();
     return accCenterGet(
       `/customer/check-exists-for-creation?${qs}`,
-      accessToken
+      accessToken,
     );
   },
 
   findCustomerByNic: (nic, params, accessToken) =>
     accCenterGet(
       `/customer/find-customer-by-nic/${encodeURIComponent(
-        nic
+        nic,
       )}?${new URLSearchParams(params).toString()}`,
-      accessToken
+      accessToken,
     ),
 
   getCustomer: (id, params, accessToken) => {
@@ -61,16 +65,16 @@ export const customerApi = {
     return accCenterPut(
       `/customer/update-customer/${id}?${qs}`,
       data,
-      accessToken
+      accessToken,
     );
   },
 
   searchByNic: (nic, params, accessToken) =>
     accCenterGet(
       `/customer/search-by-nic/${encodeURIComponent(nic)}?${new URLSearchParams(
-        params
+        params,
       ).toString()}`,
-      accessToken
+      accessToken,
     ),
 };
 
@@ -79,15 +83,15 @@ export const subsystemApi = {
   customersByPawningIds: (ids, companyId, accessToken) =>
     accCenterGet(
       `/subsystem/customers-by-pawning-ids?ids=${ids.join(
-        ","
+        ",",
       )}&companyId=${companyId}`,
-      accessToken
+      accessToken,
     ),
 
   branchesForTicketFilters: (companyId, accessToken) =>
     accCenterGet(
       `/subsystem/branches-for-ticket-filters?companyId=${companyId}`,
-      accessToken
+      accessToken,
     ),
 
   branches: (companyId, accessToken) =>
@@ -98,7 +102,7 @@ export const subsystemApi = {
 
   findPawningIdsByNic: (nic, companyId, branchId, accessToken) => {
     let url = `/subsystem/find-pawning-ids-by-nic?nic=${encodeURIComponent(
-      nic
+      nic,
     )}&companyId=${companyId}`;
     if (branchId != null) url += `&branchId=${branchId}`;
     return accCenterGet(url, accessToken);
@@ -107,7 +111,7 @@ export const subsystemApi = {
   customerStatus: (companyCustomerId, accessToken) =>
     accCenterGet(
       `/subsystem/customer-status/${companyCustomerId}`,
-      accessToken
+      accessToken,
     ),
 
   companySettings: (companyId, accessToken) =>
@@ -116,9 +120,9 @@ export const subsystemApi = {
   assessedValue: (companyId, carat, accessToken) =>
     accCenterGet(
       `/subsystem/assessed-value?companyId=${companyId}&carat=${encodeURIComponent(
-        carat
+        carat,
       )}`,
-      accessToken
+      accessToken,
     ),
 
   userNames: (ids, accessToken) =>
@@ -136,26 +140,36 @@ export const subsystemApi = {
   customersByCompanyCustomerIds: (ids, companyId, accessToken) =>
     accCenterGet(
       `/subsystem/customers-by-company-customer-ids?ids=${ids.join(
-        ","
+        ",",
       )}&companyId=${companyId}`,
-      accessToken
+      accessToken,
     ),
 
   branch: (branchId, companyId, accessToken) =>
     accCenterGet(
       `/subsystem/branch/${branchId}?companyId=${companyId}`,
-      accessToken
+      accessToken,
     ),
 
   customerCountByBranch: (branchId, companyId, accessToken) =>
     accCenterGet(
       `/subsystem/customer-count-by-branch?branchId=${branchId}&companyId=${companyId}`,
-      accessToken
+      accessToken,
     ),
 
   cashAndBankAccounts: (branchId, companyId, accessToken) =>
     accCenterGet(
       `/subsystem/cash-and-bank-accounts?branchId=${branchId}&companyId=${companyId}`,
-      accessToken
+      accessToken,
+    ),
+
+  pawningArticleTypeAndDescription: (
+    articleTypeId,
+    articleCategoryId,
+    accessToken,
+  ) =>
+    accCenterGet(
+      `/subsystem/article-type-and-description?articleTypeId=${articleTypeId}&articleCategoryId=${articleCategoryId}`,
+      accessToken,
     ),
 };

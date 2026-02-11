@@ -172,4 +172,10 @@ export const subsystemApi = {
       `/subsystem/article-type-and-description?articleTypeId=${articleTypeId}&articleCategoryId=${articleCategoryId}`,
       accessToken,
     ),
+
+  customerDataForPawningTicketView: (customerId, accessToken) =>
+    accCenterGet(
+      `/subsystem/customer-data-for-pawning-ticket-view?customerId=${customerId}`,
+      accessToken,
+    ),
 };

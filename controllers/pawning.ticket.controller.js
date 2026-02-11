@@ -1446,27 +1446,24 @@ export const getTicketDataById = async (req, res, next) => {
     }
 
     // Fetch full details from Account Center company_customer via subsystem API
-    const accCustomers = await fetchCustomersByCompanyCustomerIds(
-      [pawningCustomer[0].accountCenterCusId],
-      req.companyId,
-      accessToken,
+    const accCustomers = await subsystemApi.customerDataForPawningTicketView(
+      pawningCustomer[0].accountCenterCusId,
+      req.cookies?.accessToken,
     );
 
-    if (accCustomers.length > 0) {
-      const accCus = accCustomers[0];
+    if (accCustomers.data) {
+      const accCus = accCustomers.data;
+
       customerData = [
         {
           idCustomer: pawningCustomer[0].idCustomer,
           pawningCustomerId: ticketData[0].Customer_idCustomer, // Pawning customer id for KYC/Account Center
-          NIC: accCus.Nic,
-          Full_name:
-            accCus.First_Name && accCus.Last_Name
-              ? `${accCus.First_Name} ${accCus.Last_Name}`
-              : accCus.First_Name || accCus.Last_Name || null,
-          Address1: accCus.Address,
-          Address2: accCus.Address_02,
-          Address3: accCus.Address_03,
-          Mobile_No: accCus.Contact_No,
+          NIC: accCus.New_NIC || accCus.Old_NIC,
+          Full_name: accCus.Full_Name,
+          Address1: accCus.Per_Address_Line_1,
+          Address2: accCus.Per_Address_Line_2,
+          Address3: accCus.Per_Address_Line_3,
+          Mobile_No: accCus.Contact_No_01 || accCus.Contact_No_02,
           Status: accCus.Status,
           Risk_Level: null, // company_customer may not have Customer_Risk_Level; use Pawning-specific if needed
           Blacklist_Reason:

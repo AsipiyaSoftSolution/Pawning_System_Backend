@@ -158,10 +158,7 @@ export const subsystemApi = {
     ),
 
   cashAndBankAccounts: (branchId, companyId, accessToken) =>
-    accCenterGet(
-      `/subsystem/cash-and-bank-accounts?branchId=${branchId}&companyId=${companyId}`,
-      accessToken,
-    ),
+    accCenterGet(`/subsystem/${branchId}/cash-and-bank-accounts`, accessToken),
 
   pawningArticleTypeAndDescription: (
     articleTypeId,
@@ -182,6 +179,14 @@ export const subsystemApi = {
   customerDataForPawningSideTicketPages: (customerId, accessToken) =>
     accCenterGet(
       `/subsystem/customer-data-for-pawning-side-ticket-pages?customerId=${customerId}`,
+      accessToken,
+    ),
+
+  searchCustomerByTerm: (searchTerm, companyId, accessToken) =>
+    accCenterGet(
+      `/subsystem/search-customer?searchTerm=${encodeURIComponent(
+        searchTerm,
+      )}&companyId=${companyId}`,
       accessToken,
     ),
 };

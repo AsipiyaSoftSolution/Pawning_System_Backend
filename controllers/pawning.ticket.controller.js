@@ -2890,14 +2890,12 @@ export const getApprovedPawningTickets = async (req, res, next) => {
       limit,
     );
 
-    // Build main data query - customer data fetched via Account Center subsystem API
-    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, 
-                        pt.Pawning_Advance_Amount, pt.Status, pt.Customer_idCustomer, 
-                        pp.Name AS ProductName
-                  FROM pawning_ticket pt
-            LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product
-                  WHERE ${baseWhereConditions}
-               ORDER BY pt.idPawning_Ticket DESC LIMIT ? OFFSET ?`;
+    // Build main data query - customer data fetched via    // Build main data query
+    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, pt.Pawning_Advance_Amount, pt.Status, pt.Customer_idCustomer, pp.Name AS ProductName
+                 FROM pawning_ticket pt
+                 LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product
+                 WHERE ${baseWhereConditions}
+                 ORDER BY pt.idPawning_Ticket DESC LIMIT ? OFFSET ?`;
     dataParams.push(limit, offset);
 
     const [tickets] = await pool.query(query, dataParams);
@@ -2938,7 +2936,6 @@ export const getApprovedPawningTickets = async (req, res, next) => {
       });
     }
 
-    console.log(tickets, "approved tickets for loan disbursement");
     res.status(200).json({
       success: true,
       tickets: tickets || [],
@@ -3094,6 +3091,7 @@ export const activatePawningTicket = async (req, res, next) => {
       } else if (serviceChargePaidFromPawningAdvance === 1) {
         // need to deduct from pawning advance
         console.log(">>> Deducting service charge from pawning advance");
+
         const [updatePawningAdvanceResult] = await connection.query(
           "UPDATE pawning_ticket SET Pawning_Advance_Amount = ? WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
           [
@@ -3585,13 +3583,15 @@ export const sendActiveTickets = async (req, res, next) => {
         ...new Set(tickets.map((t) => t.Branch_idBranch).filter((id) => id)),
       ];
       const [accCustomers, branches] = await Promise.all([
-        fetchCustomersByPawningIds(
-          pawningCusIds,
-          req.companyId,
-          req.cookies?.accessToken,
-        ),
+        subsystemApi
+          .customerDataForPawningSideTicketPages(
+            pawningCusIds,
+            req.cookies?.accessToken,
+          )
+          .then((res) => res.data), // Extract data from response
         fetchBranchNamesByIds(branchIds, req.cookies?.accessToken),
       ]);
+
       const customerMap = new Map(
         accCustomers.map((c) => [c.isPawningUserId, c]),
       );
@@ -3599,13 +3599,18 @@ export const sendActiveTickets = async (req, res, next) => {
 
       tickets.forEach((ticket) => {
         const cusData = customerMap.get(ticket.Customer_idCustomer);
-        ticket.Full_name = cusData
-          ? cusData.First_Name && cusData.Last_Name
-            ? `${cusData.First_Name} ${cusData.Last_Name}`
-            : cusData.First_Name || cusData.Last_Name || null
-          : null;
-        ticket.NIC = cusData?.Nic || null;
-        ticket.Mobile_No = cusData?.Contact_No || null;
+        if (cusData) {
+          ticket.Full_name = cusData.Full_Name;
+          ticket.NIC = cusData.New_NIC || cusData.Old_NIC;
+          ticket.Mobile_No = cusData.Contact_No_01 || cusData.Contact_No_02;
+        } else {
+          console.warn(
+            `Warning: Customer data not found for ticket ${ticket.idPawning_Ticket}, Customer_idCustomer: ${ticket.Customer_idCustomer}`,
+          );
+          ticket.Full_name = "Unknown Customer";
+          ticket.NIC = "N/A";
+          ticket.Mobile_No = "N/A";
+        }
         ticket.BranchName = branchMap.get(ticket.Branch_idBranch) || null;
         delete ticket.Branch_idBranch;
         delete ticket.Customer_idCustomer;
@@ -3784,13 +3789,15 @@ export const sendSettledTickets = async (req, res, next) => {
         ...new Set(tickets.map((t) => t.Branch_idBranch).filter((id) => id)),
       ];
       const [accCustomers, branches] = await Promise.all([
-        fetchCustomersByPawningIds(
-          pawningCusIds,
-          req.companyId,
-          req.cookies?.accessToken,
-        ),
+        subsystemApi
+          .customerDataForPawningSideTicketPages(
+            pawningCusIds,
+            req.cookies?.accessToken,
+          )
+          .then((res) => res.data), // Extract data from response
         fetchBranchNamesByIds(branchIds, req.cookies?.accessToken),
       ]);
+
       const customerMap = new Map(
         accCustomers.map((c) => [c.isPawningUserId, c]),
       );
@@ -3798,13 +3805,18 @@ export const sendSettledTickets = async (req, res, next) => {
 
       tickets.forEach((ticket) => {
         const cusData = customerMap.get(ticket.Customer_idCustomer);
-        ticket.Full_name = cusData
-          ? cusData.First_Name && cusData.Last_Name
-            ? `${cusData.First_Name} ${cusData.Last_Name}`
-            : cusData.First_Name || cusData.Last_Name || null
-          : null;
-        ticket.NIC = cusData?.Nic || null;
-        ticket.Mobile_No = cusData?.Contact_No || null;
+        if (cusData) {
+          ticket.Full_name = cusData.Full_Name;
+          ticket.NIC = cusData.New_NIC || cusData.Old_NIC;
+          ticket.Mobile_No = cusData.Contact_No_01 || cusData.Contact_No_02;
+        } else {
+          console.warn(
+            `Warning: Customer data not found for ticket ${ticket.idPawning_Ticket}, Customer_idCustomer: ${ticket.Customer_idCustomer}`,
+          );
+          ticket.Full_name = "Unknown Customer";
+          ticket.NIC = "N/A";
+          ticket.Mobile_No = "N/A";
+        }
         ticket.BranchName = branchMap.get(ticket.Branch_idBranch) || null;
         delete ticket.Branch_idBranch;
         delete ticket.Customer_idCustomer;
@@ -3960,57 +3972,53 @@ export const sendOverdueTickets = async (req, res, next) => {
       limit,
     );
 
-    // Build main data query - customer/branch via Account Center subsystem API
-    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, 
-                        pt.Pawning_Advance_Amount, pt.Status, pt.Branch_idBranch, 
-                        pt.Customer_idCustomer, pp.Name AS ProductName
+    // Build main data query
+    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, pt.Pawning_Advance_Amount, pt.Status, pt.Customer_idCustomer, pp.Name AS ProductName
                  FROM pawning_ticket pt
-            LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product
+                 LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product
                  WHERE ${baseWhereConditions}
-            ORDER BY pt.idPawning_Ticket DESC LIMIT ? OFFSET ?`;
-
+                 ORDER BY pt.idPawning_Ticket DESC LIMIT ? OFFSET ?`;
     dataParams.push(limit, offset);
 
     const [tickets] = await pool.query(query, dataParams);
 
+    // Fetch customer details from Account Center (company_customer via subsystem API)
     if (tickets.length > 0) {
       const pawningCusIds = [
         ...new Set(
           tickets.map((t) => t.Customer_idCustomer).filter((id) => id),
         ),
       ];
-      const branchIds = [
-        ...new Set(tickets.map((t) => t.Branch_idBranch).filter((id) => id)),
-      ];
-      const [accCustomers, branches] = await Promise.all([
-        fetchCustomersByPawningIds(
+      const accCustomers =
+        await subsystemApi.customerDataForPawningSideTicketPages(
           pawningCusIds,
-          req.companyId,
           req.cookies?.accessToken,
-        ),
-        fetchBranchNamesByIds(branchIds, req.cookies?.accessToken),
-      ]);
+        );
+
       const customerMap = new Map(
-        accCustomers.map((c) => [c.isPawningUserId, c]),
+        accCustomers.data.map((c) => [c.isPawningUserId, c]),
       );
-      const branchMap = new Map(branches.map((b) => [b.idBranch, b.Name]));
 
       tickets.forEach((ticket) => {
         const cusData = customerMap.get(ticket.Customer_idCustomer);
-        ticket.Full_name = cusData
-          ? cusData.First_Name && cusData.Last_Name
-            ? `${cusData.First_Name} ${cusData.Last_Name}`
-            : cusData.First_Name || cusData.Last_Name || null
-          : null;
-        ticket.NIC = cusData?.Nic || null;
-        ticket.Mobile_No = cusData?.Contact_No || null;
-        ticket.BranchName = branchMap.get(ticket.Branch_idBranch) || null;
-        delete ticket.Branch_idBranch;
+        if (cusData) {
+          ticket.Full_name = cusData.Full_Name;
+          ticket.NIC = cusData.New_NIC || cusData.Old_NIC;
+          ticket.Mobile_No = cusData.Contact_No_01 || cusData.Contact_No_02;
+        } else {
+          console.warn(
+            `Warning: Customer data not found for ticket ${ticket.idPawning_Ticket}, Customer_idCustomer: ${ticket.Customer_idCustomer}`,
+          );
+          ticket.Full_name = "Unknown Customer";
+          ticket.NIC = "N/A";
+          ticket.Mobile_No = "N/A";
+        }
         delete ticket.Customer_idCustomer;
+        delete ticket.accountCenterCusId;
       });
     }
 
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       tickets: tickets || [],
       pagination: paginationData,

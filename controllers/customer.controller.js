@@ -1492,15 +1492,13 @@ export const getKycDataForAccountCenter = async (req, res, next) => {
       ),
       pool.query(
         `SELECT t.idPawning_Ticket, t.Ticket_No, t.Date_Time, t.Maturity_date, 
-                t.Status, t.Pawning_Advance_Amount
+                t.Status, t.Pawning_Advance_Amount,t.Branch_idBranch
          FROM pawning_ticket t
          WHERE t.Customer_idCustomer = ?
          ORDER BY t.Date_Time DESC`,
         [customerIdNum],
       ),
     ]);
-    console.log("pawningRows", pawningRows);
-    console.log("pawningTickets", pawningTickets);
 
     const pawningBasic =
       pawningRows && pawningRows.length > 0 ? pawningRows[0] : null;

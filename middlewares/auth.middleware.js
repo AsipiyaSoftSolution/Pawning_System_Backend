@@ -11,8 +11,6 @@ export const protectedRoute = async (req, res, next) => {
       req.cookies?.accessToken || req.headers?.authorization?.split(" ")[1];
     if (!accessToken) return next(errorHandler(401, "Unauthorized access"));
 
-    console.log("accessToken", accessToken);
-
     // Attach token for downstream use (e.g. ACC Center API calls when token is in header)
     req.accessToken = accessToken;
 

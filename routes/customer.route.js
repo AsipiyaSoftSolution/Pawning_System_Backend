@@ -25,7 +25,7 @@ import { checkUserSelectedHeadBranch } from "../middlewares/headBranch.middlewar
 const router = express.Router();
 
 // KYC data for Account Center
-router.get("/kyc/:customerId", getKycDataForAccountCenter);
+router.get("/kyc/:customerId", protectedRoute, getKycDataForAccountCenter);
 
 router.post(
   "/:branchId/create",

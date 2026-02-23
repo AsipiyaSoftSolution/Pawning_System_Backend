@@ -20,6 +20,7 @@ import {
   approvePawningTicket,
   rejectPawningTicket,
   getApprovedPawningTickets,
+  getApprovedTicketsForDisbursement,
   activatePawningTicket,
   sendActiveTickets,
   sendSettledTickets,
@@ -31,6 +32,7 @@ import {
   sendOverdueTickets,
   getCustomerTickets,
 } from "../controllers/pawning.ticket.controller.js";
+
 const router = express.Router();
 
 router.post(
@@ -153,6 +155,14 @@ router.get(
   checkUserBranchAccess,
   getApprovedPawningTickets,
 ); // Get all approved pawning tickets
+
+// Server-to-server endpoint called by Account Center Disbursement page
+router.get(
+  "/:branchId/disbursement-approved-tickets",
+  protectedRoute,
+  checkUserBranchAccess,
+  getApprovedTicketsForDisbursement,
+); // Get approved (-1) tickets for Account Center disbursement page
 
 // here we disburse the loan to the customer and activate the ticket
 router.patch(

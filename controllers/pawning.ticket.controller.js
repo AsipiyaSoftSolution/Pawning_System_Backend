@@ -1,6 +1,16 @@
 import { errorHandler } from "../utils/errorHandler.js";
 import { pool, pool2 } from "../utils/db.js";
 import { subsystemApi, customerApi } from "../api/accountCenterApi.js";
+import { getPaginationData } from "../utils/helper.js";
+import { uploadImage } from "../utils/cloudinary.js";
+import {
+  createPawningTicketLogOnCreate,
+  markServiceChargeInTicketLog,
+  addTicketLogsByTicketId,
+  createPawningTicketLogOnApprovalandLoanDisbursement,
+} from "../utils/pawning.ticket.logs.js";
+import { createCustomerLogOnCreateTicket } from "../utils/customer.logs.js";
+import { formatSearchPattern } from "../utils/helper.js";
 
 /** Fetch company_customer data by Pawning customer ids via Account Center subsystem API */
 async function fetchCustomersByPawningIds(
@@ -199,16 +209,7 @@ async function fetchCustomersByCompanyCustomerIds(
     return [];
   }
 }
-import { getPaginationData } from "../utils/helper.js";
-import { uploadImage } from "../utils/cloudinary.js";
-import {
-  createPawningTicketLogOnCreate,
-  markServiceChargeInTicketLog,
-  addTicketLogsByTicketId,
-  createPawningTicketLogOnApprovalandLoanDisbursement,
-} from "../utils/pawning.ticket.logs.js";
-import { createCustomerLogOnCreateTicket } from "../utils/customer.logs.js";
-import { formatSearchPattern } from "../utils/helper.js";
+
 // Create Pawning Ticket
 export const createPawningTicket = async (req, res, next) => {
   try {
@@ -4532,6 +4533,182 @@ export const getCustomerTickets = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Error in getCustomerTickets:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// ── Server-to-server endpoint called from Account Center Disbursement page ──
+// Returns paginated approved (-1) tickets with customer data, accepts optional:
+//   ?search=<name|nic|contact>  ?targetBranchId=<id>  ?page=&limit=
+export const getApprovedTicketsForDisbursement = async (req, res, next) => {
+  try {
+    const { search, targetBranchId } = req.query;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    // Base condition: only approved (-1) tickets
+    let baseWhere = "pt.Status = '-1'";
+    const countParams = [];
+    const dataParams = [];
+
+    // If a specific branch is requested (head-office case), filter by it
+    if (targetBranchId) {
+      baseWhere += " AND pt.Branch_idBranch = ?";
+      countParams.push(targetBranchId);
+      dataParams.push(targetBranchId);
+    } else if (!req.isHeadBranch) {
+      // Regular branch users only see their own branch
+      baseWhere += " AND pt.Branch_idBranch = ?";
+      countParams.push(req.branchId);
+      dataParams.push(req.branchId);
+    }
+    // Head-branch without targetBranchId sees ALL branches (no filter)
+
+    // Optional customer search: resolve to Pawning customer IDs via ACC Center
+    if (search && search.trim()) {
+      const trimmedSearch = search.trim();
+      try {
+        const accRes = await subsystemApi.searchCustomerByTerm(
+          trimmedSearch,
+          req.companyId,
+          req.cookies?.accessToken,
+        );
+        const customers = accRes?.customers || [];
+        if (customers.length === 0) {
+          return res.status(200).json({
+            success: true,
+            tickets: [],
+            pagination: { total: 0, page, limit, totalPages: 0 },
+          });
+        }
+        // collect Pawning customer IDs (exclude null/undefined)
+        const pawningIds = customers
+          .map((c) => c.isPawningUserId)
+          .filter((id) => id != null);
+        if (pawningIds.length === 0) {
+          return res.status(200).json({
+            success: true,
+            tickets: [],
+            pagination: { total: 0, page, limit, totalPages: 0 },
+          });
+        }
+        const placeholders = pawningIds.map(() => "?").join(",");
+        baseWhere += ` AND pt.Customer_idCustomer IN (${placeholders})`;
+        countParams.push(...pawningIds);
+        dataParams.push(...pawningIds);
+      } catch (searchErr) {
+        console.error(
+          "getApprovedTicketsForDisbursement search error:",
+          searchErr,
+        );
+        // fall through — return results without customer search filter
+      }
+    }
+
+    // ── Count query (via shared pagination utility) ──
+    const countQuery = `
+      SELECT COUNT(*) AS total
+      FROM pawning_ticket pt
+      LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product
+      WHERE ${baseWhere}`;
+
+    const paginationData = await getPaginationData(
+      countQuery,
+      countParams,
+      page,
+      limit,
+    );
+
+    // ── Data query ──
+    const dataQuery = `
+      SELECT
+        pt.idPawning_Ticket,
+        pt.Ticket_No,
+        pt.Date_Time,
+        pt.Maturity_Date,
+        pt.Pawning_Advance_Amount  AS Amount,
+        pt.Service_charge_Amount   AS AdditionalCharges,
+        pt.Customer_idCustomer,
+        pt.Branch_idBranch,
+        pp.Name                    AS Product
+      FROM pawning_ticket pt
+      LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product
+      WHERE ${baseWhere}
+      ORDER BY pt.idPawning_Ticket DESC
+      LIMIT ? OFFSET ?`;
+    dataParams.push(limit, offset);
+
+    const [tickets] = await pool.query(dataQuery, dataParams);
+
+    // ── Enrich with customer data and (optionally) branch name ──
+    if (tickets.length > 0) {
+      // Customer enrichment via Account Center company_customer.isPawningUserId
+      const uniquePawningIds = [
+        ...new Set(tickets.map((t) => t.Customer_idCustomer).filter(Boolean)),
+      ];
+      const customers = await fetchCustomersByPawningIds(
+        uniquePawningIds,
+        req.companyId,
+        req.cookies?.accessToken,
+      );
+      const customerMap = new Map(customers.map((c) => [c.isPawningUserId, c]));
+
+      // Branch name enrichment (only needed for head-branch users who can see all branches)
+      let branchMap = new Map();
+      if (req.isHeadBranch && tickets.some((t) => t.Branch_idBranch)) {
+        const uniqueBranchIds = [
+          ...new Set(tickets.map((t) => t.Branch_idBranch).filter(Boolean)),
+        ];
+        try {
+          const branchRes = await subsystemApi.branchNames(
+            uniqueBranchIds,
+            req.cookies?.accessToken,
+          );
+          const branchList = branchRes?.branches || branchRes?.data || [];
+          // branchNames returns list with idBranch and Name fields
+          branchList.forEach((b) => {
+            branchMap.set(b.idBranch, b.Name);
+          });
+        } catch (branchErr) {
+          console.error(
+            "getApprovedTicketsForDisbursement branch lookup error:",
+            branchErr,
+          );
+        }
+      }
+
+      /*
+      tickets.forEach((ticket) => {
+        const cusData = customerMap.get(ticket.Customer_idCustomer);
+        ticket.customerName = cusData?.Full_Name || "Unknown";
+        ticket.NIC = cusData?.New_NIC || cusData?.Old_NIC || "N/A";
+        ticket.contactNo =
+          cusData?.Contact_No_01 || cusData?.Contact_No_02 || "N/A";
+        ticket.customerBank = cusData?.Bank_Name || null;
+        ticket.customerAccNo = cusData?.Bank_Account_No || null;
+        ticket.DisbursementAmount =
+          parseFloat(ticket.Amount || 0) -
+          parseFloat(ticket.AdditionalCharges || 0);
+        ticket.CashIssueType = "Cash";
+        // Branch name (only set for head-branch requests)
+        if (req.isHeadBranch) {
+          ticket.branchName = branchMap.get(ticket.Branch_idBranch) || "—";
+        }
+        delete ticket.Customer_idCustomer;
+        delete ticket.Branch_idBranch;
+      });
+      */
+    }
+
+    return res.status(200).json({
+      success: true,
+      tickets,
+      pagination: paginationData,
+      system: "pawning",
+    });
+  } catch (error) {
+    console.error("Error in getApprovedTicketsForDisbursement:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

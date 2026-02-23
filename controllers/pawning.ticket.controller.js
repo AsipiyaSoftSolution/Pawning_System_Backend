@@ -3125,11 +3125,11 @@ export const activatePawningTicket = async (req, res, next) => {
 
       // now get the "Pawn Service Charge / Handling Fee Revenue" acc from con 2
       let [pawnServiceChargeAcc] = await connection2.query(
-        "SELECT idAccounting_Accounts, Account_Balance FROM accounting_accounts WHERE Account_Type = ? AND Group_Of_Type = ? AND Branch_idBranch = ? And Account_Name = ? LIMIT 1",
+        "SELECT idAccounting_Accounts, Account_Balance FROM accounting_accounts WHERE Account_Type = ? AND Group_Of_Type = ? AND companyId = ? And Account_Name = ? LIMIT 1",
         [
           "System Default",
           "Revenue",
-          req.branchId,
+          req.companyId,
           "Pawn Service Charge / Handling Fee Revenue",
         ],
       );
@@ -3149,12 +3149,12 @@ export const activatePawningTicket = async (req, res, next) => {
 
       // update the pawn service charge acc balance
       const [updatePawnServiceChargeAccResult] = await connection2.query(
-        "UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ? AND Branch_idBranch = ?",
+        "UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ? AND companyId = ?",
         [
           parseFloat(pawnServiceChargeAcc[0].Account_Balance) +
             serviceChargeValue,
           pawnServiceChargeAcc[0].idAccounting_Accounts,
-          req.branchId,
+          req.companyId,
         ],
       );
 

@@ -321,7 +321,10 @@ export const customerUpdatedAfterApproval = async (req, res, next) => {
   } catch (error) {
     console.error("Error in customerUpdatedAfterApproval:", error);
     return next(
-      errorHandler(error.status || 500, error.message || "Internal Server Error"),
+      errorHandler(
+        error.status || 500,
+        error.message || "Internal Server Error",
+      ),
     );
   }
 };
@@ -730,9 +733,11 @@ export const editCustomer = async (req, res, next) => {
         );
         approvalCheckResponse = await fetchApprovalCheck();
       }
-      
 
-      if (approvalCheckResponse.success && approvalCheckResponse.approvalProcess) {
+      if (
+        approvalCheckResponse.success &&
+        approvalCheckResponse.approvalProcess
+      ) {
         hasApprovalProcess = true;
       }
     } catch (error) {
@@ -760,11 +765,8 @@ export const editCustomer = async (req, res, next) => {
       customerBankAccounts: customerFields.customerBankAccounts || [],
     };
 
-   
-
     // FLOW A: Approval Process Exists -> Submit for approval, no direct update
     if (hasApprovalProcess) {
-     
       const approvalPayload = {
         companyId: req.companyId,
         branchId: req.branchId,
@@ -779,12 +781,12 @@ export const editCustomer = async (req, res, next) => {
         approvalPayload,
         accessToken,
       );
-     
 
       if (!approvalResponse.success) {
         connection.release();
         throw new Error(
-          approvalResponse.message || "Failed to submit customer update for approval",
+          approvalResponse.message ||
+            "Failed to submit customer update for approval",
         );
       }
 
@@ -792,7 +794,6 @@ export const editCustomer = async (req, res, next) => {
       return res.status(200).json({
         success: true,
         message: "Customer update pending approval",
-       
       });
     }
 
@@ -800,8 +801,6 @@ export const editCustomer = async (req, res, next) => {
     await connection.beginTransaction();
 
     try {
-     
-
       const queryParams = {
         asipiyaSoftware: "pawning",
         companyId: req.companyId.toString(),
@@ -815,16 +814,12 @@ export const editCustomer = async (req, res, next) => {
         accessToken,
       );
 
-     
-
       // Commit local transaction
       await connection.commit();
 
       res.status(200).json({
         success: true,
-        message:"Customer updated successfully"
-       
-        
+        message: "Customer updated successfully",
       });
     } catch (error) {
       // Rollback local transaction on error (including API failure)
@@ -1496,13 +1491,16 @@ export const getKycDataForAccountCenter = async (req, res, next) => {
         [customerIdNum],
       ),
       pool.query(
-        `SELECT idPawning_Ticket, Ticket_No,Date_Time,Maturity_date
-         FROM pawning_ticket
-         WHERE Customer_idCustomer = ?
-         ORDER BY Date_Time DESC`,
+        `SELECT t.idPawning_Ticket, t.Ticket_No, t.Date_Time, t.Maturity_date, 
+                t.Status, t.Pawning_Advance_Amount
+         FROM pawning_ticket t
+         WHERE t.Customer_idCustomer = ?
+         ORDER BY t.Date_Time DESC`,
         [customerIdNum],
       ),
     ]);
+    console.log("pawningRows", pawningRows);
+    console.log("pawningTickets", pawningTickets);
 
     const pawningBasic =
       pawningRows && pawningRows.length > 0 ? pawningRows[0] : null;

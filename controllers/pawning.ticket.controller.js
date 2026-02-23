@@ -4542,7 +4542,7 @@ export const getCustomerTickets = async (req, res, next) => {
 //   ?search=<name|nic|contact>  ?targetBranchId=<id>  ?page=&limit=
 export const getApprovedTicketsForDisbursement = async (req, res, next) => {
   try {
-    const { search, targetBranchId } = req.query;
+    const { search, targetBranchId, branchIds } = req.query;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
@@ -4552,18 +4552,32 @@ export const getApprovedTicketsForDisbursement = async (req, res, next) => {
     const countParams = [];
     const dataParams = [];
 
-    // If a specific branch is requested (head-office case), filter by it
+    // Branch filtering:
+    //  targetBranchId → HO filtered to one specific branch
+    //  branchIds      → HO scoped to a comma-sep list of accessible branches
+    //  neither        → regular branch sees only its own branch
     if (targetBranchId) {
       baseWhere += " AND pt.Branch_idBranch = ?";
       countParams.push(targetBranchId);
       dataParams.push(targetBranchId);
+    } else if (branchIds) {
+      const ids = branchIds
+        .split(",")
+        .map((id) => parseInt(id, 10))
+        .filter((n) => !isNaN(n));
+      if (ids.length > 0) {
+        const ph = ids.map(() => "?").join(",");
+        baseWhere += ` AND pt.Branch_idBranch IN (${ph})`;
+        countParams.push(...ids);
+        dataParams.push(...ids);
+      }
     } else if (!req.isHeadBranch) {
       // Regular branch users only see their own branch
       baseWhere += " AND pt.Branch_idBranch = ?";
       countParams.push(req.branchId);
       dataParams.push(req.branchId);
     }
-    // Head-branch without targetBranchId sees ALL branches (no filter)
+    // Head-branch without any branch param falls through (sees all — edge case)
 
     // Optional customer search: resolve to Pawning customer IDs via ACC Center
     if (search && search.trim()) {

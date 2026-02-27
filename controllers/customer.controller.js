@@ -65,6 +65,7 @@ export const createCustomer = async (req, res, next) => {
   try {
     const { customerData } = req.body;
     const data = customerData || req.body.data;
+    console.log("data", data);
 
     if (!data) {
       connection.release();

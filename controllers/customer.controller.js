@@ -65,7 +65,7 @@ export const createCustomer = async (req, res, next) => {
   try {
     const { customerData } = req.body;
     const data = customerData || req.body.data;
-    console.log("data", data);
+    console.log("inside create customer in pawning side");
 
     if (!data) {
       connection.release();

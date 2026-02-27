@@ -82,7 +82,7 @@ app.listen(PORT, () => {
     console.error("Database connection failed:", error);
     process.exit(1); // Exit the process if database connection fails
   }
-  console.log(`Server is running on port ${PORT}`);
+  console.log(`Server is running on port ${PORT} and your good to go`);
 });
 
 // Manual test endpoint for daily ticket log functions...

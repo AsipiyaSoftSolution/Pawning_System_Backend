@@ -20,6 +20,7 @@ import {
   approvePawningTicket,
   rejectPawningTicket,
   getApprovedPawningTickets,
+  getApprovedTicketsForDisbursement,
   activatePawningTicket,
   sendActiveTickets,
   sendSettledTickets,
@@ -29,7 +30,9 @@ import {
   checkIfTicketsExistInCompany,
   getCompanyBranchesForTicketFilters,
   sendOverdueTickets,
+  getCustomerTickets,
 } from "../controllers/pawning.ticket.controller.js";
+
 const router = express.Router();
 
 router.post(
@@ -153,6 +156,14 @@ router.get(
   getApprovedPawningTickets,
 ); // Get all approved pawning tickets
 
+// Server-to-server endpoint called by Account Center Disbursement page
+router.get(
+  "/:branchId/disbursement-approved-tickets",
+  protectedRoute,
+  checkUserBranchAccess,
+  getApprovedTicketsForDisbursement,
+); // Get approved (-1) tickets for Account Center disbursement page
+
 // here we disburse the loan to the customer and activate the ticket
 router.patch(
   "/:branchId/mark-ticket-as-active/:ticketId",
@@ -219,4 +230,11 @@ router.get(
   protectedRoute,
   getCompanyBranchesForTicketFilters,
 ); // Get company branches for ticket page filters
+
+router.get(
+  "/:branchId/customer-ticket-history/:customerId",
+  protectedRoute,
+  checkUserBranchAccess,
+  getCustomerTickets,
+);
 export default router;

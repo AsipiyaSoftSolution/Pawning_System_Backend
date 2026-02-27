@@ -61,6 +61,7 @@ async function getCustomerTableFields(companyId) {
 // Create a new customer
 export const createCustomer = async (req, res, next) => {
   const connection = await pool.getConnection();
+  console.log("inside create customer in pawning side");
 
   try {
     const { customerData } = req.body;

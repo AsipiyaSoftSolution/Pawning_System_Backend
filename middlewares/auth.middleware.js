@@ -19,7 +19,7 @@ export const protectedRoute = async (req, res, next) => {
       const decoded = jwt.verify(accessToken, process.env.JWT_ACCESS_SECRET);
       const [user] = await pool2.query(
         "SELECT idUser FROM user WHERE idUser = ? and Email = ? and Company_idCompany = ? and Designation_idDesignation = ?",
-        [decoded.id, decoded.email, decoded.company_id, decoded.designation_id]
+        [decoded.id, decoded.email, decoded.company_id, decoded.designation_id],
       );
       if (!user[0]) {
         return next(errorHandler(401, "Unauthorized access"));

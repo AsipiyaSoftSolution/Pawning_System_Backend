@@ -1,5 +1,3 @@
-name: Deploy Pawning Backend to DigitalOcean
-
 on:
   push:
     branches: [main]
@@ -22,17 +20,16 @@ jobs:
           script: |
             cd /var/www/apps/node/Pawning_System_Backend
 
-            # Set up SSH agent and add the GitHub SSH key with passphrase
-            eval $(ssh-agent -s)
+            # Setup SSH agent
+            eval "$(ssh-agent -s)"
             echo "${{ secrets.SSH_KEY_PASSPHRASE }}" | SSH_ASKPASS_REQUIRE=never ssh-add ~/.ssh/id_ed25519_github_soap
 
-            # Use the SSH key for git operations
+            # Pull latest code
             GIT_SSH_COMMAND="ssh -i ~/.ssh/id_ed25519_github_soap -o IdentitiesOnly=yes" git pull origin main
 
-            # Clean up ssh-agent
             ssh-agent -k
 
-            npm install --production
-
-            # Restart the docker container
-            docker restart pawning_backend
+            # Rebuild and restart container properly
+            docker compose down
+            docker compose build --no-cache
+            docker compose up -d

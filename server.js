@@ -74,12 +74,11 @@ const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
   try {
-    console.log("!!!!!!!!!!!!");
     connectDB();
     connectDB2();
     verifyConnection();
 
-    console.log("!!!!!!!!!!!!");
+    console.log("KIMBHI");
 
     console.log("Database connected successfully");
     console.log(`Server is running, you are good to go`);

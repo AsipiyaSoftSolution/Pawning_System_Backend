@@ -78,15 +78,6 @@ app.listen(PORT, () => {
     connectDB2();
     verifyConnection();
 
-    console.log("KIMBHI");
-    console.log("KIMBHI");
-    console.log("KIMBHI");
-    console.log("KIMBHI");
-    console.log("KIMBHI");
-    console.log("KIMBHI");
-    console.log("KIMBHI");
-    console.log("KIMBHI");
-
     console.log("Database connected successfully");
     console.log(`Server is running, you are good to go`);
   } catch (error) {

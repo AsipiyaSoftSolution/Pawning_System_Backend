@@ -78,31 +78,10 @@ app.listen(PORT, () => {
     connectDB2();
     verifyConnection();
     console.log("Database connected successfully");
+    console.log(`Server is running, you are good to go`);
   } catch (error) {
     console.error("Database connection failed:", error);
     process.exit(1); // Exit the process if database connection fails
-  }
-  console.log(`Server is running on port ${PORT} and your good to go`);
-});
-
-// Manual test endpoint for daily ticket log functions...
-app.post("/api/test/daily-ticket-log", async (req, res) => {
-  try {
-    console.log("Manual test started at:", new Date().toISOString());
-    await addDailyTicketLog();
-    console.log("Manual test completed successfully");
-
-    res.json({
-      success: true,
-      message: "Daily ticket log job completed successfully",
-      timestamp: new Date().toISOString(),
-    });
-  } catch (error) {
-    console.error("Manual test failed:", error);
-    res.status(500).json({
-      success: false,
-      message: error.message,
-    });
   }
 });
 

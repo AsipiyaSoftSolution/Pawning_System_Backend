@@ -124,6 +124,7 @@ export const getPawningProductById = async (req, res, next) => {
         Month6_Precentage_Amount_22_Caratage,
         Month9_Precentage_Amount_22_Caratage,
         Month12_Precentage_Amount_22_Caratage,
+        noOfStages,
         lateChargeStage1,
         lateChargeStage2,
         lateChargeStage3,
@@ -238,6 +239,7 @@ export const getPawningProductById = async (req, res, next) => {
           stage2Interest: plan.stage2Interest,
           stage3Interest: plan.stage3Interest,
           stage4Interest: plan.stage4Interest,
+          numberOfStages: plan.noOfStages,
         };
 
         // Add late charge stage fields
@@ -517,7 +519,7 @@ async function createOnePawningProductForBranch(branchId, data, userId) {
         ? data.amount22
         : plan.amount22Carat;
     await pool.query(
-      "INSERT INTO product_plan (Period_Type,Minimum_Period,Maximum_Period,Minimum_Amount,Maximum_Amount,Interest_type,Interest,Interest_Calculate_After,Service_Charge_Value_type,Service_Charge_Value,Early_Settlement_Charge_Value_type,Early_Settlement_Charge_Value,Late_Charge,Amount_For_22_Caratage,Last_Updated_User,Last_Updated_Time,Pawning_Product_idPawning_Product,stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,interestApplicableMethod,Week_Precentage_Amount_22_Caratage,Month1_Precentage_Amount_22_Caratage,Month3_Precentage_Amount_22_Caratage,Month6_Precentage_Amount_22_Caratage,Month9_Precentage_Amount_22_Caratage,Month12_Precentage_Amount_22_Caratage,noOfStages,lateChargeStage1,lateChargeStage2,lateChargeStage3,lateChargeStage4,lateChargeStage1StartDate,lateChargeStage1EndDate,lateChargeStage2StartDate,lateChargeStage2EndDate,lateChargeStage3StartDate,lateChargeStage3EndDate,lateChargeStage4StartDate,lateChargeStage4EndDate,numberOfLateChargeStages) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO product_plan (Period_Type,Minimum_Period,Maximum_Period,Minimum_Amount,Maximum_Amount,Interest_type,Interest,Interest_Calculate_After,Service_Charge_Value_type,Service_Charge_Value,Early_Settlement_Charge_Value_type,Early_Settlement_Charge_Value,Late_Charge,Amount_For_22_Caratage,Last_Updated_User,Last_Updated_Time,Pawning_Product_idPawning_Product,stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,interestApplicableMethod,Week_Precentage_Amount_22_Caratage,Month1_Precentage_Amount_22_Caratage,Month3_Precentage_Amount_22_Caratage,Month6_Precentage_Amount_22_Caratage,Month9_Precentage_Amount_22_Caratage,Month12_Precentage_Amount_22_Caratage,noOfStages,lateChargeStage1,lateChargeStage2,lateChargeStage3,lateChargeStage4,lateChargeStage1StartDate,lateChargeStage1EndDate,lateChargeStage2StartDate,lateChargeStage2EndDate,lateChargeStage3StartDate,lateChargeStage3EndDate,lateChargeStage4StartDate,lateChargeStage4EndDate,numberOfLateChargeStages) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [
         plan.periodType,
         plan.minPeriod,
@@ -679,10 +681,6 @@ export const createPawningProductForBranches = async (req, res, next) => {
     res.status(201).json({
       success: true,
       message: `Pawning product created for ${created.length} branch(es).`,
-      createdCount: created.length,
-      createdBranchIds: created.map((c) => c.branchId),
-      createdProducts: created,
-      errors: errors.length > 0 ? errors : undefined,
     });
   } catch (err) {
     console.error("Error in createPawningProductForBranches:", err);
@@ -952,6 +950,7 @@ export const updatePawningProductById = async (req, res, next) => {
           Month6_Precentage_Amount_22_Caratage,
           Month9_Precentage_Amount_22_Caratage,
           Month12_Precentage_Amount_22_Caratage,
+          noOfStages,
           InterestApplicableMethod,
           lateChargeStage1,
           lateChargeStage2,
@@ -966,7 +965,7 @@ export const updatePawningProductById = async (req, res, next) => {
           lateChargeStage4StartDate,
           lateChargeStage4EndDate,
           numberOfLateChargeStages
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           plan.periodType || null,
           parseInt(plan.minPeriod) || 0,
@@ -1006,6 +1005,7 @@ export const updatePawningProductById = async (req, res, next) => {
           parseFloat(carat22Percentages.sixMonths) || 0,
           parseFloat(carat22Percentages.nineMonths) || 0,
           parseFloat(carat22Percentages.twelveMonths) || 0,
+          plan.numberOfStages || 0,
           plan.interestApplicableMethod || null,
           plan.lateChargeStage1 || data.lateCharge.lateChargeStage1 || 0,
           plan.lateChargeStage2 || data.lateCharge.lateChargeStage2 || 0,

@@ -230,10 +230,18 @@ export const markServiceChargeInTicketLog = async (
   userId,
   serviceCharge,
   isPaidFromAdvance = false, // default to false for backward compatibility
+  connection,
 ) => {
+  // Guard: connection is required since this runs inside a transaction
+  if (!connection) {
+    throw new Error(
+      "markServiceChargeInTicketLog: a transaction connection is required",
+    );
+  }
+
   try {
     // Get the latest log to retrieve all balances
-    const [latestLogResult] = await pool.query(
+    const [latestLogResult] = await connection.query(
       "SELECT Advance_Balance, Interest_Balance, Service_Charge_Balance, Late_Charges_Balance, Aditional_Charge_Balance FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? ORDER BY idTicket_Log DESC LIMIT 1",
       [ticketId],
     );
@@ -247,9 +255,9 @@ export const markServiceChargeInTicketLog = async (
     const additionalChargeBalance =
       Number(latestLogResult[0]?.Aditional_Charge_Balance) || 0;
 
-    // If paid from advance, reduce the advance balance
+    // If paid from advance, reduce the advance balance (clamp to 0 to avoid negative)
     if (isPaidFromAdvance) {
-      advanceBalance = advanceBalance - Number(serviceCharge);
+      advanceBalance = Math.max(0, advanceBalance - Number(serviceCharge));
     }
 
     // Service charge balance (cumulative) - this tracks what was charged
@@ -257,7 +265,7 @@ export const markServiceChargeInTicketLog = async (
       existingServiceChargeBalance + Number(serviceCharge);
 
     // Total balance calculation depends on how service charge was paid:
-    // - If paid from advance: advance is reduced, so total = reduced advance + other balances (service charge is 0 owed since already paid)
+    // - If paid from advance: advance is reduced, so total = reduced advance + other balances
     // - If paid by customer: service charge adds to what customer owes
     let totalBalance;
     if (isPaidFromAdvance) {
@@ -277,7 +285,7 @@ export const markServiceChargeInTicketLog = async (
         additionalChargeBalance;
     }
 
-    const [result] = await pool.query(
+    const [result] = await connection.query(
       "INSERT INTO ticket_log (Pawning_Ticket_idPawning_Ticket, Type, Amount, Advance_Balance, Interest_Balance, Service_Charge_Balance, Late_Charges_Balance, Aditional_Charge_Balance, Total_Balance, User_idUser,Date_Time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())",
       [
         ticketId,
@@ -297,7 +305,7 @@ export const markServiceChargeInTicketLog = async (
     }
   } catch (error) {
     console.error("Error marking service charge in pawning ticket log:", error);
-    throw new Error("Error marking service charge in pawning ticket log");
+    throw error; // re-throw original error to preserve stack trace
   }
 };
 

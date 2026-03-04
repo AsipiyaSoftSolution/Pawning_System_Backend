@@ -351,7 +351,7 @@ export const createPawningTicket = async (req, res, next) => {
 
     // get the ticket's product service charge type and other data
     const [productData] = await pool.query(
-      "SELECT Service_Charge_Create_As,Interest_Method,Service_Charge_Value,Service_Charge_Value_Type FROM pawning_product WHERE idPawning_Product = ?",
+      "SELECT Service_Charge_Create_As,Interest_Method,Service_Charge_Value,Service_Charge_Value_Type,Late_Charge_Create_As FROM pawning_product WHERE idPawning_Product = ?",
       [data.ticketData.productId],
     );
 
@@ -523,9 +523,28 @@ export const createPawningTicket = async (req, res, next) => {
       status = -1; // approved before loan disbursement
     }
 
+    let lateChargeData = [];
+    if (productData[0].Late_Charge_Create_As === "Charge For Product") {
+      // fetch late charge stages from pawning_product
+      const [rows] = await pool.query(
+        "SELECT lateChargeStage1,lateChargeStage2,lateChargeStage3,lateChargeStage4,lateChargeStage1StartDate,lateChargeStage2StartDate,lateChargeStage3StartDate,lateChargeStage4StartDate,lateChargeStage1EndDate,lateChargeStage2EndDate,lateChargeStage3EndDate,lateChargeStage4EndDate,numberOfLateChargeStages FROM pawning_product WHERE idPawning_Product = ?",
+        [data.ticketData.productId],
+      );
+      lateChargeData = rows;
+    } else if (
+      productData[0].Late_Charge_Create_As === "Charge For Product Item"
+    ) {
+      // fetch late charge stages from the matching product_plan row
+      const [rows] = await pool.query(
+        "SELECT lateChargeStage1,lateChargeStage2,lateChargeStage3,lateChargeStage4,lateChargeStage1StartDate,lateChargeStage2StartDate,lateChargeStage3StartDate,lateChargeStage4StartDate,lateChargeStage1EndDate,lateChargeStage2EndDate,lateChargeStage3EndDate,lateChargeStage4EndDate,numberOfLateChargeStages FROM product_plan WHERE Pawning_Product_idPawning_Product = ?",
+        [data.ticketData.productId],
+      );
+      lateChargeData = rows;
+    }
+
     // Insert into pawning_ticket table
     const [result] = await pool.query(
-      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_Date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount,Service_Charge_Type,Service_Charge_Rate,Early_Settlement_Charge_Balance,Additiona_Charges_Balance,Service_Charge_Balance,Late_Charge_Balance,Interest_Amount_Balance,Balance_Amount,Interest_Rate_Duration,stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,Status,service_charge_paid_by_customer,service_charge_paid_from_pawning_advance,noOfStages) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_Date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount,Service_Charge_Type,Service_Charge_Rate,Early_Settlement_Charge_Balance,Additiona_Charges_Balance,Service_Charge_Balance,Late_Charge_Balance,Interest_Amount_Balance,Balance_Amount,Interest_Rate_Duration,stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,Status,service_charge_paid_by_customer,service_charge_paid_from_pawning_advance,noOfStages,lateChargeStage1,lateChargeStage2,lateChargeStage3,lateChargeStage4,lateChargeStage1StartDate,lateChargeStage2StartDate,lateChargeStage3StartDate,lateChargeStage4StartDate,lateChargeStage1EndDate,lateChargeStage2EndDate,lateChargeStage3EndDate,lateChargeStage4EndDate,numberOfLateChargeStages) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [
         data.ticketData.ticketNo,
         data.ticketData.grantSeqNo,
@@ -572,6 +591,19 @@ export const createPawningTicket = async (req, res, next) => {
         data.ticketData.serviceChargePaidBy === "customer" ? 1 : null,
         data.ticketData.serviceChargePaidBy === "advance" ? 1 : null,
         productPlanStagesData[0]?.noOfStages || 0,
+        lateChargeData[0]?.lateChargeStage1 || 0,
+        lateChargeData[0]?.lateChargeStage2 || 0,
+        lateChargeData[0]?.lateChargeStage3 || 0,
+        lateChargeData[0]?.lateChargeStage4 || 0,
+        lateChargeData[0]?.lateChargeStage1StartDate || null,
+        lateChargeData[0]?.lateChargeStage2StartDate || null,
+        lateChargeData[0]?.lateChargeStage3StartDate || null,
+        lateChargeData[0]?.lateChargeStage4StartDate || null,
+        lateChargeData[0]?.lateChargeStage1EndDate || null,
+        lateChargeData[0]?.lateChargeStage2EndDate || null,
+        lateChargeData[0]?.lateChargeStage3EndDate || null,
+        lateChargeData[0]?.lateChargeStage4EndDate || null,
+        lateChargeData[0]?.numberOfLateChargeStages || 0,
       ],
     );
 

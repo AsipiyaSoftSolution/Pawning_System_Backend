@@ -31,6 +31,8 @@ import {
   getCompanyBranchesForTicketFilters,
   sendOverdueTickets,
   getCustomerTickets,
+  deductAdvanceFromPawningTicket,
+  updateTicketStatusAfterLoanDisbursement,
 } from "../controllers/pawning.ticket.controller.js";
 
 const router = express.Router();
@@ -163,6 +165,19 @@ router.get(
   checkUserBranchAccess,
   getApprovedTicketsForDisbursement,
 ); // Get approved (-1) tickets for Account Center disbursement page
+
+// Server-to-server deduct the pawning advance from the pawning ticket
+router.post(
+  "/deduct-pawning-advance",
+  protectedRoute,
+  deductAdvanceFromPawningTicket,
+);
+// Server-to-server mark ticket as active after disbursement
+router.patch(
+  "/mark-ticket-as-active",
+  protectedRoute,
+  updateTicketStatusAfterLoanDisbursement,
+);
 
 // here we disburse the loan to the customer and activate the ticket
 router.patch(

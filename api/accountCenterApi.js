@@ -182,11 +182,22 @@ export const subsystemApi = {
       accessToken,
     ),
 
-  searchCustomerByTerm: (searchTerm, companyId, accessToken) =>
+  searchCustomerByTerm: (searchTerm, companyId, branchId, accessToken) =>
     accCenterGet(
       `/subsystem/search-customer?searchTerm=${encodeURIComponent(
         searchTerm,
-      )}&companyId=${companyId}`,
+      )}&companyId=${companyId}&branchId=${branchId}`,
       accessToken,
     ),
+};
+
+// Pawning Payments
+export const pawningPaymentsApi = {
+  ticketPaymentsDoubleEntries: (data, accessToken) => {
+    return accCenterPost(
+      "/double-entries/pawning-ticket-payments-double-entries",
+      data,
+      accessToken,
+    );
+  },
 };

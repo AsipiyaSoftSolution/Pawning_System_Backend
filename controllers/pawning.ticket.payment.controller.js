@@ -4,7 +4,7 @@ import { getPaginationData } from "../utils/helper.js";
 import { formatSearchPattern } from "../utils/helper.js";
 import { getCompanyBranches } from "../utils/helper.js";
 import { createPawningTicketLogOnAdditionalCharge } from "../utils/pawning.ticket.logs.js";
-import { pawningPaymentsApi } from "../api/accountCenterApi.js";
+import { pawningPaymentsApi, subsystemApi } from "../api/accountCenterApi.js";
 // Search tickets by ticket number, customer NIC, or customer name with pagination
 export const searchByTickerNumberCustomerNICOrName = async (req, res, next) => {
   try {
@@ -17,19 +17,20 @@ export const searchByTickerNumberCustomerNICOrName = async (req, res, next) => {
     const sanitizedSearch = searchTerm.replace(/[^a-zA-Z0-9]/g, ""); // For NIC search clean up
     const formattedNIC = formatSearchPattern(sanitizedSearch);
 
-    // Step 1: Search for matching customers in Account Center (pool2)
-    // Note: Schema doesn't have Full_name, only First_Name and Last_Name
-    const [matchingCustomers] = await pool2.query(
-      `SELECT isPawningUserId, First_Name, Last_Name, Nic 
-       FROM customer 
-       WHERE (Nic LIKE ? OR First_Name LIKE ? OR Last_Name LIKE ?) 
-       AND isPawningUserId IS NOT NULL`,
-      [formattedNIC, searchPattern, searchPattern],
+    // Step 1: Search for matching customers in Account Center api
+    const matchingCustomers = await subsystemApi.searchCustomerByTerm(
+      searchTerm,
+      req.companyId,
+      req.branchId,
+      req.accessToken,
+    );
+    console.log(matchingCustomers, "matchingCustomers");
+
+    const pawningCustomerIds = matchingCustomers.data.map(
+      (c) => c.isPawningUserId,
     );
 
-    const pawningCustomerIds = matchingCustomers.map((c) => c.isPawningUserId);
-
-    // Step 2: Search for tickets in Pawning DB (pool)
+    // Step 2: Search for tickets in Pawning DB
     let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Customer_idCustomer, pt.Status 
                  FROM pawning_ticket pt 
                  WHERE pt.Branch_idBranch = ? AND pt.Status != '-1' AND pt.Status IS NOT NULL`;
@@ -79,20 +80,20 @@ export const searchByTickerNumberCustomerNICOrName = async (req, res, next) => {
     let customerMap = {};
 
     if (accCenterCusIds.length > 0) {
-      // Fetch details from pool2 - using First_Name, Last_Name
-      const [accDetails] = await pool2.query(
-        `SELECT idCustomer, Nic, First_Name, Last_Name FROM customer WHERE idCustomer IN (?)`,
-        [accCenterCusIds],
-      );
-
+      // Build accMap from matchingCustomers API response using isPawningUserId
       const accMap = {};
-      accDetails.forEach((c) => {
-        accMap[c.idCustomer] = c;
+      matchingCustomers.data.forEach((c) => {
+        if (c.isPawningUserId) {
+          accMap[c.isPawningUserId] = {
+            Full_Name: c.Full_Name || "Unknown",
+            Nic: c.New_NIC || c.Old_NIC || "",
+          };
+        }
       });
 
       pawningCustomers.forEach((pc) => {
-        if (pc.accountCenterCusId && accMap[pc.accountCenterCusId]) {
-          customerMap[pc.idCustomer] = accMap[pc.accountCenterCusId];
+        if (pc.idCustomer && accMap[pc.idCustomer]) {
+          customerMap[pc.idCustomer] = accMap[pc.idCustomer];
         }
       });
     }
@@ -100,17 +101,11 @@ export const searchByTickerNumberCustomerNICOrName = async (req, res, next) => {
     // Step 4: Format Response
     const result = tickets.map((t) => {
       const cus = customerMap[t.Customer_idCustomer] || {};
-      const firstName = cus.First_Name || "";
-      const lastName = cus.Last_Name || "";
-      const fullName =
-        firstName && lastName
-          ? `${firstName} ${lastName}`
-          : firstName || lastName || "Unknown";
 
       return {
         idPawning_Ticket: t.idPawning_Ticket,
         Ticket_No: t.Ticket_No,
-        Full_name: fullName,
+        Full_name: cus.Full_Name || "Unknown",
         NIC: cus.Nic || "",
       };
     });

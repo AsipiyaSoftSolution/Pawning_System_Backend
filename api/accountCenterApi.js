@@ -182,11 +182,11 @@ export const subsystemApi = {
       accessToken,
     ),
 
-  searchCustomerByTerm: (searchTerm, companyId, accessToken) =>
+  searchCustomerByTerm: (searchTerm, companyId, branchId, accessToken) =>
     accCenterGet(
       `/subsystem/search-customer?searchTerm=${encodeURIComponent(
         searchTerm,
-      )}&companyId=${companyId}`,
+      )}&companyId=${companyId}&branchId=${branchId}`,
       accessToken,
     ),
 };

@@ -71,20 +71,11 @@ export const searchByTickerNumberCustomerNICOrName = async (req, res, next) => {
       ...new Set(tickets.map((t) => t.Customer_idCustomer)),
     ];
 
-    // Get accountCenterCusId from pawning DB
-    const [pawningCustomers] = await pool.query(
-      `SELECT idCustomer, accountCenterCusId FROM customer WHERE idCustomer IN (?)`,
-      [uniqueCustomerIds],
-    );
-
-    const accCenterCusIds = pawningCustomers
-      .map((c) => c.accountCenterCusId)
-      .filter((id) => id);
     let customerMap = {};
+    const accMap = {};
 
-    if (accCenterCusIds.length > 0) {
-      // Build accMap from matchingCustomers API response using isPawningUserId
-      const accMap = {};
+    // Build accMap from existing matchingCustomers API response using isPawningUserId
+    if (matchingCustomers && matchingCustomers.data) {
       matchingCustomers.data.forEach((c) => {
         if (c.isPawningUserId) {
           accMap[c.isPawningUserId] = {
@@ -93,13 +84,42 @@ export const searchByTickerNumberCustomerNICOrName = async (req, res, next) => {
           };
         }
       });
+    }
 
-      pawningCustomers.forEach((pc) => {
-        if (pc.idCustomer && accMap[pc.idCustomer]) {
-          customerMap[pc.idCustomer] = accMap[pc.idCustomer];
+    // Identify which customers from the tickets list are missing from our accMap
+    const missingCustomerIds = uniqueCustomerIds.filter((id) => !accMap[id]);
+
+    if (missingCustomerIds.length > 0) {
+      // Fetch data for missing customers using their idCustomer (which matches isPawningUserId in account center)
+      const missingPromises = missingCustomerIds.map((id) =>
+        subsystemApi.searchCustomerByTerm(
+          String(id),
+          req.companyId,
+          req.branchId,
+          req.accessToken,
+        ),
+      );
+
+      const additionalResults = await Promise.all(missingPromises);
+      additionalResults.forEach((res) => {
+        if (res && res.data) {
+          res.data.forEach((c) => {
+            if (c.isPawningUserId) {
+              accMap[c.isPawningUserId] = {
+                Full_Name: c.Full_Name || "Unknown",
+                Nic: c.New_NIC || c.Old_NIC || "",
+              };
+            }
+          });
         }
       });
     }
+
+    uniqueCustomerIds.forEach((id) => {
+      if (accMap[id]) {
+        customerMap[id] = accMap[id];
+      }
+    });
 
     // Step 4: Format Response
     const result = tickets.map((t) => {

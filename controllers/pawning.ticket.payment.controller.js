@@ -220,9 +220,6 @@ export const getTicketDataById = async (req, res, next) => {
       req.accessToken,
     );
 
-    console.log(accCustomer, "customers");
-    console.log(accCustomer.customer.documents, "documents");
-
     let customerDetails = {};
     if (accCustomer.success && accCustomer.customer) {
       customerDetails = {
@@ -771,11 +768,8 @@ export const createPaymentForTicket = async (req, res, next) => {
 
       // Total Balance
       const Total_Balance =
-        Interest_Balance +
-        Service_Charge_Balance +
-        Late_Charges_Balance +
-        Aditional_Charge_Balance +
-        Advance_Balance;
+        parseFloat(ticketLog[0].Total_Balance || 0) -
+        parseFloat(paymentAmount || 0);
 
       const data = {
         paymentType: "part",
@@ -800,7 +794,7 @@ export const createPaymentForTicket = async (req, res, next) => {
           data,
           req.accessToken,
         );
-        console.log(result, "result");
+        // console.log(result, "result");
       } catch (error) {
         return next(errorHandler(500, "Failed to create ticket payment"));
       }

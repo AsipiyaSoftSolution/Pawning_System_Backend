@@ -4,7 +4,11 @@ import { getPaginationData } from "../utils/helper.js";
 import { formatSearchPattern } from "../utils/helper.js";
 import { getCompanyBranches } from "../utils/helper.js";
 import { createPawningTicketLogOnAdditionalCharge } from "../utils/pawning.ticket.logs.js";
-import { pawningPaymentsApi, subsystemApi } from "../api/accountCenterApi.js";
+import {
+  customerApi,
+  pawningPaymentsApi,
+  subsystemApi,
+} from "../api/accountCenterApi.js";
 // Search tickets by ticket number, customer NIC, or customer name with pagination
 export const searchByTickerNumberCustomerNICOrName = async (req, res, next) => {
   try {
@@ -24,7 +28,6 @@ export const searchByTickerNumberCustomerNICOrName = async (req, res, next) => {
       req.branchId,
       req.accessToken,
     );
-    console.log(matchingCustomers, "matchingCustomers");
 
     const pawningCustomerIds = matchingCustomers.data.map(
       (c) => c.isPawningUserId,
@@ -163,13 +166,14 @@ export const getTicketDataById = async (req, res, next) => {
       [ticketData[0].idPawning_Ticket],
     );
 
-    // Fetch user name from pool2 if comment exists
+    // Fetch user name from account center
     if (lastCommentData.length > 0 && lastCommentData[0].User_idUser) {
-      const [commentUser] = await pool2.query(
-        "SELECT full_name FROM user WHERE idUser = ?",
+      const commentUserData = await subsystemApi.userNames(
         [lastCommentData[0].User_idUser],
+        req.accessToken,
       );
-      lastCommentData[0].Full_name = commentUser[0]?.full_name || null;
+      lastCommentData[0].Full_name =
+        commentUserData.users?.[0]?.full_name || "Unknown Officer";
     }
 
     ticketData[0].lastComment = lastCommentData[0] || null;
@@ -182,18 +186,19 @@ export const getTicketDataById = async (req, res, next) => {
 
     ticketData[0].productName = productData[0].Name || "Unknown Product"; // attach product name to ticket data
 
-    // get the officer name for the ticket from pool2 (user table is in pool2)
-    const [officerData] = await pool2.query(
-      "SELECT full_name FROM user WHERE idUser = ?",
+    // get the officer name for the ticket from account center
+    const officerData = await subsystemApi.userNames(
       [ticketData[0].User_idUser],
+      req.accessToken,
     );
-    ticketData[0].officerName = officerData[0]?.full_name || "Unknown Officer"; // attach officer name to ticket data
+    ticketData[0].officerName =
+      officerData.users?.[0]?.full_name || "Unknown Officer";
     delete ticketData[0].User_idUser; // remove User_idUser from ticket data
 
     // fetch customer data for the ticket
     // First get accountCenterCusId from pawning DB
     const [pawningCustomer] = await pool.query(
-      "SELECT idCustomer, accountCenterCusId FROM customer WHERE idCustomer = ?",
+      "SELECT idCustomer, accountCenterCusId,Behaviour_Status FROM customer WHERE idCustomer = ?",
       [ticketData[0].Customer_idCustomer],
     );
 
@@ -209,31 +214,26 @@ export const getTicketDataById = async (req, res, next) => {
 
     // Fetch customer details from Account Center (pool2)
     // Schema: First_Name, Last_Name, Nic, Contact_No, Customer_Risk_Level (No Full_name)
-    const [accCustomer] = await pool2.query(
-      "SELECT idCustomer, First_Name, Last_Name, Nic, Customer_Risk_Level, Contact_No FROM customer WHERE idCustomer = ?",
-      [pawningCustomer[0].accountCenterCusId],
+    const accCustomer = await customerApi.getCustomer(
+      pawningCustomer[0].accountCenterCusId,
+      { asipiyaSoftware: "pawning", companyId: req.companyId },
+      req.accessToken,
     );
 
     let customerDetails = {};
-    if (accCustomer.length > 0) {
-      const acc = accCustomer[0];
-      const firstName = acc.First_Name || "";
-      const lastName = acc.Last_Name || "";
-      const fullName =
-        firstName && lastName
-          ? `${firstName} ${lastName}`
-          : firstName || lastName || "Unknown";
-
+    if (accCustomer.success && accCustomer.customer) {
       customerDetails = {
-        Full_name: fullName,
-        Risk_Level: acc.Customer_Risk_Level,
-        Mobile_No: acc.Contact_No,
+        Full_name: accCustomer.customer.Full_Name || "Unknown",
+        Risk_Level: pawningCustomer[0].Behaviour_Status,
+        Mobile_No: accCustomer.customer.Contact_No_01,
+        Mobile_No2: accCustomer.customer.Contact_No_02,
       };
     } else {
       customerDetails = {
         Full_name: "Unknown",
         Risk_Level: null,
         Mobile_No: null,
+        Mobile_No2: null,
       };
     }
 
@@ -248,6 +248,7 @@ export const getTicketDataById = async (req, res, next) => {
       Full_name: customerDetails.Full_name,
       Risk_Level: customerDetails.Risk_Level,
       Mobile_No: customerDetails.Mobile_No,
+      Mobile_No2: customerDetails.Mobile_No2,
       documents: customerDocs.map((r) => ({
         Document_Name: r.Document_Name,
         Path: r.Path,

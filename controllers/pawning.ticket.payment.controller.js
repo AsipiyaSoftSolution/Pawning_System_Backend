@@ -1026,11 +1026,8 @@ export const createTicketRenewalPayment = async (req, res, next) => {
 
       // Total Balance
       const Total_Balance =
-        Interest_Balance +
-        Service_Charge_Balance +
-        Late_Charges_Balance +
-        Aditional_Charge_Balance +
-        Advance_Balance;
+        parseFloat(ticketLog[0].Total_Balance || 0) -
+        parseFloat(paymentAmount || 0);
 
       const data = {
         paymentType: "renewal",
@@ -1382,6 +1379,11 @@ export const createTicketSettlementPayment = async (req, res, next) => {
 
       const createdTicketPaymentId = ticketPaymentResult.insertId;
 
+      // Calculate Total Balance logic for Settlement
+      const Total_Balance =
+        parseFloat(ticketLog[0].Total_Balance || 0) -
+        parseFloat(paymentAmount || 0);
+
       // insert settlement record into ticket log table
       const [logResult] = await connection.query(
         "INSERT INTO ticket_log(Pawning_Ticket_idPawning_Ticket,Date_Time,Type,Description,Amount,Interest_Balance,Service_Charge_Balance,Late_Charges_Balance,Aditional_Charge_Balance,Advance_Balance,Total_Balance,User_idUser,Type_Id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -1396,7 +1398,7 @@ export const createTicketSettlementPayment = async (req, res, next) => {
           0,
           0,
           0,
-          0,
+          Total_Balance,
           req.userId,
           createdTicketPaymentId,
         ],

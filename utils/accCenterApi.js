@@ -9,7 +9,9 @@ export const createAccCenterApiClient = (accessToken) => {
   const baseURL = process.env.ACCOUNT_CENTER_API_URL;
 
   if (!baseURL) {
-    throw new Error("ACCOUNT_CENTER_API_URL is not configured in environment variables");
+    throw new Error(
+      "ACCOUNT_CENTER_API_URL is not configured in environment variables",
+    );
   }
 
   return axios.create({
@@ -40,7 +42,7 @@ export const accCenterPost = async (endpoint, data, accessToken) => {
     if (error.response) {
       // ACC Center API returned an error response
       const apiError = new Error(
-        error.response.data?.message || "ACC Center API request failed"
+        error.response.data?.message || "ACC Center API request failed",
       );
       apiError.status = error.response.status;
       apiError.response = error.response.data;
@@ -72,7 +74,7 @@ export const accCenterGet = async (endpoint, accessToken) => {
   } catch (error) {
     if (error.response) {
       const apiError = new Error(
-        error.response.data?.message || "ACC Center API request failed"
+        error.response.data?.message || "ACC Center API request failed",
       );
       apiError.status = error.response.status;
       apiError.response = error.response.data;
@@ -103,7 +105,7 @@ export const accCenterPut = async (endpoint, data, accessToken) => {
   } catch (error) {
     if (error.response) {
       const apiError = new Error(
-        error.response.data?.message || "ACC Center API request failed"
+        error.response.data?.message || "ACC Center API request failed",
       );
       apiError.status = error.response.status;
       apiError.response = error.response.data;
@@ -133,7 +135,7 @@ export const accCenterDelete = async (endpoint, accessToken) => {
   } catch (error) {
     if (error.response) {
       const apiError = new Error(
-        error.response.data?.message || "ACC Center API request failed"
+        error.response.data?.message || "ACC Center API request failed",
       );
       apiError.status = error.response.status;
       apiError.response = error.response.data;

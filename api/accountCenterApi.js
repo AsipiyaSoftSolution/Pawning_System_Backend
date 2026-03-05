@@ -194,7 +194,7 @@ export const subsystemApi = {
 // Pawning Payments
 export const pawningPaymentsApi = {
   ticketPaymentsDoubleEntries: (data, accessToken) => {
-    accCenterPost(
+    return accCenterPost(
       "/double-entries/pawning-ticket-payments-double-entries",
       data,
       accessToken,

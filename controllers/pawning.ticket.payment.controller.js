@@ -4,7 +4,11 @@ import { getPaginationData } from "../utils/helper.js";
 import { formatSearchPattern } from "../utils/helper.js";
 import { getCompanyBranches } from "../utils/helper.js";
 import { createPawningTicketLogOnAdditionalCharge } from "../utils/pawning.ticket.logs.js";
-
+import {
+  customerApi,
+  pawningPaymentsApi,
+  subsystemApi,
+} from "../api/accountCenterApi.js";
 // Search tickets by ticket number, customer NIC, or customer name with pagination
 export const searchByTickerNumberCustomerNICOrName = async (req, res, next) => {
   try {
@@ -17,19 +21,19 @@ export const searchByTickerNumberCustomerNICOrName = async (req, res, next) => {
     const sanitizedSearch = searchTerm.replace(/[^a-zA-Z0-9]/g, ""); // For NIC search clean up
     const formattedNIC = formatSearchPattern(sanitizedSearch);
 
-    // Step 1: Search for matching customers in Account Center (pool2)
-    // Note: Schema doesn't have Full_name, only First_Name and Last_Name
-    const [matchingCustomers] = await pool2.query(
-      `SELECT isPawningUserId, First_Name, Last_Name, Nic 
-       FROM customer 
-       WHERE (Nic LIKE ? OR First_Name LIKE ? OR Last_Name LIKE ?) 
-       AND isPawningUserId IS NOT NULL`,
-      [formattedNIC, searchPattern, searchPattern],
+    // Step 1: Search for matching customers in Account Center api
+    const matchingCustomers = await subsystemApi.searchCustomerByTerm(
+      searchTerm,
+      req.companyId,
+      req.branchId,
+      req.accessToken,
     );
 
-    const pawningCustomerIds = matchingCustomers.map((c) => c.isPawningUserId);
+    const pawningCustomerIds = matchingCustomers.data.map(
+      (c) => c.isPawningUserId,
+    );
 
-    // Step 2: Search for tickets in Pawning DB (pool)
+    // Step 2: Search for tickets in Pawning DB
     let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Customer_idCustomer, pt.Status 
                  FROM pawning_ticket pt 
                  WHERE pt.Branch_idBranch = ? AND pt.Status != '-1' AND pt.Status IS NOT NULL`;
@@ -67,50 +71,64 @@ export const searchByTickerNumberCustomerNICOrName = async (req, res, next) => {
       ...new Set(tickets.map((t) => t.Customer_idCustomer)),
     ];
 
-    // Get accountCenterCusId from pawning DB
-    const [pawningCustomers] = await pool.query(
-      `SELECT idCustomer, accountCenterCusId FROM customer WHERE idCustomer IN (?)`,
-      [uniqueCustomerIds],
-    );
-
-    const accCenterCusIds = pawningCustomers
-      .map((c) => c.accountCenterCusId)
-      .filter((id) => id);
     let customerMap = {};
+    const accMap = {};
 
-    if (accCenterCusIds.length > 0) {
-      // Fetch details from pool2 - using First_Name, Last_Name
-      const [accDetails] = await pool2.query(
-        `SELECT idCustomer, Nic, First_Name, Last_Name FROM customer WHERE idCustomer IN (?)`,
-        [accCenterCusIds],
-      );
-
-      const accMap = {};
-      accDetails.forEach((c) => {
-        accMap[c.idCustomer] = c;
-      });
-
-      pawningCustomers.forEach((pc) => {
-        if (pc.accountCenterCusId && accMap[pc.accountCenterCusId]) {
-          customerMap[pc.idCustomer] = accMap[pc.accountCenterCusId];
+    // Build accMap from existing matchingCustomers API response using isPawningUserId
+    if (matchingCustomers && matchingCustomers.data) {
+      matchingCustomers.data.forEach((c) => {
+        if (c.isPawningUserId) {
+          accMap[c.isPawningUserId] = {
+            Full_Name: c.Full_Name || "Unknown",
+            Nic: c.New_NIC || c.Old_NIC || "",
+          };
         }
       });
     }
 
+    // Identify which customers from the tickets list are missing from our accMap
+    const missingCustomerIds = uniqueCustomerIds.filter((id) => !accMap[id]);
+
+    if (missingCustomerIds.length > 0) {
+      // Fetch data for missing customers using their idCustomer (which matches isPawningUserId in account center)
+      const missingPromises = missingCustomerIds.map((id) =>
+        subsystemApi.searchCustomerByTerm(
+          String(id),
+          req.companyId,
+          req.branchId,
+          req.accessToken,
+        ),
+      );
+
+      const additionalResults = await Promise.all(missingPromises);
+      additionalResults.forEach((res) => {
+        if (res && res.data) {
+          res.data.forEach((c) => {
+            if (c.isPawningUserId) {
+              accMap[c.isPawningUserId] = {
+                Full_Name: c.Full_Name || "Unknown",
+                Nic: c.New_NIC || c.Old_NIC || "",
+              };
+            }
+          });
+        }
+      });
+    }
+
+    uniqueCustomerIds.forEach((id) => {
+      if (accMap[id]) {
+        customerMap[id] = accMap[id];
+      }
+    });
+
     // Step 4: Format Response
     const result = tickets.map((t) => {
       const cus = customerMap[t.Customer_idCustomer] || {};
-      const firstName = cus.First_Name || "";
-      const lastName = cus.Last_Name || "";
-      const fullName =
-        firstName && lastName
-          ? `${firstName} ${lastName}`
-          : firstName || lastName || "Unknown";
 
       return {
         idPawning_Ticket: t.idPawning_Ticket,
         Ticket_No: t.Ticket_No,
-        Full_name: fullName,
+        Full_name: cus.Full_Name || "Unknown",
         NIC: cus.Nic || "",
       };
     });
@@ -168,13 +186,14 @@ export const getTicketDataById = async (req, res, next) => {
       [ticketData[0].idPawning_Ticket],
     );
 
-    // Fetch user name from pool2 if comment exists
+    // Fetch user name from account center
     if (lastCommentData.length > 0 && lastCommentData[0].User_idUser) {
-      const [commentUser] = await pool2.query(
-        "SELECT full_name FROM user WHERE idUser = ?",
+      const commentUserData = await subsystemApi.userNames(
         [lastCommentData[0].User_idUser],
+        req.accessToken,
       );
-      lastCommentData[0].Full_name = commentUser[0]?.full_name || null;
+      lastCommentData[0].Full_name =
+        commentUserData.users?.[0]?.full_name || "Unknown Officer";
     }
 
     ticketData[0].lastComment = lastCommentData[0] || null;
@@ -187,18 +206,19 @@ export const getTicketDataById = async (req, res, next) => {
 
     ticketData[0].productName = productData[0].Name || "Unknown Product"; // attach product name to ticket data
 
-    // get the officer name for the ticket from pool2 (user table is in pool2)
-    const [officerData] = await pool2.query(
-      "SELECT full_name FROM user WHERE idUser = ?",
+    // get the officer name for the ticket from account center
+    const officerData = await subsystemApi.userNames(
       [ticketData[0].User_idUser],
+      req.accessToken,
     );
-    ticketData[0].officerName = officerData[0]?.full_name || "Unknown Officer"; // attach officer name to ticket data
+    ticketData[0].officerName =
+      officerData.users?.[0]?.full_name || "Unknown Officer";
     delete ticketData[0].User_idUser; // remove User_idUser from ticket data
 
     // fetch customer data for the ticket
     // First get accountCenterCusId from pawning DB
     const [pawningCustomer] = await pool.query(
-      "SELECT idCustomer, accountCenterCusId FROM customer WHERE idCustomer = ?",
+      "SELECT idCustomer, accountCenterCusId,Behaviour_Status FROM customer WHERE idCustomer = ?",
       [ticketData[0].Customer_idCustomer],
     );
 
@@ -214,48 +234,38 @@ export const getTicketDataById = async (req, res, next) => {
 
     // Fetch customer details from Account Center (pool2)
     // Schema: First_Name, Last_Name, Nic, Contact_No, Customer_Risk_Level (No Full_name)
-    const [accCustomer] = await pool2.query(
-      "SELECT idCustomer, First_Name, Last_Name, Nic, Customer_Risk_Level, Contact_No FROM customer WHERE idCustomer = ?",
-      [pawningCustomer[0].accountCenterCusId],
+    const accCustomer = await customerApi.getCustomer(
+      pawningCustomer[0].accountCenterCusId,
+      { asipiyaSoftware: "pawning", companyId: req.companyId },
+      req.accessToken,
     );
 
     let customerDetails = {};
-    if (accCustomer.length > 0) {
-      const acc = accCustomer[0];
-      const firstName = acc.First_Name || "";
-      const lastName = acc.Last_Name || "";
-      const fullName =
-        firstName && lastName
-          ? `${firstName} ${lastName}`
-          : firstName || lastName || "Unknown";
-
+    if (accCustomer.success && accCustomer.customer) {
       customerDetails = {
-        Full_name: fullName,
-        Risk_Level: acc.Customer_Risk_Level,
-        Mobile_No: acc.Contact_No,
+        Full_name: accCustomer.customer.Full_Name || "Unknown",
+        Risk_Level: pawningCustomer[0].Behaviour_Status,
+        Mobile_No: accCustomer.customer.Contact_No_01,
+        Mobile_No2: accCustomer.customer.Contact_No_02,
       };
     } else {
       customerDetails = {
         Full_name: "Unknown",
         Risk_Level: null,
         Mobile_No: null,
+        Mobile_No2: null,
       };
     }
-
-    // Fetch customer documents from Pawning DB (pool)
-    const [customerDocs] = await pool.query(
-      "SELECT Document_Name, Path FROM customer_documents WHERE Customer_idCustomer = ?",
-      [ticketData[0].Customer_idCustomer],
-    );
 
     const customer = {
       idCustomer: pawningCustomer[0].idCustomer,
       Full_name: customerDetails.Full_name,
       Risk_Level: customerDetails.Risk_Level,
       Mobile_No: customerDetails.Mobile_No,
-      documents: customerDocs.map((r) => ({
-        Document_Name: r.Document_Name,
-        Path: r.Path,
+      Mobile_No2: customerDetails.Mobile_No2,
+      documents: accCustomer.customer.documents.map((r) => ({
+        Document_Name: r.name,
+        Path: r.file,
       })),
     };
     // fetch customer ative,inactive and overdue ticket counts and attach them to customer data
@@ -446,7 +456,6 @@ export const getTicketDataById = async (req, res, next) => {
       return isNaN(n) ? 0 : n;
     }
 
-    console.log(ticketCharges);
     let minimumRenewalAmount =
       safeParse(ticketCharges[0].Interest_Balance) +
       safeParse(ticketCharges[0].Service_Charge_Balance) +
@@ -644,7 +653,6 @@ export const createTicketAdditionalCharge = async (req, res, next) => {
 // create the part payment for a ticket
 export const createPaymentForTicket = async (req, res, next) => {
   let connection;
-  let connection2;
   try {
     const ticketId = req.params.id || req.params.ticketId;
     const { paymentAmount, toAccountId } = req.body;
@@ -661,41 +669,23 @@ export const createPaymentForTicket = async (req, res, next) => {
 
     // Get connections from both pools
     connection = await pool.getConnection();
-    connection2 = await pool2.getConnection();
 
     // Start transactions on both connections
     await connection.beginTransaction();
-    await connection2.beginTransaction();
 
     try {
-      // validate toAccountId exists in the accounts table (pool2)
-      const [accountData] = await connection2.query(
-        "SELECT * FROM accounting_accounts WHERE idAccounting_Accounts = ?",
-        [toAccountId],
-      );
-
-      if (accountData.length === 0) {
-        await connection.rollback();
-        await connection2.rollback();
-        connection.release();
-        connection2.release();
-        return next(errorHandler(400, "Invalid To Account ID"));
-      }
-
-      // check if the ticket exists and belongs to the branch (pool)
+      // check if the ticket exists and belongs to the branch
       const [existingTicket] = await connection.query(
-        "SELECT Interest_apply_on,Maturity_date,Date_Time,Ticket_No FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+        "SELECT Interest_apply_on,Maturity_date,Date_Time,Ticket_No,Customer_idCustomer FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
         [ticketId, req.branchId],
       );
       if (existingTicket.length === 0) {
         await connection.rollback();
-        await connection2.rollback();
         connection.release();
-        connection2.release();
         return next(errorHandler(404, "No ticket found for the given ID"));
       }
 
-      // get the lastest ticket log entry for the ticket (pool)
+      // get the lastest ticket log entry for the ticket
       const [ticketLog] = await connection.query(
         "SELECT * FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? ORDER BY idTicket_Log DESC LIMIT 1",
         [ticketId],
@@ -703,9 +693,8 @@ export const createPaymentForTicket = async (req, res, next) => {
 
       if (ticketLog.length === 0) {
         await connection.rollback();
-        await connection2.rollback();
+
         connection.release();
-        connection2.release();
         return next(
           errorHandler(500, "No ticket log found for the given ticket"),
         );
@@ -717,7 +706,7 @@ export const createPaymentForTicket = async (req, res, next) => {
       const timeDiff = Math.abs(today - ticketDate);
       const dayCount = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
 
-      // Insert into payment table (pool)
+      // Insert into payment table
       const [ticketPaymentResult] = await connection.query(
         "INSERT INTO payment(Date_time,Description,Ticket_no,Amount,User,Ticket_Date,Maturity_Date,Day_Count,Type) VALUES(NOW(),?,?,?,?,?,?,?,?)",
         [
@@ -798,13 +787,38 @@ export const createPaymentForTicket = async (req, res, next) => {
 
       // Total Balance
       const Total_Balance =
-        Interest_Balance +
-        Service_Charge_Balance +
-        Late_Charges_Balance +
-        Aditional_Charge_Balance +
-        Advance_Balance;
+        parseFloat(ticketLog[0].Total_Balance || 0) -
+        parseFloat(paymentAmount || 0);
 
-      // Insert ticket log record (pool)
+      const data = {
+        paymentType: "part",
+        toAccountId: toAccountId,
+        amount: paymentAmount,
+        paidAdvance: paidAdvance,
+        paidInterest: paidInterest,
+        paidLateCharges: paidLateCharges,
+        paidServiceCharge: paidServiceCharge,
+        paidAdditionalCharges: paidAdditionalCharges,
+        ticketNo: existingTicket[0].Ticket_No,
+        userId: req.userId,
+        companyId: req.companyId,
+        branchId: req.branchId,
+        sourceId: ticketId,
+        sourceType: "pawning",
+        customerId: existingTicket[0].Customer_idCustomer,
+      };
+
+      try {
+        const result = await pawningPaymentsApi.ticketPaymentsDoubleEntries(
+          data,
+          req.accessToken,
+        );
+        // console.log(result, "result");
+      } catch (error) {
+        return next(errorHandler(500, "Failed to create ticket payment"));
+      }
+
+      // Insert ticket log record
       const [logResult] = await connection.query(
         "INSERT INTO ticket_log(Pawning_Ticket_idPawning_Ticket,Date_Time,Type,Description,Amount,Interest_Balance,Service_Charge_Balance,Late_Charges_Balance,Aditional_Charge_Balance,Advance_Balance,Total_Balance,User_idUser,Type_Id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [
@@ -828,7 +842,7 @@ export const createPaymentForTicket = async (req, res, next) => {
         throw errorHandler(500, "Failed to update ticket log");
       }
 
-      // Update payment record (pool)
+      // Update payment record
       const [updatePaymentResult] = await connection.query(
         "UPDATE payment SET Interest_Payment = ?, Service_Charge_Payment = ?, Late_Charges_Payment = ?, Other_Charges_Payment = ?, Advance_Payment = ? WHERE id = ?",
         [
@@ -845,132 +859,9 @@ export const createPaymentForTicket = async (req, res, next) => {
         throw errorHandler(500, "Failed to update payment details");
       }
 
-      // Helper to credit/debit accounting accounts (using connection2 for pool2)
-      const creditAccount = async ({
-        accountType,
-        group,
-        amount,
-        description,
-        contraAccountId,
-        isAssetDecrease = false,
-      }) => {
-        if (!amount || amount <= 0) return;
-        console.log(accountType, group, req.branchId);
-        const [accountRows] = await connection2.query(
-          "SELECT idAccounting_Accounts, Account_Balance FROM accounting_accounts WHERE Account_Type = ? AND Group_Of_Type = ? AND Branch_idBranch = ? And Account_Name = ? LIMIT 1",
-          ["System Default", group, req.branchId, accountType],
-        );
-        if (accountRows.length === 0) {
-          throw errorHandler(500, `${accountType} account not found`);
-        }
-        const accountId = accountRows[0].idAccounting_Accounts;
-        const currentBal = parseFloat(accountRows[0].Account_Balance) || 0;
-        const newBal = isAssetDecrease
-          ? currentBal - amount
-          : currentBal + amount;
-
-        await connection2.query(
-          "UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ?",
-          [newBal, accountId],
-        );
-
-        const [logInsert] = await connection2.query(
-          "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts, Date_Time, Type, Description, Debit, Credit, Balance, Contra_Account, User_idUser) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [
-            accountId,
-            new Date(),
-            "Ticket Part Payment",
-            description,
-            isAssetDecrease ? 0 : amount,
-            isAssetDecrease ? amount : 0,
-            newBal,
-            contraAccountId,
-            req.userId,
-          ],
-        );
-
-        if (logInsert.affectedRows === 0) {
-          throw errorHandler(
-            500,
-            `Failed to add entry to ${accountType} account`,
-          );
-        }
-      };
-
-      // Update the balance of the toAccountId (pool2)
-      let currentBalance = parseFloat(accountData[0].Account_Balance) || 0;
-      currentBalance += parseFloat(paymentAmount);
-
-      await connection2.query(
-        "UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ?",
-        [currentBalance, toAccountId],
-      );
-
-      await connection2.query(
-        "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts,Date_Time,Type,Description,Debit,Credit,Balance,Contra_Account,User_idUser) VALUES (?,?,?,?,?,?,?,?,?)",
-        [
-          toAccountId,
-          new Date(),
-          "Ticket Part Payment",
-          `Customer Part Payment (Ticket No: ${existingTicket[0].Ticket_No})`,
-          paymentAmount,
-          0,
-          currentBalance,
-          null,
-          req.userId,
-        ],
-      );
-
-      // Credit Pawn Loan Receivable (pool2)
-      await creditAccount({
-        accountType: "Pawn Loan Receivable",
-        group: "Assets",
-        amount: paidAdvance,
-        description: `Customer Part Payment (Ticket No: ${existingTicket[0].Ticket_No})`,
-        contraAccountId: toAccountId,
-        isAssetDecrease: true,
-      });
-
-      // Credit Pawning Interest Revenue (pool2)
-      await creditAccount({
-        accountType: "Pawning Interest Revenue",
-        group: "Revenue",
-        amount: paidInterest,
-        description: `Customer Part Payment (Ticket No: ${existingTicket[0].Ticket_No}) Interest Payment`,
-        contraAccountId: toAccountId,
-      });
-
-      // Credit Penalty / Overdue Charges Revenue (pool2)
-      await creditAccount({
-        accountType: "Penalty / Overdue Charges Revenue",
-        group: "Revenue",
-        amount: paidLateCharges,
-        description: `Customer Part Payment (Ticket No: ${existingTicket[0].Ticket_No}) Late Charges Payment`,
-        contraAccountId: toAccountId,
-      });
-
-      // Credit Pawn Service Charge / Handling Fee Revenue (pool2)
-      await creditAccount({
-        accountType: "Pawn Service Charge / Handling Fee Revenue",
-        group: "Revenue",
-        amount: paidServiceCharge,
-        description: `Customer Part Payment (Ticket No: ${existingTicket[0].Ticket_No}) Service Charge Payment`,
-        contraAccountId: toAccountId,
-      });
-
-      await creditAccount({
-        accountType: "Pawn Service Charge / Handling Fee Revenue",
-        group: "Revenue",
-        amount: paidAdditionalCharges,
-        description: `Customer Part Payment (Ticket No: ${existingTicket[0].Ticket_No}) Additional Charges Payment`,
-        contraAccountId: toAccountId,
-      });
-
       // Commit both transactions
       await connection.commit();
-      await connection2.commit();
       connection.release();
-      connection2.release();
 
       res.status(201).json({
         success: true,
@@ -978,9 +869,7 @@ export const createPaymentForTicket = async (req, res, next) => {
       });
     } catch (innerError) {
       await connection.rollback();
-      await connection2.rollback();
       connection.release();
-      connection2.release();
       console.error("Error creating part payment for ticket:", innerError);
       return next(errorHandler(500, "Internal Server Error"));
     }
@@ -988,10 +877,6 @@ export const createPaymentForTicket = async (req, res, next) => {
     if (connection) {
       await connection.rollback();
       connection.release();
-    }
-    if (connection2) {
-      await connection2.rollback();
-      connection2.release();
     }
     console.error("Error creating part payment for ticket:", error);
     return next(errorHandler(500, "Internal Server Error"));
@@ -1001,7 +886,6 @@ export const createPaymentForTicket = async (req, res, next) => {
 // make a payment for ticket renewal
 export const createTicketRenewalPayment = async (req, res, next) => {
   let connection;
-  let connection2;
   try {
     const ticketId = req.params.id || req.params.ticketId;
     const { paymentAmount, toAccountId } = req.body;
@@ -1018,41 +902,23 @@ export const createTicketRenewalPayment = async (req, res, next) => {
 
     // Get connections from both pools
     connection = await pool.getConnection();
-    connection2 = await pool2.getConnection();
 
     // Start transactions on both connections
     await connection.beginTransaction();
-    await connection2.beginTransaction();
 
     try {
-      // validate toAccountId exists in the accounts table (pool2)
-      const [accountData] = await connection2.query(
-        "SELECT * FROM accounting_accounts WHERE idAccounting_Accounts = ?",
-        [toAccountId],
-      );
-
-      if (accountData.length === 0) {
-        await connection.rollback();
-        await connection2.rollback();
-        connection.release();
-        connection2.release();
-        return next(errorHandler(400, "Invalid To Account ID"));
-      }
-
-      // check if the ticket exists and belongs to the branch (pool)
+      // check if the ticket exists and belongs to the branch
       const [existingTicket] = await connection.query(
         "SELECT Interest_apply_on,Maturity_date,Date_Time,Ticket_No,Period_Type,Period FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
         [ticketId, req.branchId],
       );
       if (existingTicket.length === 0) {
         await connection.rollback();
-        await connection2.rollback();
         connection.release();
-        connection2.release();
         return next(errorHandler(404, "No ticket found for the given ID"));
       }
 
-      // get the lastest ticket log entry for the ticket (pool)
+      // get the lastest ticket log entry for the ticket
       const [ticketLog] = await connection.query(
         "SELECT * FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? ORDER BY idTicket_Log DESC LIMIT 1",
         [ticketId],
@@ -1060,9 +926,7 @@ export const createTicketRenewalPayment = async (req, res, next) => {
 
       if (ticketLog.length === 0) {
         await connection.rollback();
-        await connection2.rollback();
         connection.release();
-        connection2.release();
         return next(
           errorHandler(500, "No ticket log found for the given ticket"),
         );
@@ -1077,9 +941,7 @@ export const createTicketRenewalPayment = async (req, res, next) => {
 
       if (paymentAmount < otherChargesTotal) {
         await connection.rollback();
-        await connection2.rollback();
         connection.release();
-        connection2.release();
         return next(
           errorHandler(
             400,
@@ -1113,7 +975,7 @@ export const createTicketRenewalPayment = async (req, res, next) => {
         );
       }
 
-      // update the ticket's maturity date and Status to active (1) with grant date to today (pool)
+      // update the ticket's maturity date and Status to active (1) with grant date to today
       const [updateMaturityResult] = await connection.query(
         "UPDATE pawning_ticket SET Maturity_date = ? , Status = '1',Date_Time = ?, Print_Status = '0' WHERE idPawning_Ticket = ?",
         [newMaturityDate, new Date(), ticketId],
@@ -1122,33 +984,6 @@ export const createTicketRenewalPayment = async (req, res, next) => {
       if (updateMaturityResult.affectedRows === 0) {
         throw errorHandler(500, "Failed to update ticket maturity date");
       }
-
-      // get the day count by from today date to ticket Date_Time
-      const today = new Date();
-      const ticketDate = new Date(existingTicket[0].Date_Time);
-      const timeDiff = Math.abs(today - ticketDate);
-      const dayCount = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
-
-      // Insert into payment table (pool)
-      const [ticketPaymentResult] = await connection.query(
-        "INSERT INTO payment(Date_time,Description,Ticket_no,Amount,User,Ticket_Date,Maturity_Date,Day_Count,Type) VALUES(NOW(),?,?,?,?,?,?,?,?)",
-        [
-          `Customer Payment(Ticket No:${existingTicket[0].Ticket_No})`,
-          existingTicket[0].Ticket_No,
-          paymentAmount,
-          req.userId,
-          existingTicket[0].Date_Time,
-          new Date(),
-          dayCount,
-          "RENEWAL PAYMENT",
-        ],
-      );
-
-      if (ticketPaymentResult.affectedRows === 0) {
-        throw errorHandler(500, "Failed to create renewal payment");
-      }
-
-      const createdTicketPaymentId = ticketPaymentResult.insertId;
 
       // Calculate payment distribution
       let remainingPayment = paymentAmount;
@@ -1210,13 +1045,67 @@ export const createTicketRenewalPayment = async (req, res, next) => {
 
       // Total Balance
       const Total_Balance =
-        Interest_Balance +
-        Service_Charge_Balance +
-        Late_Charges_Balance +
-        Aditional_Charge_Balance +
-        Advance_Balance;
+        parseFloat(ticketLog[0].Total_Balance || 0) -
+        parseFloat(paymentAmount || 0);
 
-      // Insert ticket log record (pool)
+      const data = {
+        paymentType: "renewal",
+        toAccountId: toAccountId,
+        amount: paymentAmount,
+        paidAdvance: paidAdvance,
+        paidInterest: paidInterest,
+        paidLateCharges: paidLateCharges,
+        paidServiceCharge: paidServiceCharge,
+        paidAdditionalCharges: paidAdditionalCharges,
+        ticketNo: existingTicket[0].Ticket_No,
+        userId: req.userId,
+        companyId: req.companyId,
+        branchId: req.branchId,
+        sourceId: ticketId,
+        sourceType: "pawning",
+        customerId: existingTicket[0].Customer_idCustomer,
+      };
+
+      try {
+        const result = await pawningPaymentsApi.ticketPaymentsDoubleEntries(
+          data,
+          req.accessToken,
+        );
+        console.log(result, "result");
+      } catch (error) {
+        return next(
+          errorHandler(500, "Failed to create ticket renewal payment"),
+        );
+      }
+
+      // get the day count by from today date to ticket Date_Time
+      const today = new Date();
+      const ticketDate = new Date(existingTicket[0].Date_Time);
+      const timeDiff = Math.abs(today - ticketDate);
+      const dayCount = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
+
+      // Insert into payment table (pool)
+      const [ticketPaymentResult] = await connection.query(
+        "INSERT INTO payment(Date_time,Description,Ticket_no,Amount,User,Ticket_Date,Maturity_Date,Day_Count,Type) VALUES(NOW(),?,?,?,?,?,?,?,?)",
+        [
+          `Customer Payment(Ticket No:${existingTicket[0].Ticket_No})`,
+          existingTicket[0].Ticket_No,
+          paymentAmount,
+          req.userId,
+          existingTicket[0].Date_Time,
+          new Date(),
+          dayCount,
+          "RENEWAL PAYMENT",
+        ],
+      );
+
+      if (ticketPaymentResult.affectedRows === 0) {
+        throw errorHandler(500, "Failed to create renewal payment");
+      }
+
+      const createdTicketPaymentId = ticketPaymentResult.insertId;
+
+      // Insert ticket log record
       const [logResult] = await connection.query(
         "INSERT INTO ticket_log(Pawning_Ticket_idPawning_Ticket,Date_Time,Type,Description,Amount,Interest_Balance,Service_Charge_Balance,Late_Charges_Balance,Aditional_Charge_Balance,Advance_Balance,Total_Balance,User_idUser,Type_Id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [
@@ -1240,7 +1129,7 @@ export const createTicketRenewalPayment = async (req, res, next) => {
         throw errorHandler(500, "Failed to update ticket log");
       }
 
-      // Update payment record (pool)
+      // Update payment record
       const [updatePaymentResult] = await connection.query(
         "UPDATE payment SET Interest_Payment = ?, Service_Charge_Payment = ?, Late_Charges_Payment = ?, Other_Charges_Payment = ?, Advance_Payment = ? WHERE id = ?",
         [
@@ -1257,44 +1146,9 @@ export const createTicketRenewalPayment = async (req, res, next) => {
         throw errorHandler(500, "Failed to update payment details");
       }
 
-      // Update the balance of the toAccountId (pool2)
-      let currentBalance = parseFloat(accountData[0].Account_Balance) || 0;
-      currentBalance += parseFloat(paymentAmount);
-
-      const [updateAccountResult] = await connection2.query(
-        "UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ?",
-        [currentBalance, toAccountId],
-      );
-
-      if (updateAccountResult.affectedRows === 0) {
-        throw errorHandler(500, "Failed to update account balance");
-      }
-
-      // Add a debit entry to accounting_accounts_log table (pool2)
-      const [accountLogResult] = await connection2.query(
-        "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts,Date_Time,Type,Description,Debit,Credit,Balance,Contra_Account,User_idUser) VALUES (?,?,?,?,?,?,?,?,?)",
-        [
-          toAccountId,
-          new Date(),
-          "Ticket Renewal Payment",
-          `Customer Renewal Payment (Ticket No: ${existingTicket[0].Ticket_No})`,
-          paymentAmount,
-          0,
-          currentBalance,
-          null,
-          req.userId,
-        ],
-      );
-
-      if (accountLogResult.affectedRows === 0) {
-        throw errorHandler(500, "Failed to create account log");
-      }
-
       // Commit both transactions
       await connection.commit();
-      await connection2.commit();
       connection.release();
-      connection2.release();
 
       res.status(201).json({
         success: true,
@@ -1302,9 +1156,7 @@ export const createTicketRenewalPayment = async (req, res, next) => {
       });
     } catch (innerError) {
       await connection.rollback();
-      await connection2.rollback();
       connection.release();
-      connection2.release();
       console.error("Error creating renewal payment for ticket:", innerError);
       return next(errorHandler(500, "Internal Server Error"));
     }
@@ -1312,10 +1164,6 @@ export const createTicketRenewalPayment = async (req, res, next) => {
     if (connection) {
       await connection.rollback();
       connection.release();
-    }
-    if (connection2) {
-      await connection2.rollback();
-      connection2.release();
     }
     console.error("Error creating renewal payment for ticket:", error);
     return next(errorHandler(500, "Internal Server Error"));
@@ -1325,7 +1173,6 @@ export const createTicketRenewalPayment = async (req, res, next) => {
 // make ticket settlement payment
 export const createTicketSettlementPayment = async (req, res, next) => {
   let connection;
-  let connection2;
   try {
     const ticketId = req.params.id || req.params.ticketId;
     const { paymentAmount, toAccountId } = req.body;
@@ -1344,51 +1191,31 @@ export const createTicketSettlementPayment = async (req, res, next) => {
 
     // Get connections from both pools
     connection = await pool.getConnection();
-    connection2 = await pool2.getConnection();
 
     // Start transactions on both connections
     await connection.beginTransaction();
-    await connection2.beginTransaction();
 
     try {
-      // validate toAccountId exists in the accounts table (pool2)
-      const [accountData] = await connection2.query(
-        "SELECT * FROM accounting_accounts WHERE idAccounting_Accounts = ?",
-        [toAccountId],
-      );
-
-      if (accountData.length === 0) {
-        await connection.rollback();
-        await connection2.rollback();
-        connection.release();
-        connection2.release();
-        return next(errorHandler(400, "Invalid To Account ID"));
-      }
-
-      // check if the ticket exists and belongs to the branch (pool)
+      // check if the ticket exists and belongs to the branch
       const [existingTicket] = await connection.query(
-        "SELECT Interest_apply_on,Maturity_date,Date_Time,Ticket_No,Status,Pawning_Product_idPawning_Product FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+        "SELECT Interest_apply_on,Maturity_date,Date_Time,Ticket_No,Status,Pawning_Product_idPawning_Product,Customer_idCustomer FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
         [ticketId, req.branchId],
       );
 
       if (existingTicket.length === 0) {
         await connection.rollback();
-        await connection2.rollback();
         connection.release();
-        connection2.release();
         return next(errorHandler(404, "No ticket found for the given ID"));
       }
 
       // check if ticket is already settled
       if (existingTicket[0].Status === "2") {
         await connection.rollback();
-        await connection2.rollback();
         connection.release();
-        connection2.release();
         return next(errorHandler(400, "Ticket is already settled"));
       }
 
-      // get the latest ticket log entry for the ticket (pool)
+      // get the latest ticket log entry for the ticket
       const [ticketLog] = await connection.query(
         "SELECT * FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? ORDER BY idTicket_Log DESC LIMIT 1",
         [ticketId],
@@ -1396,15 +1223,13 @@ export const createTicketSettlementPayment = async (req, res, next) => {
 
       if (ticketLog.length === 0) {
         await connection.rollback();
-        await connection2.rollback();
         connection.release();
-        connection2.release();
         return next(
           errorHandler(500, "No ticket log found for the given ticket"),
         );
       }
 
-      // get product data for early settlement charge calculation (pool)
+      // get product data for early settlement charge calculation
       const [productData] = await connection.query(
         "SELECT Early_Settlement_Charge,Early_Settlement_Charge_Create_As,Early_Settlement_Charge_Value_type,Early_Settlement_Charge_Value,Interest_Method FROM pawning_product WHERE idPawning_Product = ?",
         [existingTicket[0].Pawning_Product_idPawning_Product],
@@ -1444,9 +1269,7 @@ export const createTicketSettlementPayment = async (req, res, next) => {
       // validate payment amount covers total settlement
       if (paymentAmount < totalBalanceRequired) {
         await connection.rollback();
-        await connection2.rollback();
         connection.release();
-        connection2.release();
         return next(
           errorHandler(
             400,
@@ -1462,27 +1285,6 @@ export const createTicketSettlementPayment = async (req, res, next) => {
       const ticketDate = new Date(existingTicket[0].Date_Time);
       const timeDiff = Math.abs(today - ticketDate);
       const dayCount = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
-
-      // insert into the payment table (pool)
-      const [ticketPaymentResult] = await connection.query(
-        "INSERT INTO payment(Date_time,Description,Ticket_no,Amount,User,Ticket_Date,Maturity_Date,Day_Count,Type) VALUES(NOW(),?,?,?,?,?,?,?,?)",
-        [
-          `Customer Settlement Payment(Ticket No:${existingTicket[0].Ticket_No})`,
-          existingTicket[0].Ticket_No,
-          paymentAmount,
-          req.userId,
-          existingTicket[0].Date_Time,
-          existingTicket[0].Maturity_date,
-          dayCount,
-          "SETTLEMENT PAYMENT",
-        ],
-      );
-
-      if (ticketPaymentResult.affectedRows === 0) {
-        throw errorHandler(500, "Failed to create settlement payment");
-      }
-
-      const createdTicketPaymentId = ticketPaymentResult.insertId;
 
       // calculate payment allocation
       let remainingPayment = paymentAmount;
@@ -1543,7 +1345,65 @@ export const createTicketSettlementPayment = async (req, res, next) => {
       paidEarlySettlement = result.paid;
       remainingPayment = result.remaining;
 
-      // insert settlement record into ticket log table (pool)
+      // call acc center double entries api
+
+      const data = {
+        paymentType: "settlement",
+        toAccountId: toAccountId,
+        amount: paymentAmount,
+        paidAdvance: paidAdvance,
+        paidInterest: paidInterest,
+        paidLateCharges: paidLateCharges,
+        paidServiceCharge: paidServiceCharge,
+        paidAdditionalCharges: paidAdditionalCharges,
+        ticketNo: existingTicket[0].Ticket_No,
+        userId: req.userId,
+        companyId: req.companyId,
+        branchId: req.branchId,
+        sourceId: ticketId,
+        sourceType: "pawning",
+        customerId: existingTicket[0].Customer_idCustomer,
+      };
+
+      try {
+        const result = await pawningPaymentsApi.ticketPaymentsDoubleEntries(
+          data,
+          req.accessToken,
+        );
+        console.log(result, "result");
+      } catch (error) {
+        return next(
+          errorHandler(500, "Failed to create ticket settlement payment"),
+        );
+      }
+
+      // insert into the payment table (pool)
+      const [ticketPaymentResult] = await connection.query(
+        "INSERT INTO payment(Date_time,Description,Ticket_no,Amount,User,Ticket_Date,Maturity_Date,Day_Count,Type) VALUES(NOW(),?,?,?,?,?,?,?,?)",
+        [
+          `Customer Settlement Payment(Ticket No:${existingTicket[0].Ticket_No})`,
+          existingTicket[0].Ticket_No,
+          paymentAmount,
+          req.userId,
+          existingTicket[0].Date_Time,
+          existingTicket[0].Maturity_date,
+          dayCount,
+          "SETTLEMENT PAYMENT",
+        ],
+      );
+
+      if (ticketPaymentResult.affectedRows === 0) {
+        throw errorHandler(500, "Failed to create settlement payment");
+      }
+
+      const createdTicketPaymentId = ticketPaymentResult.insertId;
+
+      // Calculate Total Balance logic for Settlement
+      const Total_Balance =
+        parseFloat(ticketLog[0].Total_Balance || 0) -
+        parseFloat(paymentAmount || 0);
+
+      // insert settlement record into ticket log table
       const [logResult] = await connection.query(
         "INSERT INTO ticket_log(Pawning_Ticket_idPawning_Ticket,Date_Time,Type,Description,Amount,Interest_Balance,Service_Charge_Balance,Late_Charges_Balance,Aditional_Charge_Balance,Advance_Balance,Total_Balance,User_idUser,Type_Id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [
@@ -1557,7 +1417,7 @@ export const createTicketSettlementPayment = async (req, res, next) => {
           0,
           0,
           0,
-          0,
+          Total_Balance,
           req.userId,
           createdTicketPaymentId,
         ],
@@ -1567,7 +1427,7 @@ export const createTicketSettlementPayment = async (req, res, next) => {
         throw errorHandler(500, "Failed to update ticket log");
       }
 
-      // update payment table with breakdown (pool)
+      // update payment table with breakdown
       const [updatePaymentResult] = await connection.query(
         "UPDATE payment SET Interest_Payment = ?, Service_Charge_Payment = ?, Late_Charges_Payment = ?, Other_Charges_Payment = ?, Advance_Payment = ? WHERE id = ?",
         [
@@ -1584,7 +1444,7 @@ export const createTicketSettlementPayment = async (req, res, next) => {
         throw errorHandler(500, "Failed to update payment details");
       }
 
-      // update ticket status to settled (pool)
+      // update ticket status to settled
       const [updateTicketResult] = await connection.query(
         "UPDATE pawning_ticket SET Status = '2' WHERE idPawning_Ticket = ?",
         [ticketId],
@@ -1594,44 +1454,9 @@ export const createTicketSettlementPayment = async (req, res, next) => {
         throw errorHandler(500, "Failed to update ticket status");
       }
 
-      // update the balance of the toAccountId (pool2)
-      let currentBalance = parseFloat(accountData[0].Account_Balance) || 0;
-      currentBalance += parseFloat(paymentAmount);
-
-      const [updateAccountResult] = await connection2.query(
-        "UPDATE accounting_accounts SET Account_Balance = ? WHERE idAccounting_Accounts = ?",
-        [currentBalance, toAccountId],
-      );
-
-      if (updateAccountResult.affectedRows === 0) {
-        throw errorHandler(500, "Failed to update account balance");
-      }
-
-      // add a debit entry to accounting_accounts_log table (pool2)
-      const [accountLogResult] = await connection2.query(
-        "INSERT INTO accounting_accounts_log (Accounting_Accounts_idAccounting_Accounts,Date_Time,Type,Description,Debit,Credit,Balance,Contra_Account,User_idUser) VALUES (?,?,?,?,?,?,?,?,?)",
-        [
-          toAccountId,
-          new Date(),
-          "Ticket Settlement Payment",
-          `Customer Settlement Payment (Ticket No: ${existingTicket[0].Ticket_No})`,
-          paymentAmount,
-          0,
-          currentBalance,
-          null,
-          req.userId,
-        ],
-      );
-
-      if (accountLogResult.affectedRows === 0) {
-        throw errorHandler(500, "Failed to create account log");
-      }
-
-      // Commit both transactions
+      // Commit
       await connection.commit();
-      await connection2.commit();
       connection.release();
-      connection2.release();
 
       res.status(201).json({
         success: true,
@@ -1650,9 +1475,7 @@ export const createTicketSettlementPayment = async (req, res, next) => {
       });
     } catch (innerError) {
       await connection.rollback();
-      await connection2.rollback();
       connection.release();
-      connection2.release();
       console.error(
         "Error creating settlement payment for ticket:",
         innerError,
@@ -1663,10 +1486,6 @@ export const createTicketSettlementPayment = async (req, res, next) => {
     if (connection) {
       await connection.rollback();
       connection.release();
-    }
-    if (connection2) {
-      await connection2.rollback();
-      connection2.release();
     }
     console.error("Error creating settlement payment for ticket:", error);
     return next(errorHandler(500, "Internal Server Error"));

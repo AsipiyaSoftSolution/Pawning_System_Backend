@@ -4677,6 +4677,7 @@ export const getApprovedTicketsForDisbursement = async (req, res, next) => {
         pt.Service_charge_Amount   AS AdditionalCharges,
         pt.Customer_idCustomer,
         pt.Branch_idBranch,
+        pt.*,
         pp.Name                    AS Product
       FROM pawning_ticket pt
       LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product
@@ -4755,6 +4756,111 @@ export const getApprovedTicketsForDisbursement = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Error in getApprovedTicketsForDisbursement:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// deduct the pawning advance from the pawning ticket
+export const deductAdvanceFromPawningTicket = async (req, res, next) => {
+  // Declare outside try so catch block can access it
+  let connection;
+  try {
+    const { pawningTicketId, deductAmout, userId, type } = req.body;
+
+    // Validate before acquiring connection to avoid leaks on bad input
+    if (!pawningTicketId) {
+      return next(errorHandler(404, "Pawning Ticket is missing"));
+    }
+    if (!deductAmout) {
+      return next(errorHandler(404, "Deduct amount is missing"));
+    }
+    if (!userId) {
+      return next(errorHandler(404, "User Id not found"));
+    }
+    if (!type) {
+      return next(errorHandler(404, "Type is not found"));
+    }
+
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    const [pawningTicketData] = await connection.query(
+      "SELECT idPawning_Ticket,Pawning_Advance_Amount FROM pawning_ticket WHERE idPawning_Ticket = ?",
+      [pawningTicketId],
+    );
+
+    if (pawningTicketData.length === 0) {
+      await connection.rollback();
+      connection.release();
+      return next(errorHandler(404, "Pawning Ticket Data not found"));
+    }
+
+    const updatedPawningTicketAdvanceBalance = parseFloat(
+      pawningTicketData[0].Pawning_Advance_Amount - deductAmout,
+    );
+
+    // update the balance of the pawning ticket
+    await connection.query(
+      "UPDATE pawning_ticket SET Pawning_Advance_Amount = ? WHERE idPawning_Ticket = ?",
+      [
+        updatedPawningTicketAdvanceBalance,
+        pawningTicketData[0].idPawning_Ticket,
+      ],
+    );
+
+    // await so errors are caught and commit doesn't race ahead
+    await markServiceChargeInTicketLog(
+      pawningTicketId,
+      type,
+      userId,
+      deductAmout,
+      true,
+      connection,
+    );
+
+    await connection.commit();
+    connection.release();
+
+    return res.status(200).json({
+      success: true,
+    });
+  } catch (error) {
+    if (connection) {
+      await connection.rollback();
+      connection.release();
+    }
+    console.log("Pawning ticket advance deduct err", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// update the ticket status after disbursement from acc center
+export const updateTicketStatusAfterLoanDisbursement = async (
+  req,
+  res,
+  next,
+) => {
+  try {
+    const { pawningTicketId } = req.body;
+    if (!pawningTicketId) {
+      return next(errorHandler(404, "Pawning Ticket Id missing"));
+    }
+
+    // update status to 1
+    const [updateResult] = await pool.query(
+      "UPDATE pawning_ticket SET Status = '1' WHERE idPawning_Ticket = ?",
+      [pawningTicketId],
+    );
+
+    if (updateResult.affectedRows === 0) {
+      return next(errorHandler(400, "Error while updating ticket status"));
+    }
+
+    return res.status(200).json({
+      success: true,
+    });
+  } catch (error) {
+    console.log("Eror in ticket status update", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

@@ -220,6 +220,9 @@ export const getTicketDataById = async (req, res, next) => {
       req.accessToken,
     );
 
+    console.log(accCustomer, "customers");
+    console.log(accCustomer.customer.documents, "documents");
+
     let customerDetails = {};
     if (accCustomer.success && accCustomer.customer) {
       customerDetails = {
@@ -237,21 +240,15 @@ export const getTicketDataById = async (req, res, next) => {
       };
     }
 
-    // Fetch customer documents from Pawning DB (pool)
-    const [customerDocs] = await pool.query(
-      "SELECT Document_Name, Path FROM customer_documents WHERE Customer_idCustomer = ?",
-      [ticketData[0].Customer_idCustomer],
-    );
-
     const customer = {
       idCustomer: pawningCustomer[0].idCustomer,
       Full_name: customerDetails.Full_name,
       Risk_Level: customerDetails.Risk_Level,
       Mobile_No: customerDetails.Mobile_No,
       Mobile_No2: customerDetails.Mobile_No2,
-      documents: customerDocs.map((r) => ({
-        Document_Name: r.Document_Name,
-        Path: r.Path,
+      documents: accCustomer.customer.documents.map((r) => ({
+        Document_Name: r.name,
+        Path: r.file,
       })),
     };
     // fetch customer ative,inactive and overdue ticket counts and attach them to customer data

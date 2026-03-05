@@ -436,7 +436,6 @@ export const getTicketDataById = async (req, res, next) => {
       return isNaN(n) ? 0 : n;
     }
 
-    console.log(ticketCharges);
     let minimumRenewalAmount =
       safeParse(ticketCharges[0].Interest_Balance) +
       safeParse(ticketCharges[0].Service_Charge_Balance) +

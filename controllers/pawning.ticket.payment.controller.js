@@ -863,6 +863,47 @@ export const createPaymentForTicket = async (req, res, next) => {
       await connection.commit();
       connection.release();
 
+      // time for get sms template for part payment and send the sms data to acc center
+      const smsTemplateData = await subsystemApi.getSMSTemplate(
+        req.branchId,
+        "Customer Part Payment",
+        req.accessToken,
+      );
+
+      if (smsTemplateData?.template && smsTemplateData.template.length > 0) {
+        const smsText = smsTemplateData.template[0].Template.replace(
+          /@Payment_Date@/g,
+          new Date().toISOString().split("T")[0],
+        )
+          .replace(/@Paid_Amount@/g, paymentAmount)
+          .replace(/@Balance_Amount@/g, Total_Balance)
+          .replace(
+            /@Maturity_Date@/g,
+            existingTicket[0].Maturity_date
+              ? new Date(existingTicket[0].Maturity_date)
+                  .toISOString()
+                  .split("T")[0]
+              : "",
+          );
+
+        // from Customer_idCustomer find the isAccCenterId
+        const [accCenterCustomer] = await pool.query(
+          "SELECT accountCenterCusId FROM customer WHERE idCustomer = ?",
+          [existingTicket[0].Customer_idCustomer],
+        );
+
+        if (accCenterCustomer.length > 0) {
+          await subsystemApi.sendSMS(
+            req.branchId,
+            smsTemplateData.template[0].SMS_Type,
+            req.accessToken,
+            accCenterCustomer[0].accountCenterCusId,
+            smsText,
+            "customer pawning ticket part payment",
+          );
+        }
+      }
+
       res.status(201).json({
         success: true,
         message: "Part payment created successfully.",

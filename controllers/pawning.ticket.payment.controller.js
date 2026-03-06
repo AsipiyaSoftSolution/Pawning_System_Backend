@@ -4,6 +4,7 @@ import { getPaginationData } from "../utils/helper.js";
 import { formatSearchPattern } from "../utils/helper.js";
 import { getCompanyBranches } from "../utils/helper.js";
 import { createPawningTicketLogOnAdditionalCharge } from "../utils/pawning.ticket.logs.js";
+import { sendPawningSmsSafely } from "../utils/smsHelper.js";
 import {
   customerApi,
   pawningPaymentsApi,
@@ -862,6 +863,25 @@ export const createPaymentForTicket = async (req, res, next) => {
       // Commit both transactions
       await connection.commit();
       connection.release();
+
+      // time for get sms template for part payment and send the sms data to acc center
+      sendPawningSmsSafely({
+        branchId: req.branchId,
+        templateName: "Customer Part Payment",
+        accessToken: req.accessToken,
+        placeholders: {
+          Payment_Date: new Date().toISOString().split("T")[0],
+          Paid_Amount: paymentAmount,
+          Balance_Amount: Total_Balance,
+          Maturity_Date: existingTicket[0].Maturity_date
+            ? new Date(existingTicket[0].Maturity_date)
+                .toISOString()
+                .split("T")[0]
+            : "",
+        },
+        customerId: existingTicket[0].Customer_idCustomer,
+        smsDescription: "customer pawning ticket part payment",
+      });
 
       res.status(201).json({
         success: true,

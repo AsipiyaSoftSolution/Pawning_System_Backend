@@ -189,6 +189,33 @@ export const subsystemApi = {
       )}&companyId=${companyId}&branchId=${branchId}`,
       accessToken,
     ),
+
+  getSMSTemplate: (branchId, templateName, accessToken) =>
+    accCenterGet(
+      `/subsystem/${branchId}/sms-templates?subSystem=pawning&templateName=${templateName}`,
+      accessToken,
+    ),
+
+  sendSMS: (
+    branchId,
+    templateName,
+    accessToken,
+    customerId,
+    smsText,
+    smsType,
+  ) =>
+    accCenterPost(
+      `/subsystem/${branchId}/send-sms`,
+      {
+        customerId,
+        smsText,
+        smsType,
+        templateName,
+        asipiyaSoftware: "pawning",
+        templateName,
+      },
+      accessToken,
+    ),
 };
 
 // Pawning Payments

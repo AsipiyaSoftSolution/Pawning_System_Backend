@@ -1170,6 +1170,23 @@ export const createTicketRenewalPayment = async (req, res, next) => {
       await connection.commit();
       connection.release();
 
+      // time for get sms template for ticket renewal and send the sms data to acc center
+      sendPawningSmsSafely({
+        branchId: req.branchId,
+        templateName: "Ticket Renewal",
+        accessToken: req.accessToken,
+        placeholders: {
+          Payment_Date: new Date().toISOString().split("T")[0],
+          Paid_Amount: paymentAmount,
+          Balance_Amount: Total_Balance,
+          Maturity_Date: newMaturityDate
+            ? new Date(newMaturityDate).toISOString().split("T")[0]
+            : "",
+        },
+        customerId: existingTicket[0].Customer_idCustomer,
+        smsDescription: "customer pawning ticket renewal payment",
+      });
+
       res.status(201).json({
         success: true,
         message: "Renewal payment created successfully.",
@@ -1477,6 +1494,25 @@ export const createTicketSettlementPayment = async (req, res, next) => {
       // Commit
       await connection.commit();
       connection.release();
+
+      // time for get sms template for ticket settlement and send the sms data to acc center
+      sendPawningSmsSafely({
+        branchId: req.branchId,
+        templateName: "Ticket Settlement",
+        accessToken: req.accessToken,
+        placeholders: {
+          Payment_Date: new Date().toISOString().split("T")[0],
+          Paid_Amount: paymentAmount,
+          Balance_Amount: Total_Balance,
+          Maturity_Date: existingTicket[0].Maturity_date
+            ? new Date(existingTicket[0].Maturity_date)
+                .toISOString()
+                .split("T")[0]
+            : "",
+        },
+        customerId: existingTicket[0].Customer_idCustomer,
+        smsDescription: "customer pawning ticket settlement payment",
+      });
 
       res.status(201).json({
         success: true,

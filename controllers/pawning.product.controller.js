@@ -540,14 +540,63 @@ async function createOnePawningProductForBranch(branchId, data, userId) {
         userId,
         new Date(),
         productId,
-        plan.stage1StartDate || 0,
-        plan.stage1EndDate || null,
+        plan.stage1StartDate !== null &&
+        plan.stage1StartDate !== undefined &&
+        plan.stage1StartTime !== ""
+          ? plan.stage1StartDate
+          : 0,
+        (plan.stage1EndDate === null ||
+          plan.stage1EndDate === "" ||
+          plan.stage1EndDate === undefined) &&
+        plan.stage1StartDate !== null &&
+        plan.stage1StartDate !== undefined &&
+        plan.stage1StartDate !== "" &&
+        (plan.stage2StartDate === null ||
+          plan.stage2StartDate === undefined ||
+          plan.stage2StartDate === "")
+          ? "To maturity date"
+          : plan.stage1EndDate === "To maturity date"
+            ? "To maturity date"
+            : plan.stage1EndDate || null,
         plan.stage2StartDate || null,
-        plan.stage2EndDate || null,
+        (plan.stage2EndDate === null ||
+          plan.stage2EndDate === "" ||
+          plan.stage2EndDate === undefined) &&
+        plan.stage2StartDate !== null &&
+        plan.stage2StartDate !== undefined &&
+        plan.stage2StartDate !== "" &&
+        (plan.stage3StartDate === null ||
+          plan.stage3StartDate === undefined ||
+          plan.stage3StartDate === "")
+          ? "To maturity date"
+          : plan.stage2EndDate === "To maturity date"
+            ? "To maturity date"
+            : plan.stage2EndDate || null,
         plan.stage3StartDate || null,
-        plan.stage3EndDate || null,
+        (plan.stage3EndDate === null ||
+          plan.stage3EndDate === "" ||
+          plan.stage3EndDate === undefined) &&
+        plan.stage3StartDate !== null &&
+        plan.stage3StartDate !== undefined &&
+        plan.stage3StartDate !== "" &&
+        (plan.stage4StartDate === null ||
+          plan.stage4StartDate === undefined ||
+          plan.stage4StartDate === "")
+          ? "To maturity date"
+          : plan.stage3EndDate === "To maturity date"
+            ? "To maturity date"
+            : plan.stage3EndDate || null,
         plan.stage4StartDate || null,
-        plan.stage4EndDate || null,
+        (plan.stage4EndDate === null ||
+          plan.stage4EndDate === "" ||
+          plan.stage4EndDate === undefined) &&
+        plan.stage4StartDate !== null &&
+        plan.stage4StartDate !== undefined &&
+        plan.stage4StartDate !== ""
+          ? "To maturity date"
+          : plan.stage4EndDate === "To maturity date"
+            ? "To maturity date"
+            : plan.stage4EndDate || null,
         parseFloat(plan.stage1Interest) || 0,
         parseFloat(plan.stage2Interest) || 0,
         parseFloat(plan.stage3Interest) || 0,
@@ -986,13 +1035,58 @@ export const updatePawningProductById = async (req, res, next) => {
           idPawning_Product,
           // Stage dates (can be null, numeric, or string for stage4)
           prepareStageValue(plan.stage1StartDate) || 0,
-          prepareStageValue(plan.stage1EndDate),
+          (plan.stage1EndDate === null ||
+            plan.stage1EndDate === "" ||
+            plan.stage1EndDate === undefined) &&
+          plan.stage1StartDate !== null &&
+          plan.stage1StartDate !== undefined &&
+          plan.stage1StartDate !== "" &&
+          (plan.stage2StartDate === null ||
+            plan.stage2StartDate === undefined ||
+            plan.stage2StartDate === "")
+            ? "To maturity date"
+            : plan.stage1EndDate === "To maturity date"
+              ? "To maturity date"
+              : prepareStageValue(plan.stage1EndDate),
           prepareStageValue(plan.stage2StartDate),
-          prepareStageValue(plan.stage2EndDate),
+          (plan.stage2EndDate === null ||
+            plan.stage2EndDate === "" ||
+            plan.stage2EndDate === undefined) &&
+          plan.stage2StartDate !== null &&
+          plan.stage2StartDate !== undefined &&
+          plan.stage2StartDate !== "" &&
+          (plan.stage3StartDate === null ||
+            plan.stage3StartDate === undefined ||
+            plan.stage3StartDate === "")
+            ? "To maturity date"
+            : plan.stage2EndDate === "To maturity date"
+              ? "To maturity date"
+              : prepareStageValue(plan.stage2EndDate),
           prepareStageValue(plan.stage3StartDate),
-          prepareStageValue(plan.stage3EndDate),
+          (plan.stage3EndDate === null ||
+            plan.stage3EndDate === "" ||
+            plan.stage3EndDate === undefined) &&
+          plan.stage3StartDate !== null &&
+          plan.stage3StartDate !== undefined &&
+          plan.stage3StartDate !== "" &&
+          (plan.stage4StartDate === null ||
+            plan.stage4StartDate === undefined ||
+            plan.stage4StartDate === "")
+            ? "To maturity date"
+            : plan.stage3EndDate === "To maturity date"
+              ? "To maturity date"
+              : prepareStageValue(plan.stage3EndDate),
           prepareStageValue(plan.stage4StartDate),
-          prepareStageValue(plan.stage4EndDate),
+          (plan.stage4EndDate === null ||
+            plan.stage4EndDate === "" ||
+            plan.stage4EndDate === undefined) &&
+          plan.stage4StartDate !== null &&
+          plan.stage4StartDate !== undefined &&
+          plan.stage4StartDate !== ""
+            ? "To maturity date"
+            : plan.stage4EndDate === "To maturity date"
+              ? "To maturity date"
+              : prepareStageValue(plan.stage4EndDate),
           // Stage interests
           parseFloat(plan.stage1Interest) || 0,
           parseFloat(plan.stage2Interest) || 0,

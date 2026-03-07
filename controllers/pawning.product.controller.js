@@ -693,7 +693,7 @@ export const updatePawningProductById = async (req, res, next) => {
   try {
     const idPawning_Product = req.params.productId || req.params.id;
     const { data } = req.body;
-    console.log(data, "data in update pawning product");
+    // console.log(data, "data in update pawning product");
 
     if (!idPawning_Product) {
       return next(errorHandler(400, "Product ID is required"));
@@ -965,7 +965,7 @@ export const updatePawningProductById = async (req, res, next) => {
           lateChargeStage4StartDate,
           lateChargeStage4EndDate,
           numberOfLateChargeStages
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           plan.periodType || null,
           parseInt(plan.minPeriod) || 0,

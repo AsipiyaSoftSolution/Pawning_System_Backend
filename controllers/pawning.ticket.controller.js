@@ -300,11 +300,8 @@ export const createPawningTicket = async (req, res, next) => {
     );
 
     if (productExists.length === 0) {
-      const error = new Error(
-        `Invalid product ID: ${data.ticketData.productId}. Product does not exist.`,
-      );
-      error.statusCode = 400;
-      throw error;
+      connection.release();
+      return next(errorHandler(404, "Product not found"));
     }
 
     // Validate that customerId exists
@@ -314,11 +311,8 @@ export const createPawningTicket = async (req, res, next) => {
     );
 
     if (customerExists.length === 0) {
-      const error = new Error(
-        `Invalid customer ID: ${data.ticketData.customerId}. Customer does not exist.`,
-      );
-      error.statusCode = 400;
-      throw error;
+      connection.release();
+      return next(errorHandler(404, "Customer not found"));
     }
 
     // check if pawning advance is less than or equal to all ticketArticles's declaredValue
@@ -327,11 +321,13 @@ export const createPawningTicket = async (req, res, next) => {
       0,
     );
     if (parseFloat(data.ticketData.pawningAdvance) > totalDeclaredValue) {
-      const error = new Error(
-        "Pawning advance cannot be greater than total declared value of articles",
+      connection.release();
+      return next(
+        errorHandler(
+          400,
+          "Pawning advance cannot be greater than total declared value of articles",
+        ),
       );
-      error.statusCode = 400;
-      throw error;
     }
 
     const [accountCenterCus] = await connection.query(

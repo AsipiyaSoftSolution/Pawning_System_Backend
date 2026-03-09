@@ -594,6 +594,7 @@ export const getTicketAdditionalChargesById = async (req, res, next) => {
 
 // create a new ticket additional charge
 export const createTicketAdditionalCharge = async (req, res, next) => {
+  let connection;
   try {
     const ticketId = req.params.id || req.params.ticketId;
     if (!ticketId) {
@@ -606,17 +607,21 @@ export const createTicketAdditionalCharge = async (req, res, next) => {
       return next(errorHandler(400, "Amount and Description is required"));
     }
 
-    const [result] = await pool.query(
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    const [result] = await connection.query(
       "INSERT INTO additional_charges (Description,Amount,Pawning_Ticket_idPawning_Ticket,Note,User_idUser,Date_Time) VALUES (?,?,?,?,?,NOW())",
       [description, amount, ticketId, note, req.userId],
     );
 
     if (result.affectedRows === 0) {
+      await connection.rollback();
       return next(errorHandler(500, "Failed to create additional charge"));
     }
 
     // send the created additional charge data as response (user is in pool2)
-    const [newCharge] = await pool.query(
+    const [newCharge] = await connection.query(
       `SELECT ac.*
        FROM additional_charges ac
       WHERE ac.idAdditional_Charges = ?`,
@@ -638,7 +643,10 @@ export const createTicketAdditionalCharge = async (req, res, next) => {
       "ADDITIONAL CHARGE",
       req.userId,
       amount,
+      connection,
     );
+
+    await connection.commit();
 
     res.status(201).json({
       success: true,
@@ -646,8 +654,15 @@ export const createTicketAdditionalCharge = async (req, res, next) => {
       additionalCharge: newCharge[0],
     });
   } catch (error) {
+    if (connection) {
+      await connection.rollback();
+    }
     console.error("Error creating ticket additional charge:", error);
     return next(errorHandler(500, "Internal Server Error"));
+  } finally {
+    if (connection) {
+      connection.release();
+    }
   }
 };
 

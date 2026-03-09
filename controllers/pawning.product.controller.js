@@ -414,7 +414,12 @@ export const deletePawningProductById = async (req, res, next) => {
  * @param {object} connection - The database connection for the transaction
  * @returns {Promise<number>} inserted pawning_product id
  */
-async function createOnePawningProductForBranch(branchId, data, userId, connection) {
+async function createOnePawningProductForBranch(
+  branchId,
+  data,
+  userId,
+  connection,
+) {
   const serviceCharge = data.serviceCharge?.status === "Active" ? 1 : 0;
   const serviceChargeCreateAs = data.serviceCharge?.chargeType || "inactive";
   const serviceChargeValueType = data.serviceCharge?.valueType || "inactive";
@@ -762,6 +767,7 @@ export const createPawningProductForBranches = async (req, res, next) => {
 
 // Update/Edit a pawning product by ID
 export const updatePawningProductById = async (req, res, next) => {
+  let connection;
   try {
     const idPawning_Product = req.params.productId || req.params.id;
     const { data } = req.body;
@@ -798,11 +804,10 @@ export const updatePawningProductById = async (req, res, next) => {
       );
     }
 
-    const connection = await pool.getConnection();
-    try {
-      await connection.beginTransaction();
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
 
-      // Prepare service charge data for pawning product table
+    // Prepare service charge data for pawning product table
     const serviceCharge = data.serviceCharge?.status === "Active" ? 1 : 0;
     const serviceChargeCreateAs = data.serviceCharge?.chargeType || "inactive";
     const serviceChargeValueType = data.serviceCharge?.valueType || "inactive";
@@ -1183,7 +1188,6 @@ export const updatePawningProductById = async (req, res, next) => {
 
     // Commit transaction
     await connection.commit();
-    connection.release();
 
     // Return success response
     res.status(200).json({
@@ -1192,15 +1196,10 @@ export const updatePawningProductById = async (req, res, next) => {
       product: updatedProductData[0],
     });
   } catch (error) {
+    if (connection) await connection.rollback();
     console.error("Error updating pawning product:", error);
-    try {
-      if (typeof connection !== "undefined") {
-        await connection.rollback();
-        connection.release();
-      }
-    } catch (e) {
-      console.error("Error releasing connection:", e);
-    }
     return next(errorHandler(500, error.message || "Internal Server Error"));
+  } finally {
+    if (connection) connection.release();
   }
 };

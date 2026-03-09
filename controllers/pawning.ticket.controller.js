@@ -212,7 +212,11 @@ async function fetchCustomersByCompanyCustomerIds(
 
 // Create Pawning Ticket
 export const createPawningTicket = async (req, res, next) => {
+  let connection;
   try {
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
     // net weight have to be equal or less than gross weight
     // pawning value have to equal or less than table value
     const { data } = req.body;
@@ -290,33 +294,31 @@ export const createPawningTicket = async (req, res, next) => {
     }
 
     // Validate that productId exists in pawning_product table
-    const [productExists] = await pool.query(
+    const [productExists] = await connection.query(
       "SELECT idPawning_Product FROM pawning_product WHERE idPawning_Product = ?",
       [data.ticketData.productId],
     );
 
     if (productExists.length === 0) {
-      return next(
-        errorHandler(
-          400,
-          `Invalid product ID: ${data.ticketData.productId}. Product does not exist.`,
-        ),
+      const error = new Error(
+        `Invalid product ID: ${data.ticketData.productId}. Product does not exist.`,
       );
+      error.statusCode = 400;
+      throw error;
     }
 
     // Validate that customerId exists
-    const [customerExists] = await pool.query(
+    const [customerExists] = await connection.query(
       "SELECT idCustomer FROM customer WHERE idCustomer = ?",
       [data.ticketData.customerId],
     );
 
     if (customerExists.length === 0) {
-      return next(
-        errorHandler(
-          400,
-          `Invalid customer ID: ${data.ticketData.customerId}. Customer does not exist.`,
-        ),
+      const error = new Error(
+        `Invalid customer ID: ${data.ticketData.customerId}. Customer does not exist.`,
       );
+      error.statusCode = 400;
+      throw error;
     }
 
     // check if pawning advance is less than or equal to all ticketArticles's declaredValue
@@ -325,15 +327,14 @@ export const createPawningTicket = async (req, res, next) => {
       0,
     );
     if (parseFloat(data.ticketData.pawningAdvance) > totalDeclaredValue) {
-      return next(
-        errorHandler(
-          400,
-          "Pawning advance cannot be greater than total declared value of articles",
-        ),
+      const error = new Error(
+        "Pawning advance cannot be greater than total declared value of articles",
       );
+      error.statusCode = 400;
+      throw error;
     }
 
-    const [accountCenterCus] = await pool.query(
+    const [accountCenterCus] = await connection.query(
       "SELECT accountCenterCusId FROM customer WHERE idCustomer = ?",
       [data.ticketData.customerId],
     );
@@ -344,18 +345,22 @@ export const createPawningTicket = async (req, res, next) => {
       accessToken,
     );
     if (customerStatus !== null && Number(customerStatus) === 0) {
+      await connection.rollback();
+      connection.release();
       return next(
         errorHandler(400, "Cannot create ticket. Customer is blacklisted."),
       );
     }
 
     // get the ticket's product service charge type and other data
-    const [productData] = await pool.query(
+    const [productData] = await connection.query(
       "SELECT Service_Charge_Create_As,Interest_Method,Service_Charge_Value,Service_Charge_Value_Type,Late_Charge_Create_As FROM pawning_product WHERE idPawning_Product = ?",
       [data.ticketData.productId],
     );
 
     if (!productData || productData.length === 0) {
+      await connection.rollback();
+      connection.release();
       return next(
         errorHandler(400, "Product not found for the given product ID"),
       );
@@ -390,7 +395,7 @@ export const createPawningTicket = async (req, res, next) => {
       productData[0].Service_Charge_Create_As === "inactive"
     ) {
       if (productData[0].Interest_Method === "Interest For Period") {
-        [productPlanData] = await pool.query(
+        [productPlanData] = await connection.query(
           "SELECT idProduct_Plan,Service_Charge_Value_type, Service_Charge_Value FROM product_plan WHERE Pawning_Product_idPawning_Product = ? AND Period_Type = ? AND ? BETWEEN CAST(Minimum_Period AS UNSIGNED) AND CAST(Maximum_Period AS UNSIGNED)",
           [
             data.ticketData.productId,
@@ -400,6 +405,8 @@ export const createPawningTicket = async (req, res, next) => {
         );
 
         if (productPlanData.length === 0) {
+          await connection.rollback();
+          connection.release();
           return next(
             errorHandler(
               400,
@@ -425,12 +432,14 @@ export const createPawningTicket = async (req, res, next) => {
       }
 
       if (productData[0].Interest_Method === "Interest For Pawning Amount") {
-        [productPlanData] = await pool.query(
+        [productPlanData] = await connection.query(
           "SELECT idProduct_Plan,Service_Charge_Value_type, Service_Charge_Value FROM product_plan WHERE Pawning_Product_idPawning_Product = ? AND ? BETWEEN CAST(Minimum_Amount AS UNSIGNED) AND CAST(Maximum_Amount AS UNSIGNED)",
           [data.ticketData.productId, data.ticketData.pawningAdvance],
         );
 
         if (productPlanData.length === 0) {
+          await connection.rollback();
+          connection.release();
           return next(
             errorHandler(
               400,
@@ -467,6 +476,8 @@ export const createPawningTicket = async (req, res, next) => {
 
     if (productData[0].Service_Charge_Create_As === "Charge For Product Item") {
       if (!productPlanData || productPlanData.length === 0) {
+        await connection.rollback();
+        connection.release();
         return next(
           errorHandler(
             400,
@@ -487,7 +498,7 @@ export const createPawningTicket = async (req, res, next) => {
       productPlanData.length > 0 &&
       productPlanData[0]?.idProduct_Plan
     ) {
-      const [stagesData] = await pool.query(
+      const [stagesData] = await connection.query(
         "SELECT stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,interestApplicableMethod,noOfStages FROM product_plan WHERE idProduct_Plan = ?",
         [productPlanData[0].idProduct_Plan],
       );
@@ -526,7 +537,7 @@ export const createPawningTicket = async (req, res, next) => {
     let lateChargeData = [];
     if (productData[0].Late_Charge_Create_As === "Charge For Product") {
       // fetch late charge stages from pawning_product
-      const [rows] = await pool.query(
+      const [rows] = await connection.query(
         "SELECT lateChargeStage1,lateChargeStage2,lateChargeStage3,lateChargeStage4,lateChargeStage1StartDate,lateChargeStage2StartDate,lateChargeStage3StartDate,lateChargeStage4StartDate,lateChargeStage1EndDate,lateChargeStage2EndDate,lateChargeStage3EndDate,lateChargeStage4EndDate,numberOfLateChargeStages FROM pawning_product WHERE idPawning_Product = ?",
         [data.ticketData.productId],
       );
@@ -535,7 +546,7 @@ export const createPawningTicket = async (req, res, next) => {
       productData[0].Late_Charge_Create_As === "Charge For Product Item"
     ) {
       // fetch late charge stages from the matching product_plan row
-      const [rows] = await pool.query(
+      const [rows] = await connection.query(
         "SELECT lateChargeStage1,lateChargeStage2,lateChargeStage3,lateChargeStage4,lateChargeStage1StartDate,lateChargeStage2StartDate,lateChargeStage3StartDate,lateChargeStage4StartDate,lateChargeStage1EndDate,lateChargeStage2EndDate,lateChargeStage3EndDate,lateChargeStage4EndDate,numberOfLateChargeStages FROM product_plan WHERE Pawning_Product_idPawning_Product = ?",
         [data.ticketData.productId],
       );
@@ -543,7 +554,7 @@ export const createPawningTicket = async (req, res, next) => {
     }
 
     // Insert into pawning_ticket table
-    const [result] = await pool.query(
+    const [result] = await connection.query(
       "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_Date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount,Service_Charge_Type,Service_Charge_Rate,Early_Settlement_Charge_Balance,Additiona_Charges_Balance,Service_Charge_Balance,Late_Charge_Balance,Interest_Amount_Balance,Balance_Amount,Interest_Rate_Duration,stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,Status,service_charge_paid_by_customer,service_charge_paid_from_pawning_advance,noOfStages,lateChargeStage1,lateChargeStage2,lateChargeStage3,lateChargeStage4,lateChargeStage1StartDate,lateChargeStage2StartDate,lateChargeStage3StartDate,lateChargeStage4StartDate,lateChargeStage1EndDate,lateChargeStage2EndDate,lateChargeStage3EndDate,lateChargeStage4EndDate,numberOfLateChargeStages) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [
         data.ticketData.ticketNo,
@@ -611,19 +622,15 @@ export const createPawningTicket = async (req, res, next) => {
 
     // insert images into ticket_artical_images table
     if (data.images && data.images.length > 0) {
-      try {
-        for (const image of data.images) {
-          const secure_url = await uploadImage(image);
+      for (const image of data.images) {
+        const secure_url = await uploadImage(image);
 
-          const imageUrl = secure_url || null;
+        const imageUrl = secure_url || null;
 
-          await pool.query(
-            "INSERT INTO ticket_artical_images (File_Path, Pawning_Ticket_idPawning_Ticket) VALUES (?,?)",
-            [imageUrl, ticketId],
-          );
-        }
-      } catch (error) {
-        throw error;
+        await connection.query(
+          "INSERT INTO ticket_artical_images (File_Path, Pawning_Ticket_idPawning_Ticket) VALUES (?,?)",
+          [imageUrl, ticketId],
+        );
       }
     }
 
@@ -631,18 +638,10 @@ export const createPawningTicket = async (req, res, next) => {
     const ticketArticles = data.ticketArticles;
     let noOfTicketArticles = ticketArticles.length;
     for (const article of ticketArticles) {
-      /* Log the article data for debugging
-      console.log("Inserting article:", {
-        type: article.type,
-        category: article.category,
-        condition: article.condition,
-        caratage: article.caratage,
-        noOfItems: article.noOfItems,
-      });
-      */
-
       // Check net weight vs gross weight before processing
       if (parseFloat(article.netWeight) > parseFloat(article.grossWeight)) {
+        await connection.rollback();
+        connection.release();
         return next(
           errorHandler(400, "Net weight cannot be greater than Gross weight"),
         );
@@ -650,12 +649,8 @@ export const createPawningTicket = async (req, res, next) => {
 
       // upload article image if exists
       if (article.image) {
-        try {
-          const secure_url = await uploadImage(article.image);
-          article.image = secure_url || null;
-        } catch (error) {
-          throw error;
-        }
+        const secure_url = await uploadImage(article.image);
+        article.image = secure_url || null;
       }
 
       // Calculate proportional advance value for this article
@@ -675,7 +670,7 @@ export const createPawningTicket = async (req, res, next) => {
         );
       }
 
-      const [result] = await pool.query(
+      await connection.query(
         "INSERT INTO ticket_articles (Article_type,Article_category,Article_Condition,Caratage,No_Of_Items,Gross_Weight,Acid_Test_Status,DM_Reading,Net_Weight,Assessed_Value,Declared_Value,Pawning_Ticket_idPawning_Ticket,Image_Path,Advanced_Value,Remark) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [
           article.type,
@@ -705,23 +700,28 @@ export const createPawningTicket = async (req, res, next) => {
       data.ticketData.pawningAdvance,
     );
 
-    // create service charge log entry
-    /*
-    await markServiceChargeInTicketLog(
-      ticketId,
-      "SERVICE CHARGE",
-      req.userId,
-      serviceChargeRate, // service charge amount
-    );
-    */
-
-    // create customer log for ticket creation
-    await createCustomerLogOnCreateTicket(
-      "CREATE TICKET",
-      `Created ticket No: ${data.ticketData.ticketNo}`,
-      data.ticketData.customerId,
-      req.userId,
-    );
+    try {
+      // create customer log for ticket creation on acc center
+      await subsystemApi.createCustomerLogOnCreateTicket(
+        req.branchId,
+        {
+          customerId: accountCenterCus[0]?.accountCenterCusId,
+          asipiyaSoftware: "pawning",
+          logType: "CREATE PAWNING TICKET",
+          typeId: ticketId,
+          description: `Created ticket No: ${data.ticketData.ticketNo}`,
+          branchId: req.branchId,
+          userId: req.userId,
+        },
+        req.accessToken,
+      );
+    } catch (error) {
+      console.log(
+        "Error in create customer log for ticket creation on acc center",
+        error,
+      );
+      throw error;
+    }
 
     if (status === -1) {
       // create log entry for ticket approval if ticket is auto approved after creation
@@ -732,6 +732,21 @@ export const createPawningTicket = async (req, res, next) => {
         "Ticket approved, according to company settings it is approved after creation.",
         req.userId,
       );
+
+      // create customer log for ticket approval on acc center
+      await subsystemApi.createCustomerLogOnCreateTicket(
+        req.branchId,
+        {
+          customerId: accountCenterCus[0]?.accountCenterCusId,
+          asipiyaSoftware: "pawning",
+          logType: "APPROVE PAWNING TICKET",
+          typeId: ticketId,
+          description: `Automatically approved ticket No: ${data.ticketData.ticketNo}`,
+          branchId: req.branchId,
+          userId: req.userId,
+        },
+        req.accessToken,
+      );
     }
 
     /*if (data.grantDate !== new Date().toISOString().split("T")[0]) {
@@ -740,13 +755,32 @@ export const createPawningTicket = async (req, res, next) => {
       await addTicketLogsByTicketId(ticketId);
     } */
 
+    await connection.commit();
+
     res.status(201).json({
       success: true,
       message: "Pawning ticket created successfully.",
     });
   } catch (error) {
+    if (connection) {
+      try {
+        await connection.rollback();
+      } catch (rollbackError) {
+        console.error(
+          "Error completely rolling back transaction:",
+          rollbackError,
+        );
+      }
+    }
     console.error("Error in createPawningTicket:", error);
+
+    if (error.statusCode === 400) {
+      return next(errorHandler(400, error.message));
+    }
+
     return next(errorHandler(500, "Internal Server Error"));
+  } finally {
+    if (connection) connection.release();
   }
 };
 

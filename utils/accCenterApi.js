@@ -14,13 +14,21 @@ export const createAccCenterApiClient = (accessToken) => {
     );
   }
 
+  const headers = {
+    "Content-Type": "application/json",
+  };
+
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`;
+  } else if (process.env.CRON_JOB_API_KEY) {
+    // If no access token is provided, fallback to cron job API key if configured
+    headers["x-api-key"] = process.env.CRON_JOB_API_KEY;
+  }
+
   return axios.create({
     baseURL,
     timeout: 30000, // 30 seconds
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
+    headers,
   });
 };
 

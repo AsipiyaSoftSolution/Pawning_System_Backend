@@ -411,10 +411,15 @@ export const deletePawningProductById = async (req, res, next) => {
  * Used by createPawningProduct (single branch) and createPawningProductForBranches (head office).
  * @param {number} branchId - Branch_idBranch
  * @param {object} data - Product payload (same as create body.data)
- * @param {number} userId - Last_Updated_User
+ * @param {object} connection - The database connection for the transaction
  * @returns {Promise<number>} inserted pawning_product id
  */
-async function createOnePawningProductForBranch(branchId, data, userId) {
+async function createOnePawningProductForBranch(
+  branchId,
+  data,
+  userId,
+  connection,
+) {
   const serviceCharge = data.serviceCharge?.status === "Active" ? 1 : 0;
   const serviceChargeCreateAs = data.serviceCharge?.chargeType || "inactive";
   const serviceChargeValueType = data.serviceCharge?.valueType || "inactive";
@@ -442,7 +447,7 @@ async function createOnePawningProductForBranch(branchId, data, userId) {
   const lateChargeCreateAs = data.lateCharge?.chargeType || "inactive";
   const lateChargePresentage = data.lateCharge?.percentage || 0;
 
-  const [result] = await pool.query(
+  const [result] = await connection.query(
     "INSERT INTO pawning_product (Branch_idBranch,Name,Service_Charge,Service_Charge_Create_As,Service_Charge_Value_type,Service_Charge_Value,Early_Settlement_Charge,Early_Settlement_Charge_Create_As,Early_Settlement_Charge_Value_type,Early_Settlement_Charge_Value,Late_Charge_Status,Late_Charge_Create_As,Late_Charge,Interest_Method,Last_Updated_User,Last_Updated_Time,lateChargeStage1,lateChargeStage2,lateChargeStage3,lateChargeStage4,lateChargeStage1StartDate,lateChargeStage1EndDate,lateChargeStage2StartDate,lateChargeStage2EndDate,lateChargeStage3StartDate,lateChargeStage3EndDate,lateChargeStage4StartDate,lateChargeStage4EndDate,numberOfLateChargeStages) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     [
       branchId,
@@ -500,7 +505,7 @@ async function createOnePawningProductForBranch(branchId, data, userId) {
       const toAmount = settlement.endAmount || 0;
       const valueType = settlement.valueType || null;
       const value = settlement.value || null;
-      await pool.query(
+      await connection.query(
         "INSERT INTO early_settlement_charges (From_Amount,To_Amount,Value_Type,Amount,Pawning_Product_idPawning_Product) VALUES (?,?,?,?,?)",
         [fromAmount, toAmount, valueType, value, productId],
       );
@@ -518,7 +523,7 @@ async function createOnePawningProductForBranch(branchId, data, userId) {
       interestMethod === "Interest For Pawning Amount"
         ? data.amount22
         : plan.amount22Carat;
-    await pool.query(
+    await connection.query(
       "INSERT INTO product_plan (Period_Type,Minimum_Period,Maximum_Period,Minimum_Amount,Maximum_Amount,Interest_type,Interest,Interest_Calculate_After,Service_Charge_Value_type,Service_Charge_Value,Early_Settlement_Charge_Value_type,Early_Settlement_Charge_Value,Late_Charge,Amount_For_22_Caratage,Last_Updated_User,Last_Updated_Time,Pawning_Product_idPawning_Product,stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,interestApplicableMethod,Week_Precentage_Amount_22_Caratage,Month1_Precentage_Amount_22_Caratage,Month3_Precentage_Amount_22_Caratage,Month6_Precentage_Amount_22_Caratage,Month9_Precentage_Amount_22_Caratage,Month12_Precentage_Amount_22_Caratage,noOfStages,lateChargeStage1,lateChargeStage2,lateChargeStage3,lateChargeStage4,lateChargeStage1StartDate,lateChargeStage1EndDate,lateChargeStage2StartDate,lateChargeStage2EndDate,lateChargeStage3StartDate,lateChargeStage3EndDate,lateChargeStage4StartDate,lateChargeStage4EndDate,numberOfLateChargeStages) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [
         plan.periodType,
@@ -633,21 +638,32 @@ async function createOnePawningProductForBranch(branchId, data, userId) {
 
 // Create a new pawning product for a specific branch
 export const createPawningProduct = async (req, res, next) => {
+  let connection;
   try {
     const { data } = req.body;
     if (!data) {
       return next(errorHandler(400, "Product data is required"));
     }
+
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
     const productId = await createOnePawningProductForBranch(
       req.branchId,
       data,
       req.userId,
+      connection,
     );
+
+    await connection.commit();
     res.status(201).json({
       success: true,
       message: "Pawning product created successfully",
     });
   } catch (err) {
+    if (connection) {
+      await connection.rollback();
+    }
     if (err.message === "At least one product item is required") {
       return next(errorHandler(400, err.message));
     }
@@ -656,6 +672,8 @@ export const createPawningProduct = async (req, res, next) => {
     }
     console.error("Error creating pawning product:", err);
     return next(errorHandler(500, err.message || "Internal Server Error"));
+  } finally {
+    if (connection) connection.release();
   }
 };
 
@@ -664,6 +682,7 @@ export const createPawningProduct = async (req, res, next) => {
  *
  */
 export const createPawningProductForBranches = async (req, res, next) => {
+  let connection;
   try {
     const { data, branchIds } = req.body;
     if (!data) {
@@ -703,12 +722,16 @@ export const createPawningProductForBranches = async (req, res, next) => {
 
     const created = [];
     const errors = [];
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
     for (const branchId of validBranchIds) {
       try {
         const productId = await createOnePawningProductForBranch(
           branchId,
           data,
           req.userId,
+          connection,
         );
         created.push({ branchId, productId });
       } catch (err) {
@@ -718,6 +741,7 @@ export const createPawningProductForBranches = async (req, res, next) => {
     }
 
     if (created.length === 0) {
+      await connection.rollback();
       return next(
         errorHandler(
           500,
@@ -727,18 +751,23 @@ export const createPawningProductForBranches = async (req, res, next) => {
       );
     }
 
+    await connection.commit();
     res.status(201).json({
       success: true,
       message: `Pawning product created for ${created.length} branch(es).`,
     });
   } catch (err) {
+    if (connection) await connection.rollback();
     console.error("Error in createPawningProductForBranches:", err);
     return next(errorHandler(500, err.message || "Internal Server Error"));
+  } finally {
+    if (connection) connection.release();
   }
 };
 
 // Update/Edit a pawning product by ID
 export const updatePawningProductById = async (req, res, next) => {
+  let connection;
   try {
     const idPawning_Product = req.params.productId || req.params.id;
     const { data } = req.body;
@@ -775,6 +804,9 @@ export const updatePawningProductById = async (req, res, next) => {
       );
     }
 
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
     // Prepare service charge data for pawning product table
     const serviceCharge = data.serviceCharge?.status === "Active" ? 1 : 0;
     const serviceChargeCreateAs = data.serviceCharge?.chargeType || "inactive";
@@ -806,7 +838,7 @@ export const updatePawningProductById = async (req, res, next) => {
     const lateChargePresentage = parseFloat(data.lateCharge?.percentage) || 0;
 
     // Update the main pawning product table
-    const [updateResult] = await pool.query(
+    const [updateResult] = await connection.query(
       `UPDATE pawning_product SET 
         Name = ?,
         Service_Charge = ?,
@@ -875,11 +907,13 @@ export const updatePawningProductById = async (req, res, next) => {
     );
 
     if (updateResult.affectedRows === 0) {
+      await connection.rollback();
+      connection.release();
       return next(errorHandler(500, "Failed to update pawning product"));
     }
 
     // Delete existing early settlement charges
-    await pool.query(
+    await connection.query(
       "DELETE FROM early_settlement_charges WHERE Pawning_Product_idPawning_Product = ?",
       [idPawning_Product],
     );
@@ -889,6 +923,8 @@ export const updatePawningProductById = async (req, res, next) => {
       const earlySettlements = data.earlysettlementsData?.earlySettlements;
 
       if (!earlySettlements || earlySettlements.length === 0) {
+        await connection.rollback();
+        connection.release();
         return next(
           errorHandler(
             400,
@@ -903,13 +939,13 @@ export const updatePawningProductById = async (req, res, next) => {
         : [earlySettlements];
 
       // Insert new early settlement charges
-      const insertPromises = settlementsArray.map(async (settlement) => {
+      for (const settlement of settlementsArray) {
         const fromAmount = parseFloat(settlement.lessThan) || 0;
         const toAmount = parseFloat(settlement.endAmount) || 0;
         const valueType = settlement.valueType || null;
         const value = parseFloat(settlement.value) || 0;
 
-        const [earlySettlementResult] = await pool.query(
+        const [earlySettlementResult] = await connection.query(
           "INSERT INTO early_settlement_charges (From_Amount, To_Amount, Value_Type, Amount, Pawning_Product_idPawning_Product) VALUES (?, ?, ?, ?, ?)",
           [fromAmount, toAmount, valueType, value, idPawning_Product],
         );
@@ -917,23 +953,11 @@ export const updatePawningProductById = async (req, res, next) => {
         if (earlySettlementResult.affectedRows === 0) {
           throw new Error("Failed to create early settlement charge record");
         }
-
-        return earlySettlementResult;
-      });
-
-      // Wait for all insertions to complete
-      try {
-        await Promise.all(insertPromises);
-      } catch (error) {
-        console.error("Error inserting early settlement charges:", error);
-        return next(
-          errorHandler(500, "Failed to create early settlement charges"),
-        );
       }
     }
 
     // Delete existing product plans
-    await pool.query(
+    await connection.query(
       "DELETE FROM product_plan WHERE Pawning_Product_idPawning_Product = ?",
       [idPawning_Product],
     );
@@ -962,7 +986,7 @@ export const updatePawningProductById = async (req, res, next) => {
         return value;
       };
 
-      const [productPlanResult] = await pool.query(
+      const [productPlanResult] = await connection.query(
         `INSERT INTO product_plan (
           Period_Type,
           Minimum_Period,
@@ -1136,12 +1160,12 @@ export const updatePawningProductById = async (req, res, next) => {
       );
 
       if (productPlanResult.affectedRows === 0) {
-        return next(errorHandler(500, "Failed to create product plan"));
+        throw new Error("Failed to create product plan");
       }
     }
 
     // Fetch updated product data with full details
-    const [updatedProductData] = await pool.query(
+    const [updatedProductData] = await connection.query(
       `SELECT 
         idPawning_Product,
         Name,
@@ -1162,6 +1186,9 @@ export const updatePawningProductById = async (req, res, next) => {
       [idPawning_Product],
     );
 
+    // Commit transaction
+    await connection.commit();
+
     // Return success response
     res.status(200).json({
       success: true,
@@ -1169,7 +1196,10 @@ export const updatePawningProductById = async (req, res, next) => {
       product: updatedProductData[0],
     });
   } catch (error) {
+    if (connection) await connection.rollback();
     console.error("Error updating pawning product:", error);
-    return next(errorHandler(500, "Internal Server Error"));
+    return next(errorHandler(500, error.message || "Internal Server Error"));
+  } finally {
+    if (connection) connection.release();
   }
 };

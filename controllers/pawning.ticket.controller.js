@@ -4408,9 +4408,18 @@ export const generatePawningTicketNumber = async (req, res, next) => {
     ];
     let ticketNo = "";
 
+    // Use req.accessToken (set by auth middleware from cookie OR Authorization header)
+    // req.cookies?.accessToken is undefined on the server behind a proxy
+    const accessToken = req.accessToken || req.cookies?.accessToken;
+    console.log(
+      "[generatePawningTicketNumber] accessToken present:",
+      !!accessToken,
+      "companyId:",
+      req.companyId,
+    );
     const ticketFormatRow = await fetchTicketFormatFromAccCenter(
       req.companyId,
-      req.cookies?.accessToken,
+      accessToken,
     );
 
     console.log(ticketFormatRow, "ticket format row");

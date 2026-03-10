@@ -181,7 +181,6 @@ async function fetchTicketFormatFromAccCenter(companyId, accessToken) {
   if (!companyId || !accessToken) return null;
   try {
     const res = await subsystemApi.ticketFormat(companyId, accessToken);
-    console.log(res, "ticket format res");
     return res?.ticketFormat;
   } catch (e) {
     console.error("fetchTicketFormatFromAccCenter:", e);
@@ -4411,18 +4410,11 @@ export const generatePawningTicketNumber = async (req, res, next) => {
     // Use req.accessToken (set by auth middleware from cookie OR Authorization header)
     // req.cookies?.accessToken is undefined on the server behind a proxy
     const accessToken = req.accessToken || req.cookies?.accessToken;
-    console.log(
-      "[generatePawningTicketNumber] accessToken present:",
-      !!accessToken,
-      "companyId:",
-      req.companyId,
-    );
+
     const ticketFormatRow = await fetchTicketFormatFromAccCenter(
       req.companyId,
       accessToken,
     );
-
-    console.log(ticketFormatRow, "ticket format row");
 
     if (!ticketFormatRow) {
       return next(

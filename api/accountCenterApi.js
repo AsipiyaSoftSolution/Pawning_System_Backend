@@ -216,6 +216,9 @@ export const subsystemApi = {
       },
       accessToken,
     ),
+
+  createCustomerLogOnCreateTicket: (branchId, data, accessToken) =>
+    accCenterPost(`/subsystem/${branchId}/customer-log`, data, accessToken),
 };
 
 // Pawning Payments

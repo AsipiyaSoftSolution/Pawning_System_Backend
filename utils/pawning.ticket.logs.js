@@ -1481,9 +1481,10 @@ export const createPawningTicketLogOnAdditionalCharge = async (
   type,
   userId,
   amount,
+  connection,
 ) => {
   try {
-    const [latestLogResult] = await pool.query(
+    const [latestLogResult] = await connection.query(
       "SELECT * FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? ORDER BY idTicket_Log DESC LIMIT 1",
       [ticketId],
     );
@@ -1507,7 +1508,7 @@ export const createPawningTicketLogOnAdditionalCharge = async (
       latestLateChargesBalance +
       (latestAdditionalChargeBalance + newAdditionalCharge);
 
-    const [result] = await pool.query(
+    const [result] = await connection.query(
       "INSERT INTO ticket_log (Pawning_Ticket_idPawning_Ticket, Type, Amount, Advance_Balance, Interest_Balance, Service_Charge_Balance, Late_Charges_Balance, Aditional_Charge_Balance, Total_Balance, User_idUser, Date_Time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())",
       [
         ticketId,

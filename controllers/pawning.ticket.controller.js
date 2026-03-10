@@ -181,6 +181,7 @@ async function fetchTicketFormatFromAccCenter(companyId, accessToken) {
   if (!companyId || !accessToken) return null;
   try {
     const res = await subsystemApi.ticketFormat(companyId, accessToken);
+    console.log(res, "ticket format res");
     return res?.ticketFormat;
   } catch (e) {
     console.error("fetchTicketFormatFromAccCenter:", e);
@@ -4411,6 +4412,8 @@ export const generatePawningTicketNumber = async (req, res, next) => {
       req.companyId,
       req.cookies?.accessToken,
     );
+
+    console.log(ticketFormatRow, "ticket format row");
 
     if (!ticketFormatRow) {
       return next(

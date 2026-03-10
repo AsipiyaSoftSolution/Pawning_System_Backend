@@ -4452,7 +4452,7 @@ export const generatePawningTicketNumber = async (req, res, next) => {
           const branchRes = await subsystemApi.branch(
             req.branchId,
             req.companyId,
-            req.cookies?.accessToken,
+            accessToken,
           );
           if (!branchRes?.branch) {
             return next(errorHandler(404, "Branch not found"));
@@ -4464,7 +4464,7 @@ export const generatePawningTicketNumber = async (req, res, next) => {
           const countRes = await subsystemApi.customerCountByBranch(
             req.branchId,
             req.companyId,
-            req.cookies?.accessToken,
+            accessToken,
           );
           const count = countRes?.count ?? 0;
           ticketNo += count.toString().padStart(4, "0");
@@ -4492,7 +4492,7 @@ export const generatePawningTicketNumber = async (req, res, next) => {
             let ticketCount = 0;
             const branches = await fetchBranchesByCompany(
               req.companyId,
-              req.cookies?.accessToken,
+              accessToken,
             );
 
             if (branches.length === 0) {
@@ -4520,10 +4520,7 @@ export const generatePawningTicketNumber = async (req, res, next) => {
       }
     } else {
       let ticketCount = 0;
-      const branches = await fetchBranchesByCompany(
-        req.companyId,
-        req.cookies?.accessToken,
-      );
+      const branches = await fetchBranchesByCompany(req.companyId, accessToken);
 
       if (branches.length === 0) {
         return next(errorHandler(404, "No branches found for the company"));

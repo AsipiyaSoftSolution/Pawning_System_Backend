@@ -16,12 +16,20 @@ export const protectedRoute = async (req, res, next) => {
 
     // Verify the token
     try {
+      console.log(`[protectedRoute] Verifying token for path: ${req.path}`);
+      console.log(`[protectedRoute] Token: ${accessToken}`);
+
       const decoded = jwt.verify(accessToken, process.env.JWT_ACCESS_SECRET);
+      console.log(`[protectedRoute] Decoded Token:`, decoded);
+
       const [user] = await pool2.query(
         "SELECT idUser FROM user WHERE idUser = ? and Email = ? and Company_idCompany = ? and Designation_idDesignation = ?",
         [decoded.id, decoded.email, decoded.company_id, decoded.designation_id],
       );
       if (!user[0]) {
+        console.warn(
+          `[protectedRoute] User not found matching token criteria: id=${decoded.id}, email=${decoded.email}`,
+        );
         return next(errorHandler(401, "Unauthorized access"));
       }
       // Attach user information to the request object
@@ -36,8 +44,26 @@ export const protectedRoute = async (req, res, next) => {
 
       next(); // Proceed to the next middleware or route handler
     } catch (error) {
-      console.error("Error verifying token:", error);
-      return next(errorHandler(401, "Unauthorized access"));
+      if (error.name === "TokenExpiredError") {
+        console.warn(`[protectedRoute] Token expired for path: ${req.path}`);
+        return next(
+          errorHandler(
+            401,
+            "Unauthorized access. Your session has expired. Please log in again.",
+          ),
+        );
+      } else if (error.name === "JsonWebTokenError") {
+        console.warn(`[protectedRoute] Invalid token for path: ${req.path}`);
+        return next(
+          errorHandler(
+            401,
+            "Unauthorized access. Invalid authentication token.",
+          ),
+        );
+      } else {
+        console.error("[protectedRoute] Error verifying token:", error);
+        return next(errorHandler(401, "Unauthorized access"));
+      }
     }
   } catch (error) {
     console.error("Error in protectedRoute middleware:", error);

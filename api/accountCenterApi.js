@@ -230,4 +230,20 @@ export const pawningPaymentsApi = {
       accessToken,
     );
   },
+
+  ticketInterestDoubleEntries: (data, accessToken) => {
+    return accCenterPost(
+      "/double-entries/pawning-ticket-interest-double-entries",
+      data,
+      accessToken,
+    );
+  },
+
+  ticketPenaltyDoubleEntries: (data, accessToken) => {
+    return accCenterPost(
+      "/double-entries/pawning-ticket-penalty-double-entries",
+      data,
+      accessToken,
+    );
+  },
 };

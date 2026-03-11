@@ -155,9 +155,8 @@ router.patch(
 
 // batch update customer numbers
 router.patch(
-  "/:branchId/batch-update-customer-numbers",
+  "/batch-update-customer-numbers",
   protectedRoute,
-  checkUserBranchAccess,
   batchUpdateCustomerNumbers,
 );
 

@@ -1519,3 +1519,28 @@ export const getKycDataForAccountCenter = async (req, res, next) => {
     return next(errorHandler(500, error.message || "Internal Server Error"));
   }
 };
+
+// update customers number format after cus number format update from account center
+export const updateCustomerNumberFormat = async (req, res, next) => {
+  try {
+    const { newCustomerNo, customerId } = req.body;
+
+    if (!newCustomerNo || !customerId) {
+      return next(
+        errorHandler(400, "Customer number and customer ID are required"),
+      );
+    }
+    const [customerFormat] = await pool.query(
+      "UPDATE customer SET Customer_Number = ? WHERE idCustomer = ?",
+      [newCustomerNo, customerId],
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Customer number format updated successfully.",
+    });
+  } catch (error) {
+    console.error("Error in updateCustomerNumberFormat:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};

@@ -18,6 +18,7 @@ import {
   getKycDataForAccountCenter,
   // getCustomerCompleteDataById,
   generateCustomerNumber,
+  updateCustomerNumberFormat,
 } from "../controllers/customer.controller.js";
 import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
 import { checkUserSelectedHeadBranch } from "../middlewares/headBranch.middleware.js";
@@ -142,6 +143,13 @@ router.get(
   protectedRoute,
   checkUserBranchAccess,
   generateCustomerNumber,
+);
+
+// update customer number format
+router.patch(
+  "/update-customer-number-format",
+  protectedRoute,
+  updateCustomerNumberFormat,
 );
 
 export default router;

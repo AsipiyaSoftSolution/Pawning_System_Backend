@@ -2,7 +2,11 @@ import { errorHandler } from "../utils/errorHandler.js";
 import { pool, pool2 } from "../utils/db.js";
 import { uploadImage } from "../utils/cloudinary.js";
 import { getPaginationData, getCompanyBranches } from "../utils/helper.js";
-import { customerApi, approvalApi } from "../api/accountCenterApi.js";
+import {
+  customerApi,
+  approvalApi,
+  subsystemApi,
+} from "../api/accountCenterApi.js";
 import { parse } from "path";
 
 const customerLog = async (idCustomer, date, type, Description, userId) => {
@@ -61,12 +65,10 @@ async function getCustomerTableFields(companyId) {
 // Create a new customer
 export const createCustomer = async (req, res, next) => {
   const connection = await pool.getConnection();
-  console.log("inside create customer in pawning side");
 
   try {
     const { customerData } = req.body;
     const data = customerData || req.body.data;
-    console.log("inside create customer in pawning side");
 
     if (!data) {
       connection.release();
@@ -141,7 +143,21 @@ export const createCustomer = async (req, res, next) => {
       Customer_Photo: data.Customer_Photo || null,
     };
 
-    console.log("hasApprovalProcess", hasApprovalProcess);
+    // get the customerFields.cus_number and check if it has NIC
+    if (customerFields.cus_number.includes("NIC")) {
+      // if it does, replace the string "NIC" with the actual New_NIC or Old_NIC
+      if (customerFields.New_NIC) {
+        customerFields.cus_number = customerFields.cus_number.replace(
+          "NIC",
+          customerFields.New_NIC,
+        );
+      } else if (customerFields.Old_NIC) {
+        customerFields.cus_number = customerFields.cus_number.replace(
+          "NIC",
+          customerFields.Old_NIC,
+        );
+      }
+    }
 
     // FLOW A: Approval Process Exists -> No Local Creation Yet
     if (hasApprovalProcess) {
@@ -1289,172 +1305,14 @@ export const blacklistCustomer = async (req, res, next) => {
 // Generate customer number
 export const generateCustomerNumber = async (req, res, next) => {
   try {
-    const formatComponents = [
-      "Branch Number",
-      "Auto Create Number",
-      "Day",
-      "Month",
-      "Year",
-      "Monthly Count",
-      "Branch's Customer Count",
-    ];
-    let customerNo = "";
-
-    const [customerFormat] = await pool2.query(
-      "SELECT * FROM customer_number_formats WHERE company_id = ?",
-      [req.companyId],
+    const data = await subsystemApi.generatePawningCustomerNumber(
+      req.companyId,
+      req.branchId,
+      req.accessToken,
     );
-
-    if (customerFormat.length === 0) {
-      // No format configured, return simple count for the branch
-      const [customerCount] = await pool.query(
-        "SELECT COUNT(*) AS count FROM customer WHERE Branch_idBranch = ?",
-        [req.branchId],
-      );
-
-      const customerNo = (customerCount[0].count + 1).toString();
-
-      return res.status(200).json({
-        success: true,
-        customerNumber: customerNo,
-        message: "Customer number generated successfully.",
-      });
-    }
-
-    // Check if the customer format type is custom format
-    if (customerFormat[0].format_type === "Format") {
-      const formatString = customerFormat[0].format; // e.g: "Branch Number-Auto Create Number-Year"
-
-      // Split the format string but preserve separators
-      const formatPartsWithSeparators = formatString.split(/([-.\/])/);
-
-      for (let i = 0; i < formatPartsWithSeparators.length; i++) {
-        const part = formatPartsWithSeparators[i].trim();
-
-        // If it's a separator, add it to customerNo
-        if (["-", ".", "/"].includes(part)) {
-          customerNo += part;
-          continue;
-        }
-
-        // Process format components
-        if (part === "Branch Number") {
-          // Get the branch number
-          const [branch] = await pool2.query(
-            "SELECT Branch_Code FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
-            [req.branchId, req.companyId],
-          );
-
-          if (branch.length === 0) {
-            return next(errorHandler(404, "Branch not found"));
-          }
-
-          customerNo += branch[0].Branch_Code || "00";
-        }
-
-        if (part === "Branch's Customer Count") {
-          const [customerCount] = await pool.query(
-            "SELECT COUNT(*) AS count FROM customer WHERE Branch_idBranch = ?",
-            [req.branchId],
-          );
-
-          customerNo += (customerCount[0].count + 1)
-            .toString()
-            .padStart(4, "0");
-        }
-
-        if (part === "Auto Create Number") {
-          let autoNumber = customerFormat[0].auto_generate_start_from;
-          if (autoNumber !== undefined && autoNumber !== null) {
-            // Calculate the total customers in the company
-            let customerCount = 0;
-            // Find all the branches for this specific company
-            const [branches] = await pool2.query(
-              "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
-              [req.companyId],
-            );
-
-            if (branches.length === 0) {
-              return next(
-                errorHandler(404, "No branches found for the company"),
-              );
-            }
-
-            // Loop through each branch and count customers
-            for (const branch of branches) {
-              const [branchCustomerCount] = await pool.query(
-                "SELECT COUNT(*) AS count FROM customer WHERE Branch_idBranch = ?",
-                [branch.idBranch],
-              );
-              customerCount += branchCustomerCount[0].count;
-            }
-
-            autoNumber += customerCount;
-            customerNo += autoNumber.toString();
-          } else {
-            customerNo += "1"; // default auto number
-          }
-        }
-
-        if (part === "Day") {
-          const currentDay = new Date().getDate();
-          customerNo += currentDay.toString().padStart(2, "0");
-        }
-
-        if (part === "Month") {
-          const currentMonth = new Date().getMonth() + 1; // getMonth() returns 0-11
-          customerNo += currentMonth.toString().padStart(2, "0");
-        }
-
-        if (part === "Year") {
-          const currentYear = new Date().getFullYear();
-          customerNo += currentYear.toString();
-        }
-
-        if (part === "Monthly Count") {
-          // Get count of customers created in current month for this branch
-          const currentYear = new Date().getFullYear();
-          const currentMonth = new Date().getMonth() + 1;
-
-          const [monthlyCount] = await pool.query(
-            `SELECT COUNT(*) AS count FROM customer 
-             WHERE Branch_idBranch = ? 
-             AND YEAR(STR_TO_DATE(created_at, '%Y-%m-%d %H:%i:%s')) = ? 
-             AND MONTH(STR_TO_DATE(created_at, '%Y-%m-%d %H:%i:%s')) = ?`,
-            [req.branchId, currentYear, currentMonth],
-          );
-
-          customerNo += (monthlyCount[0].count + 1).toString().padStart(4, "0");
-        }
-      }
-    } else {
-      // For "Custom Format" type, use simple auto-increment
-      let customerCount = 0;
-      // Find all the branches for this specific company
-      const [branches] = await pool2.query(
-        "SELECT idBranch FROM branch WHERE Company_idCompany = ?",
-        [req.companyId],
-      );
-
-      if (branches.length === 0) {
-        return next(errorHandler(404, "No branches found for the company"));
-      }
-
-      // Loop through each branch and count customers
-      for (const branch of branches) {
-        const [branchCustomerCount] = await pool.query(
-          "SELECT COUNT(*) AS count FROM customer WHERE Branch_idBranch = ?",
-          [branch.idBranch],
-        );
-        customerCount += branchCustomerCount[0].count;
-      }
-
-      customerNo = (customerCount + 1).toString();
-    }
-
     res.status(200).json({
       success: true,
-      customerNumber: customerNo,
+      customerNumber: data.customerNumber,
       message: "Customer number generated successfully.",
     });
   } catch (error) {
@@ -1541,6 +1399,50 @@ export const updateCustomerNumberFormat = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Error in updateCustomerNumberFormat:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// Batch-update customer numbers — called from Account Center after reformatting
+export const batchUpdateCustomerNumbers = async (req, res, next) => {
+  let connection;
+  try {
+    const { updates } = req.body; // [{ customerId, newCustomerNo }, ...]
+
+    if (!updates || !Array.isArray(updates) || updates.length === 0) {
+      return next(errorHandler(400, "updates array is required"));
+    }
+
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    for (const { customerId, newCustomerNo } of updates) {
+      if (
+        !customerId ||
+        newCustomerNo === undefined ||
+        newCustomerNo === null
+      ) {
+        continue; // skip malformed entries
+      }
+      await connection.query(
+        "UPDATE customer SET Customer_Number = ? WHERE idCustomer = ?",
+        [newCustomerNo, customerId],
+      );
+    }
+
+    await connection.commit();
+    connection.release();
+
+    return res.status(200).json({
+      success: true,
+      message: `${updates.length} customer numbers updated successfully.`,
+    });
+  } catch (error) {
+    if (connection) {
+      await connection.rollback();
+      connection.release();
+    }
+    console.error("Error in batchUpdateCustomerNumbers:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

@@ -78,7 +78,7 @@ export const customerApi = {
     ),
 };
 
-// ─── Subsystem (Pawning-specific helpers) ──────────────────────────────────
+// ─── Subsystem (Pawning-specific helpers in account center) ──────────────────────────────────
 export const subsystemApi = {
   customersByPawningIds: (ids, companyId, accessToken) =>
     accCenterGet(
@@ -219,6 +219,12 @@ export const subsystemApi = {
 
   createCustomerLogOnCreateTicket: (branchId, data, accessToken) =>
     accCenterPost(`/subsystem/${branchId}/customer-log`, data, accessToken),
+
+  generatePawningCustomerNumber: (companyId, branchId, accessToken) =>
+    accCenterGet(
+      `/subsystem/generate-pawning-customer-number?companyId=${companyId}&branchId=${branchId}`,
+      accessToken,
+    ),
 };
 
 // Pawning Payments

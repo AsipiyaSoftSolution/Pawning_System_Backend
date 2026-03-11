@@ -4908,3 +4908,95 @@ export const updateTicketStatusAfterLoanDisbursement = async (
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
+
+// get all tickets for the company using given branchId's for pawning ticket number update
+export const getAllTicketsForCompany = async (req, res, next) => {
+  try {
+    const { branchIds } = req.query;
+
+    if (!branchIds || !Array.isArray(branchIds)) {
+      return next(errorHandler(404, "Branch Ids missing"));
+    }
+
+    // Fetch tickets with customer number, product code, and monthly ticket count per branch
+    const [tickets] = await pool.query(
+      `SELECT
+         pt.idPawning_Ticket,
+         pt.Ticket_No,
+         pt.Branch_idBranch,
+         pt.created_at,
+         YEAR(pt.created_at)  AS ticket_year,
+         MONTH(pt.created_at) AS ticket_month,
+
+         -- Customer number from the customer table
+         c.Customer_Number         AS customer_number,
+
+         -- Product code (id) and name from the product table
+         pp.idPawning_Product  AS product_code,
+         pp.Name               AS product_name,
+
+         -- Monthly ticket count for the same branch + year + month
+         (
+           SELECT COUNT(*)
+           FROM   pawning_ticket sub
+           WHERE  sub.Branch_idBranch = pt.Branch_idBranch
+             AND  YEAR(sub.created_at)  = YEAR(pt.created_at)
+             AND  MONTH(sub.created_at) = MONTH(pt.created_at)
+         ) AS monthly_ticket_count
+
+       FROM  pawning_ticket pt
+       LEFT JOIN customer        c  ON pt.Customer_idCustomer            = c.idCustomer
+       LEFT JOIN pawning_product pp ON pt.Pawning_Product_idPawning_Product = pp.idPawning_Product
+       WHERE pt.Branch_idBranch IN (?)`,
+      [branchIds],
+    );
+
+    return res.status(200).json({
+      success: true,
+      tickets,
+    });
+  } catch (error) {
+    console.log("Error in get all tickets for company", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// Batch-update ticket numbers — called from Account Center after reformatting
+export const batchUpdateTicketNumbers = async (req, res, next) => {
+  let connection;
+  try {
+    const { updates } = req.body; // [{ idPawning_Ticket, ticket_no }, ...]
+
+    if (!updates || !Array.isArray(updates) || updates.length === 0) {
+      return next(errorHandler(400, "updates array is required"));
+    }
+
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    for (const { idPawning_Ticket, ticket_no } of updates) {
+      if (!idPawning_Ticket || ticket_no === undefined || ticket_no === null) {
+        continue; // skip malformed entries
+      }
+      await connection.query(
+        "UPDATE pawning_ticket SET Ticket_No = ? WHERE idPawning_Ticket = ?",
+        [ticket_no, idPawning_Ticket],
+      );
+    }
+
+    await connection.commit();
+    connection.release();
+
+    return res.status(200).json({
+      success: true,
+      message: `${updates.length} ticket numbers updated successfully.`,
+    });
+  } catch (error) {
+    if (connection) {
+      await connection.rollback();
+      connection.release();
+    }
+    console.error("Error in batchUpdateTicketNumbers:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};

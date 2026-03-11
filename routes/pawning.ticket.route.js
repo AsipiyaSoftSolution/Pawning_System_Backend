@@ -33,6 +33,8 @@ import {
   getCustomerTickets,
   deductAdvanceFromPawningTicket,
   updateTicketStatusAfterLoanDisbursement,
+  getAllTicketsForCompany,
+  batchUpdateTicketNumbers,
 } from "../controllers/pawning.ticket.controller.js";
 
 const router = express.Router();
@@ -252,4 +254,11 @@ router.get(
   checkUserBranchAccess,
   getCustomerTickets,
 );
+
+router.get("/all-tickets-for-company", protectedRoute, getAllTicketsForCompany); // Get all tickets for company
+router.patch(
+  "/batch-update-ticket-numbers",
+  protectedRoute,
+  batchUpdateTicketNumbers,
+); // Batch update ticket numbers from Account Center
 export default router;

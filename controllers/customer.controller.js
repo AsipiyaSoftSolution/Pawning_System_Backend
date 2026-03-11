@@ -1402,3 +1402,47 @@ export const updateCustomerNumberFormat = async (req, res, next) => {
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
+
+// Batch-update customer numbers — called from Account Center after reformatting
+export const batchUpdateCustomerNumbers = async (req, res, next) => {
+  let connection;
+  try {
+    const { updates } = req.body; // [{ customerId, newCustomerNo }, ...]
+
+    if (!updates || !Array.isArray(updates) || updates.length === 0) {
+      return next(errorHandler(400, "updates array is required"));
+    }
+
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    for (const { customerId, newCustomerNo } of updates) {
+      if (
+        !customerId ||
+        newCustomerNo === undefined ||
+        newCustomerNo === null
+      ) {
+        continue; // skip malformed entries
+      }
+      await connection.query(
+        "UPDATE customer SET Customer_Number = ? WHERE idCustomer = ?",
+        [newCustomerNo, customerId],
+      );
+    }
+
+    await connection.commit();
+    connection.release();
+
+    return res.status(200).json({
+      success: true,
+      message: `${updates.length} customer numbers updated successfully.`,
+    });
+  } catch (error) {
+    if (connection) {
+      await connection.rollback();
+      connection.release();
+    }
+    console.error("Error in batchUpdateCustomerNumbers:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};

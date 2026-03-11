@@ -19,6 +19,7 @@ import {
   // getCustomerCompleteDataById,
   generateCustomerNumber,
   updateCustomerNumberFormat,
+  batchUpdateCustomerNumbers,
 } from "../controllers/customer.controller.js";
 import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
 import { checkUserSelectedHeadBranch } from "../middlewares/headBranch.middleware.js";
@@ -150,6 +151,14 @@ router.patch(
   "/update-customer-number-format",
   protectedRoute,
   updateCustomerNumberFormat,
+);
+
+// batch update customer numbers
+router.patch(
+  "/:branchId/batch-update-customer-numbers",
+  protectedRoute,
+  checkUserBranchAccess,
+  batchUpdateCustomerNumbers,
 );
 
 export default router;

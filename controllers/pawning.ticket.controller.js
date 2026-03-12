@@ -337,10 +337,10 @@ export const createPawningTicket = async (req, res, next) => {
       [data.ticketData.customerId],
     );
     // check if customer is blacklisted via Account Center company_customer (Status 0 = Inactive/Blacklist)
-    const accessToken = req.cookies?.accessToken;
+
     const customerStatus = await fetchCustomerStatusFromAccCenter(
       accountCenterCus[0]?.accountCenterCusId,
-      accessToken,
+      req.accessToken,
     );
     if (customerStatus !== null && Number(customerStatus) === 0) {
       await connection.rollback();
@@ -520,7 +520,7 @@ export const createPawningTicket = async (req, res, next) => {
     // get is_Ticket_Approve_After_Create setting from Account Center
     const companySettings = await fetchCompanySettingsFromAccCenter(
       req.companyId,
-      req.cookies?.accessToken,
+      req.accessToken,
     );
 
     let status = 0;

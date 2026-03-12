@@ -3526,7 +3526,7 @@ export const sendActiveTickets = async (req, res, next) => {
     } else if (req.isHeadBranch === true) {
       const companyBranches = await fetchBranchesByCompany(
         req.companyId,
-        req.cookies?.accessToken,
+        req.accessToken,
       );
 
       if (companyBranches.length === 0) {
@@ -3609,7 +3609,7 @@ export const sendActiveTickets = async (req, res, next) => {
         formattedNIC,
         req.companyId,
         null,
-        req.cookies?.accessToken,
+        req.accessToken,
       );
 
       if (matchingAccCustomers.length === 0) {
@@ -3664,12 +3664,9 @@ export const sendActiveTickets = async (req, res, next) => {
       ];
       const [accCustomers, branches] = await Promise.all([
         subsystemApi
-          .customerDataForPawningSideTicketPages(
-            pawningCusIds,
-            req.cookies?.accessToken,
-          )
+          .customerDataForPawningSideTicketPages(pawningCusIds, req.accessToken)
           .then((res) => res.data), // Extract data from response
-        fetchBranchNamesByIds(branchIds, req.cookies?.accessToken),
+        fetchBranchNamesByIds(branchIds, req.accessToken),
       ]);
 
       const customerMap = new Map(
@@ -3732,7 +3729,7 @@ export const sendSettledTickets = async (req, res, next) => {
     } else if (req.isHeadBranch === true) {
       const companyBranches = await fetchBranchesByCompany(
         req.companyId,
-        req.cookies?.accessToken,
+        req.accessToken,
       );
 
       if (companyBranches.length === 0) {
@@ -3815,7 +3812,7 @@ export const sendSettledTickets = async (req, res, next) => {
         formattedNIC,
         req.companyId,
         null,
-        req.cookies?.accessToken,
+        req.accessToken,
       );
 
       if (matchingAccCustomers.length === 0) {

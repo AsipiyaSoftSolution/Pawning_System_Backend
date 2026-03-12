@@ -129,14 +129,17 @@ async function fetchCompanySettingsFromAccCenter(companyId, accessToken) {
 async function fetchAssessedValueFromAccCenter(companyId, carat, accessToken) {
   console.log("companyId", companyId);
   console.log("carat", carat);
-  console.log("accessToken", accessToken);
-  if (!companyId || !carat || !accessToken) return null;
+  console.log("accessToken", accessToken ? "exists" : "missing");
+  if (!companyId || !carat) return null; // removed !accessToken so it uses fallback cron api key if needed
   try {
     const res = await subsystemApi.assessedValue(companyId, carat, accessToken);
     console.log("res", res);
+    if (res && res.success) {
+      return res.Amount !== undefined ? res.Amount : res.amount; // Handle casing just in case
+    }
     return res?.Amount;
   } catch (e) {
-    console.error("fetchAssessedValueFromAccCenter:", e);
+    console.error("fetchAssessedValueFromAccCenter:", e.message || e);
     return null;
   }
 }

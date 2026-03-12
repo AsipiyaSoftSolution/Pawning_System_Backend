@@ -1265,6 +1265,7 @@ export const sendAssessedValues = async (req, res, next) => {
       caratage,
       accessToken,
     );
+    console.log("amount", amount);
 
     if (amount == null) {
       return next(

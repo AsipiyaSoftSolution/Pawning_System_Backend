@@ -614,18 +614,12 @@ export const getCustomerById = async (req, res, next) => {
       }
     }
 
-    // Fetch customer documents from pawning DB (legacy)
-    const [pawningDocuments] = await pool.query(
-      "SELECT * FROM customer_documents WHERE Customer_idCustomer = ?",
-      [customerId],
-    );
-
     // Prefer Account Center documents (company_customer_documents) when available;
     // fall back to Pawning customer_documents for legacy data
     const documents =
       accCenterCustomerData?.documents?.length > 0
         ? accCenterCustomerData.documents
-        : pawningDocuments || [];
+        : [];
 
     // Fetch branch info for head office view (branch table is in Account Center DB)
     let branchInfo = null;
@@ -652,7 +646,7 @@ export const getCustomerById = async (req, res, next) => {
       accountCenterCusId: pawningCustomer.accountCenterCusId,
       Customer_Number: pawningCustomer.Customer_Number,
       // Add pawning documents
-      documents: documents || [],
+      documents: documents,
       // Branch where customer is registered (for head office view)
       branchInfo,
     };

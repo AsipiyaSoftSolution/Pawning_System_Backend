@@ -127,9 +127,13 @@ async function fetchCompanySettingsFromAccCenter(companyId, accessToken) {
 
 /** Get assessed value for carat via Account Center subsystem API */
 async function fetchAssessedValueFromAccCenter(companyId, carat, accessToken) {
+  console.log("companyId", companyId);
+  console.log("carat", carat);
+  console.log("accessToken", accessToken);
   if (!companyId || !carat || !accessToken) return null;
   try {
     const res = await subsystemApi.assessedValue(companyId, carat, accessToken);
+    console.log("res", res);
     return res?.Amount;
   } catch (e) {
     console.error("fetchAssessedValueFromAccCenter:", e);

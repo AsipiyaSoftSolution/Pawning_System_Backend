@@ -1258,10 +1258,12 @@ export const sendAssessedValues = async (req, res, next) => {
     if (!caratage) {
       return next(errorHandler(400, "Caratage is required"));
     }
+
+    const accessToken = req.cookies?.accessToken;
     const amount = await fetchAssessedValueFromAccCenter(
       req.companyId,
       caratage,
-      req.cookies?.accessToken,
+      accessToken,
     );
 
     if (amount == null) {

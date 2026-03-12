@@ -264,10 +264,12 @@ export const getTicketDataById = async (req, res, next) => {
       Risk_Level: customerDetails.Risk_Level,
       Mobile_No: customerDetails.Mobile_No,
       Mobile_No2: customerDetails.Mobile_No2,
-      documents: accCustomer.customer.documents.map((r) => ({
-        Document_Name: r.name,
-        Path: r.file,
-      })),
+      documents: Array.isArray(accCustomer?.customer?.documents)
+        ? accCustomer.customer.documents.map((r) => ({
+            Document_Name: r.name,
+            Path: r.file,
+          }))
+        : [],
     };
     // fetch customer ative,inactive and overdue ticket counts and attach them to customer data
     const [ticketCounts] = await pool.query(

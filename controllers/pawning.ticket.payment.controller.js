@@ -1675,7 +1675,7 @@ export const getTicketsPaymentsHistory = async (req, res, next) => {
     // Build count query
     const countQuery = `SELECT COUNT(*) AS total 
                         FROM payment p
-                        JOIN pawning_ticket pt ON p.Ticket_no COLLATE utf8mb4_unicode_ci = pt.Ticket_No COLLATE utf8mb4_unicode_ci
+                        JOIN pawning_ticket pt ON p.Pawning_Ticket_idPawning_Ticket = pt.idPawning_Ticket
                         WHERE ${baseWhereConditions}`;
 
     const paginationData = await getPaginationData(
@@ -1690,7 +1690,7 @@ export const getTicketsPaymentsHistory = async (req, res, next) => {
     const dataQuery = `SELECT p.*, p.User AS User_idUser, pt.idPawning_Ticket, pt.Status AS Ticket_Status, 
                               pt.Customer_idCustomer,pt.Net_Weight, pt.SEQ_No, c.accountCenterCusId
                        FROM payment p
-                       JOIN pawning_ticket pt ON p.Ticket_no COLLATE utf8mb4_unicode_ci = pt.Ticket_No COLLATE utf8mb4_unicode_ci
+                       JOIN pawning_ticket pt ON p.Pawning_Ticket_idPawning_Ticket = pt.idPawning_Ticket
                        LEFT JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
                        WHERE ${baseWhereConditions}
                        ORDER BY STR_TO_DATE(p.Date_time, '%Y-%m-%d %H:%i:%s') DESC

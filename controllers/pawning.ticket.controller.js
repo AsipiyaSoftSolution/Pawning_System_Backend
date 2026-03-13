@@ -387,12 +387,18 @@ export const createPawningTicket = async (req, res, next) => {
     }
 
     let productPlanData;
+    console.log(
+      productData[0].Service_Charge_Create_As,
+      "Service_Charge_Create_As",
+    );
     // if service charge create as is "Charge For Product Item"
     if (
       productData[0].Service_Charge_Create_As === "Charge For Product Item" ||
+      productData[0].Service_Charge_Create_As === "Charge For Product" ||
       productData[0].Service_Charge_Create_As === "inactive"
     ) {
       if (productData[0].Interest_Method === "Interest For Period") {
+        console.log("Interest For Period");
         [productPlanData] = await connection.query(
           "SELECT idProduct_Plan,Service_Charge_Value_type, Service_Charge_Value FROM product_plan WHERE Pawning_Product_idPawning_Product = ? AND Period_Type = ? AND ? BETWEEN CAST(Minimum_Period AS UNSIGNED) AND CAST(Maximum_Period AS UNSIGNED)",
           [
@@ -430,10 +436,12 @@ export const createPawningTicket = async (req, res, next) => {
       }
 
       if (productData[0].Interest_Method === "Interest For Pawning Amount") {
+        console.log("Interest For Pawning Amount");
         [productPlanData] = await connection.query(
           "SELECT idProduct_Plan,Service_Charge_Value_type, Service_Charge_Value FROM product_plan WHERE Pawning_Product_idPawning_Product = ? AND ? BETWEEN CAST(Minimum_Amount AS UNSIGNED) AND CAST(Maximum_Amount AS UNSIGNED)",
           [data.ticketData.productId, data.ticketData.pawningAdvance],
         );
+        console.log(productPlanData, "productPlanData");
 
         if (productPlanData.length === 0) {
           await connection.rollback();
@@ -488,7 +496,7 @@ export const createPawningTicket = async (req, res, next) => {
           ? "inactive"
           : productPlanData[0]?.Service_Charge_Value_type || "unknown";
     }
-
+    console.log(productPlanData, "productPlanData");
     // Fetch product plan stages data only if productPlanData exists
     let productPlanStagesData = [];
     if (
@@ -500,6 +508,7 @@ export const createPawningTicket = async (req, res, next) => {
         "SELECT stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,interestApplicableMethod,noOfStages FROM product_plan WHERE idProduct_Plan = ?",
         [productPlanData[0].idProduct_Plan],
       );
+      console.log(stagesData, "stagesData");
       // Defensive assignment and logging
       if (Array.isArray(stagesData) && stagesData.length > 0) {
         productPlanStagesData = stagesData;
@@ -550,10 +559,11 @@ export const createPawningTicket = async (req, res, next) => {
       );
       lateChargeData = rows;
     }
+    console.log(productPlanStagesData, "productPlanStagesData");
 
     // Insert into pawning_ticket table
     const [result] = await connection.query(
-      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_Date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount,Service_Charge_Type,Service_Charge_Rate,Early_Settlement_Charge_Balance,Additiona_Charges_Balance,Service_Charge_Balance,Late_Charge_Balance,Interest_Amount_Balance,Balance_Amount,Interest_Rate_Duration,stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,Status,service_charge_paid_by_customer,service_charge_paid_from_pawning_advance,noOfStages,lateChargeStage1,lateChargeStage2,lateChargeStage3,lateChargeStage4,lateChargeStage1StartDate,lateChargeStage2StartDate,lateChargeStage3StartDate,lateChargeStage4StartDate,lateChargeStage1EndDate,lateChargeStage2EndDate,lateChargeStage3EndDate,lateChargeStage4EndDate,numberOfLateChargeStages) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount,Service_Charge_Type,Service_Charge_Rate,Early_Settlement_Charge_Balance,Additiona_Charges_Balance,Service_Charge_Balance,Late_Charge_Balance,Interest_Amount_Balance,Balance_Amount,Interest_Rate_Duration,stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,Status,service_charge_paid_by_customer,service_charge_paid_from_pawning_advance,noOfStages,lateChargeStage1,lateChargeStage2,lateChargeStage3,lateChargeStage4,lateChargeStage1StartDate,lateChargeStage2StartDate,lateChargeStage3StartDate,lateChargeStage4StartDate,lateChargeStage1EndDate,lateChargeStage2EndDate,lateChargeStage3EndDate,lateChargeStage4EndDate,numberOfLateChargeStages) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [
         data.ticketData.ticketNo,
         data.ticketData.grantSeqNo,
@@ -1375,7 +1385,7 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
         const max = Number(plan.Maximum_Amount);
         return advanceNum >= min && advanceNum <= max;
       });
-      console.log(filteredPlan, "filteredPlan");
+      // console.log(filteredPlan, "filteredPlan");
 
       if (!filteredPlan) {
         return next(errorHandler(404, "No matching product plan found"));

@@ -726,7 +726,7 @@ export const createPaymentForTicket = async (req, res, next) => {
 
       // Insert into payment table
       const [ticketPaymentResult] = await connection.query(
-        "INSERT INTO payment(Date_time,Description,Ticket_no,Amount,User,Ticket_Date,Maturity_Date,Day_Count,Type) VALUES(NOW(),?,?,?,?,?,?,?,?)",
+        "INSERT INTO payment(Date_time,Description,Ticket_no,Amount,User,Ticket_Date,Maturity_Date,Day_Count,Type,Pawning_Ticket_idPawning_Ticket) VALUES(NOW(),?,?,?,?,?,?,?,?,?)",
         [
           `Customer Payment(Ticket No:${existingTicket[0].Ticket_No})`,
           existingTicket[0].Ticket_No,
@@ -736,6 +736,7 @@ export const createPaymentForTicket = async (req, res, next) => {
           existingTicket[0].Maturity_date,
           dayCount,
           "PART PAYMENT",
+          ticketId,
         ],
       );
 
@@ -1123,7 +1124,7 @@ export const createTicketRenewalPayment = async (req, res, next) => {
 
       // Insert into payment table (pool)
       const [ticketPaymentResult] = await connection.query(
-        "INSERT INTO payment(Date_time,Description,Ticket_no,Amount,User,Ticket_Date,Maturity_Date,Day_Count,Type) VALUES(NOW(),?,?,?,?,?,?,?,?)",
+        "INSERT INTO payment(Date_time,Description,Ticket_no,Amount,User,Ticket_Date,Maturity_Date,Day_Count,Type,Pawning_Ticket_idPawning_Ticket) VALUES(NOW(),?,?,?,?,?,?,?,?,?)",
         [
           `Customer Payment(Ticket No:${existingTicket[0].Ticket_No})`,
           existingTicket[0].Ticket_No,
@@ -1133,6 +1134,7 @@ export const createTicketRenewalPayment = async (req, res, next) => {
           new Date(),
           dayCount,
           "RENEWAL PAYMENT",
+          ticketId,
         ],
       );
 
@@ -1433,7 +1435,7 @@ export const createTicketSettlementPayment = async (req, res, next) => {
 
       // insert into the payment table (pool)
       const [ticketPaymentResult] = await connection.query(
-        "INSERT INTO payment(Date_time,Description,Ticket_no,Amount,User,Ticket_Date,Maturity_Date,Day_Count,Type) VALUES(NOW(),?,?,?,?,?,?,?,?)",
+        "INSERT INTO payment(Date_time,Description,Ticket_no,Amount,User,Ticket_Date,Maturity_Date,Day_Count,Type,Pawning_Ticket_idPawning_Ticket) VALUES(NOW(),?,?,?,?,?,?,?,?,?)",
         [
           `Customer Settlement Payment(Ticket No:${existingTicket[0].Ticket_No})`,
           existingTicket[0].Ticket_No,
@@ -1443,6 +1445,7 @@ export const createTicketSettlementPayment = async (req, res, next) => {
           existingTicket[0].Maturity_date,
           dayCount,
           "SETTLEMENT PAYMENT",
+          ticketId,
         ],
       );
 
@@ -1708,10 +1711,12 @@ export const getTicketsPaymentsHistory = async (req, res, next) => {
       let customerMap = {};
       if (accountCenterCusIds.length > 0) {
         // Schema: First_Name, Last_Name, Nic, Contact_No (No Full_Name)
-        const [accCustomers] = await pool2.query(
-          `SELECT idCustomer, Nic, First_Name, Last_Name, Contact_No FROM customer WHERE idCustomer IN (?)`,
-          [accountCenterCusIds],
+        const response = await customerApi.getCustomersByIds(
+          accountCenterCusIds.join(","),
+          { asipiyaSoftware: "pawning", companyId: req.companyId },
+          req.accessToken,
         );
+        const accCustomers = response.customers || [];
 
         accCustomers.forEach((c) => {
           const firstName = c.First_Name || "";
@@ -1721,10 +1726,10 @@ export const getTicketsPaymentsHistory = async (req, res, next) => {
               ? `${firstName} ${lastName}`
               : firstName || lastName || "Unknown";
 
-          customerMap[c.idCustomer] = {
+          customerMap[c.idCompany_Customer] = {
             name: fullName,
-            nic: c.Nic,
-            mobile: c.Contact_No,
+            nic: c.New_NIC || c.Old_NIC,
+            mobile: c.Contact_No_01,
           };
         });
       }

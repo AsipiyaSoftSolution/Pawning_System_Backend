@@ -1465,10 +1465,10 @@ export const getTicketDataById = async (req, res, next) => {
     }
 
     // get the branch name via Account Center subsystem API
-    const accessToken = req.cookies?.accessToken;
+
     const branches = await fetchBranchNamesByIds(
       [ticketData[0].Branch_idBranch],
-      accessToken,
+      req.accessToken,
     );
     ticketData[0].branchName = branches[0]?.Name || "Unknown Branch"; // attach branch name to ticket data
 
@@ -1484,7 +1484,7 @@ export const getTicketDataById = async (req, res, next) => {
     // fetch the user name who created the ticket via Account Center subsystem API
     const creatorUsers = await fetchUserNamesByIds(
       [ticketData[0].User_idUser],
-      accessToken,
+      req.accessToken,
     );
     ticketData[0].createdUser = creatorUsers[0]?.full_name || "Unknown User";
     delete ticketData[0].User_idUser; // remove User_idUser from ticket data
@@ -1518,7 +1518,7 @@ export const getTicketDataById = async (req, res, next) => {
     // Fetch full details from Account Center company_customer via subsystem API
     const accCustomers = await subsystemApi.customerDataForPawningTicketView(
       pawningCustomer[0].accountCenterCusId,
-      req.cookies?.accessToken,
+      req.accessToken,
     );
 
     if (accCustomers.data) {
@@ -1574,7 +1574,7 @@ export const getTicketDataById = async (req, res, next) => {
       if (item.Article_type) {
         const articleType = await fetchArticleTypeById(
           parseInt(item.Article_type),
-          accessToken,
+          req.accessToken,
         );
         item.ArticleTypeName = articleType?.Description || null;
       } else {
@@ -1584,7 +1584,7 @@ export const getTicketDataById = async (req, res, next) => {
       if (item.Article_category) {
         const articleCategory = await fetchArticleCategoryById(
           parseInt(item.Article_category),
-          accessToken,
+          req.accessToken,
         );
         item.categoryName = articleCategory?.Description || null;
       } else {
@@ -1626,7 +1626,10 @@ export const getTicketDataById = async (req, res, next) => {
     const paymentUserIds = [
       ...new Set(paymentHistory.map((p) => p.User).filter((id) => id)),
     ];
-    const paymentUsers = await fetchUserNamesByIds(paymentUserIds, accessToken);
+    const paymentUsers = await fetchUserNamesByIds(
+      paymentUserIds,
+      req.accessToken,
+    );
     const paymentUserMap = new Map(
       paymentUsers.map((u) => [u.idUser, u.full_name]),
     );
@@ -1650,7 +1653,7 @@ export const getTicketDataById = async (req, res, next) => {
     const logUserIds = [
       ...new Set(ticketLogs.map((l) => l.User_idUser).filter((id) => id)),
     ];
-    const logUsers = await fetchUserNamesByIds(logUserIds, accessToken);
+    const logUsers = await fetchUserNamesByIds(logUserIds, req.accessToken);
     const logUserMap = new Map(logUsers.map((u) => [u.idUser, u.full_name]));
     for (let log of ticketLogs) {
       log.full_name = log.User_idUser

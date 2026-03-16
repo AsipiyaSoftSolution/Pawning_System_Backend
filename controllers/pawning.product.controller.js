@@ -164,19 +164,22 @@ export const getPawningProductById = async (req, res, next) => {
         status: product.Late_Charge_Status === "1" ? "Active" : "Inactive",
         chargeType: product.Late_Charge_Create_As,
         percentage: product.Late_Charge,
-        lateChargeStage1: product.lateChargeStage1,
-        lateChargeStage2: product.lateChargeStage2,
-        lateChargeStage3: product.lateChargeStage3,
-        lateChargeStage4: product.lateChargeStage4,
-        lateChargeStage1StartDate: product.lateChargeStage1StartDate,
-        lateChargeStage1EndDate: product.lateChargeStage1EndDate,
-        lateChargeStage2StartDate: product.lateChargeStage2StartDate,
-        lateChargeStage2EndDate: product.lateChargeStage2EndDate,
-        lateChargeStage3StartDate: product.lateChargeStage3StartDate,
-        lateChargeStage3EndDate: product.lateChargeStage3EndDate,
-        lateChargeStage4StartDate: product.lateChargeStage4StartDate,
-        lateChargeStage4EndDate: product.lateChargeStage4EndDate,
-        numberOfLateChargeStages: product.numberOfLateChargeStages,
+        // Add late charge stage fields ONLY when it is Charge For Product
+        ...(product.Late_Charge_Create_As === "Charge For Product" && {
+          lateChargeStage1: product.lateChargeStage1,
+          lateChargeStage2: product.lateChargeStage2,
+          lateChargeStage3: product.lateChargeStage3,
+          lateChargeStage4: product.lateChargeStage4,
+          lateChargeStage1StartDate: product.lateChargeStage1StartDate,
+          lateChargeStage1EndDate: product.lateChargeStage1EndDate,
+          lateChargeStage2StartDate: product.lateChargeStage2StartDate,
+          lateChargeStage2EndDate: product.lateChargeStage2EndDate,
+          lateChargeStage3StartDate: product.lateChargeStage3StartDate,
+          lateChargeStage3EndDate: product.lateChargeStage3EndDate,
+          lateChargeStage4StartDate: product.lateChargeStage4StartDate,
+          lateChargeStage4EndDate: product.lateChargeStage4EndDate,
+          numberOfLateChargeStages: product.numberOfLateChargeStages,
+        }),
       },
 
       // Early settlement data
@@ -242,22 +245,24 @@ export const getPawningProductById = async (req, res, next) => {
           numberOfStages: plan.noOfStages,
         };
 
-        // Add late charge stage fields
-        Object.assign(base, {
-          lateChargeStage1: plan.lateChargeStage1,
-          lateChargeStage2: plan.lateChargeStage2,
-          lateChargeStage3: plan.lateChargeStage3,
-          lateChargeStage4: plan.lateChargeStage4,
-          lateChargeStage1StartDate: plan.lateChargeStage1StartDate,
-          lateChargeStage1EndDate: plan.lateChargeStage1EndDate,
-          lateChargeStage2StartDate: plan.lateChargeStage2StartDate,
-          lateChargeStage2EndDate: plan.lateChargeStage2EndDate,
-          lateChargeStage3StartDate: plan.lateChargeStage3StartDate,
-          lateChargeStage3EndDate: plan.lateChargeStage3EndDate,
-          lateChargeStage4StartDate: plan.lateChargeStage4StartDate,
-          lateChargeStage4EndDate: plan.lateChargeStage4EndDate,
-          numberOfLateChargeStages: plan.numberOfLateChargeStages,
-        });
+        // Add late charge stage fields ONLY when it is Charge For Product Item
+        if (product.Late_Charge_Create_As === "Charge For Product Item") {
+          Object.assign(base, {
+            lateChargeStage1: plan.lateChargeStage1,
+            lateChargeStage2: plan.lateChargeStage2,
+            lateChargeStage3: plan.lateChargeStage3,
+            lateChargeStage4: plan.lateChargeStage4,
+            lateChargeStage1StartDate: plan.lateChargeStage1StartDate,
+            lateChargeStage1EndDate: plan.lateChargeStage1EndDate,
+            lateChargeStage2StartDate: plan.lateChargeStage2StartDate,
+            lateChargeStage2EndDate: plan.lateChargeStage2EndDate,
+            lateChargeStage3StartDate: plan.lateChargeStage3StartDate,
+            lateChargeStage3EndDate: plan.lateChargeStage3EndDate,
+            lateChargeStage4StartDate: plan.lateChargeStage4StartDate,
+            lateChargeStage4EndDate: plan.lateChargeStage4EndDate,
+            numberOfLateChargeStages: plan.numberOfLateChargeStages,
+          });
+        }
 
         // Add stage fields only when interestApplicableMethod indicates staged calculation
         if (plan.interestApplicableMethod === "calculate for stages") {
@@ -474,7 +479,7 @@ async function createOnePawningProductForBranch(
       data.lateCharge.lateChargeStage2 || 0,
       data.lateCharge.lateChargeStage3 || 0,
       data.lateCharge.lateChargeStage4 || 0,
-      data.lateCharge.lateChargeStage1StartDate || null,
+      data.lateCharge.lateChargeStage1StartDate ?? null,
       data.lateCharge.lateChargeStage1EndDate || null,
       data.lateCharge.lateChargeStage2StartDate || null,
       data.lateCharge.lateChargeStage2EndDate || null,

@@ -15,6 +15,8 @@ import {
   reqAccessForTicketRenew,
   sendReqsOfTicketRenewalForApproval,
   approveOrRejectReqForTicketRenewal,
+  getCurrentReceiptBookWithCurrentVoucherNo,
+  checkUserHasReceiptBook,
 } from "../controllers/pawning.ticket.payment.controller.js";
 import { checkUserSelectedHeadBranch } from "../middlewares/headBranch.middleware.js";
 
@@ -115,5 +117,21 @@ route.patch(
   checkUserBranchAccess,
   approveOrRejectReqForTicketRenewal,
 ); // Approve or reject req for ticket renewal
+
+// get current receipt book with current voucher no
+route.get(
+  "/:branchId/current-receipt-book-with-current-voucher-no",
+  protectedRoute,
+  checkUserBranchAccess,
+  getCurrentReceiptBookWithCurrentVoucherNo,
+);
+
+// check if user has receipt book
+route.get(
+  "/:branchId/check-user-has-receipt-book",
+  protectedRoute,
+  checkUserBranchAccess,
+  checkUserHasReceiptBook,
+); // Check if user has receipt book
 
 export default route;

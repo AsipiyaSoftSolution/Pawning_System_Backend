@@ -673,7 +673,14 @@ export const createPaymentForTicket = async (req, res, next) => {
   let connection;
   try {
     const ticketId = req.params.id || req.params.ticketId;
-    const { paymentAmount, toAccountId } = req.body;
+    const {
+      paymentAmount,
+      toAccountId,
+      hasTemporaryReceipt,
+      currentBookId,
+      currentReceiptBookNumber,
+      currentVoucherNumber,
+    } = req.body;
     if (!ticketId) {
       return next(errorHandler(400, "Ticket ID is required"));
     }
@@ -825,6 +832,10 @@ export const createPaymentForTicket = async (req, res, next) => {
         sourceId: ticketId,
         sourceType: "pawning",
         customerId: existingTicket[0].Customer_idCustomer,
+        hasTemporaryReceipt,
+        currentBookId,
+        currentReceiptBookNumber,
+        currentVoucherNumber,
       };
 
       try {
@@ -1231,7 +1242,14 @@ export const createTicketSettlementPayment = async (req, res, next) => {
   let connection;
   try {
     const ticketId = req.params.id || req.params.ticketId;
-    const { paymentAmount, toAccountId } = req.body;
+    const {
+      paymentAmount,
+      toAccountId,
+      hasTemporaryReceipt,
+      currentBookId,
+      currentReceiptBookNumber,
+      currentVoucherNumber,
+    } = req.body;
 
     if (!ticketId) {
       return next(errorHandler(400, "Ticket ID is required"));
@@ -1419,6 +1437,10 @@ export const createTicketSettlementPayment = async (req, res, next) => {
         sourceId: ticketId,
         sourceType: "pawning",
         customerId: existingTicket[0].Customer_idCustomer,
+        hasTemporaryReceipt,
+        currentBookId,
+        currentReceiptBookNumber,
+        currentVoucherNumber,
       };
 
       try {
@@ -1962,6 +1984,47 @@ export const approveOrRejectReqForTicketRenewal = async (req, res, next) => {
     });
   } catch (error) {
     console.log("Error in approve/reject ticket renewal request", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// check if user has receipt book
+export const checkUserHasReceiptBook = async (req, res, next) => {
+  try {
+    const result = await pawningPaymentsApi.checkUserHasReceiptBook(
+      req.branchId,
+      req.accessToken,
+    );
+    res.status(200).json({
+      result: result.hasAssignedBook,
+    });
+  } catch (error) {
+    console.log("Error in checking user has receipt book", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// get current receipt book with current voucher no
+export const getCurrentReceiptBookWithCurrentVoucherNo = async (
+  req,
+  res,
+  next,
+) => {
+  try {
+    const result =
+      await pawningPaymentsApi.getCurrentReceiptBookWithCurrentVoucherNo(
+        req.branchId,
+        req.accessToken,
+      );
+    res.status(200).json({
+      success: true,
+      result: result.result,
+    });
+  } catch (error) {
+    console.log(
+      "Error in getting current receipt book with current voucher no",
+      error,
+    );
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

@@ -1965,3 +1965,44 @@ export const approveOrRejectReqForTicketRenewal = async (req, res, next) => {
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
+
+// check if user has receipt book
+export const checkUserHasReceiptBook = async (req, res, next) => {
+  try {
+    const result = await pawningPaymentsApi.checkUserHasReceiptBook(
+      req.branchId,
+      req.accessToken,
+    );
+    res.status(200).json({
+      result: result.hasAssignedBook,
+    });
+  } catch (error) {
+    console.log("Error in checking user has receipt book", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// get current receipt book with current voucher no
+export const getCurrentReceiptBookWithCurrentVoucherNo = async (
+  req,
+  res,
+  next,
+) => {
+  try {
+    const result =
+      await pawningPaymentsApi.getCurrentReceiptBookWithCurrentVoucherNo(
+        req.branchId,
+        req.accessToken,
+      );
+    res.status(200).json({
+      success: true,
+      result: result.result,
+    });
+  } catch (error) {
+    console.log(
+      "Error in getting current receipt book with current voucher no",
+      error,
+    );
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};

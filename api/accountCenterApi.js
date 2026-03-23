@@ -268,4 +268,16 @@ export const pawningPaymentsApi = {
       accessToken,
     );
   },
+
+  checkUserHasReceiptBook: (branchId, accessToken) =>
+    accCenterGet(
+      `/receipt-book/check-assigned-receipt-book/${branchId}`,
+      accessToken,
+    ),
+
+  getCurrentReceiptBookWithCurrentVoucherNo: (branchId, accessToken) =>
+    accCenterGet(
+      `/receipt-book/get-current-receipt-book-with-current-voucher-no/${branchId}`,
+      accessToken,
+    ),
 };

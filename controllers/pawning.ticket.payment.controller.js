@@ -673,7 +673,14 @@ export const createPaymentForTicket = async (req, res, next) => {
   let connection;
   try {
     const ticketId = req.params.id || req.params.ticketId;
-    const { paymentAmount, toAccountId } = req.body;
+    const {
+      paymentAmount,
+      toAccountId,
+      hasTemporaryReceipt,
+      currentBookId,
+      currentReceiptBookNumber,
+      currentVoucherNumber,
+    } = req.body;
     if (!ticketId) {
       return next(errorHandler(400, "Ticket ID is required"));
     }
@@ -825,6 +832,10 @@ export const createPaymentForTicket = async (req, res, next) => {
         sourceId: ticketId,
         sourceType: "pawning",
         customerId: existingTicket[0].Customer_idCustomer,
+        hasTemporaryReceipt,
+        currentBookId,
+        currentReceiptBookNumber,
+        currentVoucherNumber,
       };
 
       try {
@@ -1231,7 +1242,14 @@ export const createTicketSettlementPayment = async (req, res, next) => {
   let connection;
   try {
     const ticketId = req.params.id || req.params.ticketId;
-    const { paymentAmount, toAccountId } = req.body;
+    const {
+      paymentAmount,
+      toAccountId,
+      hasTemporaryReceipt,
+      currentBookId,
+      currentReceiptBookNumber,
+      currentVoucherNumber,
+    } = req.body;
 
     if (!ticketId) {
       return next(errorHandler(400, "Ticket ID is required"));
@@ -1419,6 +1437,10 @@ export const createTicketSettlementPayment = async (req, res, next) => {
         sourceId: ticketId,
         sourceType: "pawning",
         customerId: existingTicket[0].Customer_idCustomer,
+        hasTemporaryReceipt,
+        currentBookId,
+        currentReceiptBookNumber,
+        currentVoucherNumber,
       };
 
       try {

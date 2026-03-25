@@ -2016,9 +2016,10 @@ export const getCurrentReceiptBookWithCurrentVoucherNo = async (
         req.branchId,
         req.accessToken,
       );
+
     res.status(200).json({
       success: true,
-      result: result.result,
+      result: result,
     });
   } catch (error) {
     console.log(

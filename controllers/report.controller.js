@@ -517,3 +517,139 @@ export const ticketDayEndReport = async (req, res, next) => {
     return next(errorHandler(500, "Internal server error"));
   }
 };
+// Full Ticket Details Report Controller
+export const fullTicketDetailsReport = async (req, res, next) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = (page - 1) * limit;
+    const { start_date, end_date, branchId, status } = req.query;
+
+    let branchIds;
+    if (branchId) {
+      const parsedBranchId = parseInt(branchId, 10);
+      if (isNaN(parsedBranchId)) return next(errorHandler(400, "Invalid branchId"));
+      
+      const [branchRow] = await pool2.query(
+        "SELECT idBranch FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
+        [parsedBranchId, req.companyId]
+      );
+      if (branchRow.length === 0) return next(errorHandler(404, "Branch not found"));
+      branchIds = [parsedBranchId];
+    } else {
+      const branches = await getAllBranchesForTheCompany(req.companyId);
+      if (branches.length === 0) return next(errorHandler(404, "No branches found"));
+      branchIds = branches.map((b) => b.idBranch);
+    }
+
+    // Build WHERE clause
+    let whereConditions = ["pt.Branch_idBranch IN (?)"];
+    let queryParams = [branchIds];
+
+    if (start_date) {
+      whereConditions.push("DATE(pt.Date_Time) >= ?");
+      queryParams.push(start_date);
+    }
+    if (end_date) {
+      whereConditions.push("DATE(pt.Date_Time) <= ?");
+      queryParams.push(end_date);
+    }
+    if (status) {
+      whereConditions.push("pt.Status = ?");
+      queryParams.push(status);
+    }
+
+    const whereClause = whereConditions.join(" AND ");
+
+    // Get pagination
+    const paginationData = await getReportPaginationData(
+      `SELECT COUNT(*) as count FROM pawning_ticket pt WHERE ${whereClause}`,
+      queryParams,
+      page,
+      limit
+    );
+
+    if (paginationData.totalCount === 0) {
+      return res.status(200).json({ success: true, fullTicketDetails: [], pagination: paginationData });
+    }
+
+    // Main Ticket Query
+    const [tickets] = await pool.query(
+      `SELECT 
+        pt.idPawning_Ticket, pt.Ticket_No as ticketNo, pt.Date_Time as grantDate, 
+        pt.Period_Type as periodType, pt.Period as period, pt.Maturity_date as maturityDate, 
+        pt.Payble_Value as payableAmount, pt.Pawning_Advance_Amount as pawningAdvance, 
+        pt.Service_Charge_Type as serviceChargeType, pt.Service_charge_Amount as serviceChargeAmount, 
+        pt.Interest_apply_on as interestType, pt.Interest_Amount_Balance as interestBalance, 
+        pt.Status as status,
+        c.Full_name as customerName, c.NIC, c.mobileNo as contact,
+        p.Name as productName,
+        DATEDIFF(CURDATE(), pt.Date_Time) as age
+      FROM pawning_ticket pt
+      JOIN customer c ON pt.Customer_idCustomer = c.idCustomer
+      JOIN pawning_product p ON pt.Pawning_Product_idPawning_Product = p.idPawning_Product
+      WHERE ${whereClause}
+      ORDER BY pt.Date_Time DESC
+      LIMIT ? OFFSET ?`,
+      [...queryParams, limit, offset]
+    );
+
+    const ticketIds = tickets.map(t => t.idPawning_Ticket);
+
+    // Articles Query
+    const [articles] = await pool.query(
+      `SELECT 
+        ta.Pawning_Ticket_idPawning_Ticket as ticketId, ta.Article_Condition as \`condition\`, 
+        ta.Caratage as caratage, ta.No_Of_Items as qty, ta.Gross_Weight as grossWeight, 
+        ta.Net_Weight as netWeight, ta.Assessed_Value as assessedValue, ta.Declared_Value as declaredValue, 
+        at.Description as type, ac.Description as category
+      FROM ticket_articles ta
+      LEFT JOIN article_types at ON ta.Article_type = at.idArticle_Types
+      LEFT JOIN article_categories ac ON ta.Article_category = ac.idArticle_Categories
+      WHERE ta.Pawning_Ticket_idPawning_Ticket IN (?)`,
+      [ticketIds]
+    );
+
+    // Payments totals
+    const [payments] = await pool.query(
+      `SELECT 
+        Pawning_Ticket_idPawning_Ticket as ticketId, 
+        COUNT(*) as noOfPayments, 
+        SUM(Principal_Amount + Interest_Amount + Service_Charge_Amount + Late_Charge_Amount + Additional_Charge_Amount + Early_Settlement_Charge_Amount) as totalPaid
+      FROM pawning_ticket_payment
+      WHERE Pawning_Ticket_idPawning_Ticket IN (?)
+      GROUP BY Pawning_Ticket_idPawning_Ticket`,
+      [ticketIds]
+    );
+
+    const paymentMap = new Map(payments.map(p => [p.ticketId, p]));
+    const articleMap = new Map();
+    articles.forEach(a => {
+      if (!articleMap.has(a.ticketId)) articleMap.set(a.ticketId, []);
+      articleMap.get(a.ticketId).push(a);
+    });
+
+    // Merge everything
+    tickets.forEach(t => {
+      t.articles = articleMap.get(t.idPawning_Ticket) || [];
+      const p = paymentMap.get(t.idPawning_Ticket) || { noOfPayments: 0, totalPaid: 0 };
+      t.noOfPayments = p.noOfPayments;
+      t.totalPaid = p.totalPaid;
+      
+      // Default placeholder values for missing fields in current DB schema
+      t.interestAmount = 0; // Needs more complex calc if not in a single column
+      t.earlySettlementType = "N/A";
+      t.earlySettlementAmount = 0;
+    });
+
+    return res.status(200).json({
+      success: true,
+      fullTicketDetails: tickets,
+      pagination: paginationData
+    });
+
+  } catch (error) {
+    console.error("Error in full ticket details report:", error);
+    return next(errorHandler(500, "Internal server error"));
+  }
+};

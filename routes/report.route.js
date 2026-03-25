@@ -5,6 +5,7 @@ import {
   loanToMarketValueReport,
   getCompanyBranches,
   ticketDayEndReport,
+  fullTicketDetailsReport,
 } from "../controllers/report.controller.js";
 
 const route = express.Router();
@@ -22,6 +23,13 @@ route.get(
   "/:branchId/day-end-ticket-report",
   protectedRoute,
   ticketDayEndReport
+);
+
+// Route to get Full Ticket Details Report
+route.get(
+  "/:branchId/full-ticket-details",
+  protectedRoute,
+  fullTicketDetailsReport
 );
 
 // New route to get company branches for the filter dropdown

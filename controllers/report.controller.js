@@ -206,3 +206,191 @@ export const fullTicketDetailsReport = async (req, res, next) => {
     return next(errorHandler(500, "Internal server error"));
   }
 };
+
+// Articles In Hand Report Controller
+export const articlesInHandReport = async (req, res, next) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = (page - 1) * limit;
+    const { start_date, end_date, branchId, status } = req.query;
+
+    // Resolve branch IDs
+    let branchIds;
+    if (branchId) {
+      branchIds = [branchId];
+    } else {
+      try {
+        const accessToken = req.accessToken;
+        const branches = await subsystemApi.branches(
+          req.companyId,
+          accessToken,
+        );
+        branchIds = (branches.branches || []).map((branch) => branch.idBranch);
+      } catch (error) {
+        console.error(
+          "Error fetching branches for articles in hand report:",
+          error,
+        );
+        return next(errorHandler(500, "Internal server error"));
+      }
+    }
+
+    // Build WHERE clause
+    // Default to active/open tickets (articles currently in hand)
+    let whereConditions = ["pt.Branch_idBranch IN (?)"];
+    let queryParams = [branchIds];
+
+    if (start_date) {
+      whereConditions.push("DATE(pt.Date_Time) >= ?");
+      queryParams.push(start_date);
+    }
+    if (end_date) {
+      whereConditions.push("DATE(pt.Date_Time) <= ?");
+      queryParams.push(end_date);
+    }
+    if (status) {
+      whereConditions.push("pt.Status = ?");
+      queryParams.push(status);
+    } else {
+      // Default: only tickets where articles are still in hand
+      // Excludes: Settled (2) and Rejected (4)
+      whereConditions.push("pt.Status NOT IN (2, 4)");
+    }
+
+    const whereClause = whereConditions.join(" AND ");
+
+    // Pagination — count at the article level (one row per article)
+    const paginationData = await getReportPaginationData(
+      `SELECT COUNT(*) as count
+       FROM ticket_articles ta
+       JOIN pawning_ticket pt ON ta.Pawning_Ticket_idPawning_Ticket = pt.idPawning_Ticket
+       WHERE ${whereClause}`,
+      queryParams,
+      page,
+      limit,
+    );
+
+    if (paginationData.totalCount === 0) {
+      return res.status(200).json({
+        success: true,
+        articlesInHand: [],
+        pagination: paginationData,
+      });
+    }
+
+    // Main query — one row per article, joined with ticket info
+    const [articles] = await pool.query(
+      `SELECT
+        ta.idTicket_Articles      as articleId,
+        ta.Pawning_Ticket_idPawning_Ticket as ticketDbId,
+        pt.Ticket_No              as ticketNo,
+        pt.Date_Time              as grantDate,
+        pt.Maturity_date          as maturityDate,
+        pt.Status                 as ticketStatus,
+        pt.Pawning_Advance_Amount as pawningAdvance,
+        pt.Payble_Value           as payableAmount,
+        pt.Customer_idCustomer,
+        pt.Branch_idBranch        as branchId,
+        p.Name                    as productName,
+        ta.Article_type           as typeId,
+        ta.Article_category       as categoryId,
+        ta.Article_Condition      as \`condition\`,
+        ta.Caratage               as caratage,
+        ta.No_Of_Items            as qty,
+        ta.Gross_Weight           as grossWeight,
+        ta.Net_Weight             as netWeight,
+        ta.Assessed_Value         as assessedValue,
+        ta.Declared_Value         as declaredValue,
+        DATEDIFF(CURDATE(), pt.Date_Time) as age
+      FROM ticket_articles ta
+      JOIN pawning_ticket pt  ON ta.Pawning_Ticket_idPawning_Ticket = pt.idPawning_Ticket
+      JOIN pawning_product p  ON pt.Pawning_Product_idPawning_Product = p.idPawning_Product
+      WHERE ${whereClause}
+      ORDER BY pt.Date_Time DESC
+      LIMIT ? OFFSET ?`,
+      [...queryParams, limit, offset],
+    );
+
+    // ── Customers ────────────────────────────────────────────────────────────
+    const customerIds = [
+      ...new Set(articles.map((a) => a.Customer_idCustomer)),
+    ];
+    let customersMap = new Map();
+    if (customerIds.length > 0) {
+      try {
+        const customersRes = await subsystemApi.customersByPawningIds(
+          customerIds,
+          req.companyId,
+          req.accessToken,
+        );
+        if (customersRes?.customers) {
+          customersRes.customers.forEach((c) => {
+            customersMap.set(c.isPawningUserId, c);
+          });
+        }
+      } catch (error) {
+        console.error(
+          "Error fetching customers for articles in hand report:",
+          error,
+        );
+      }
+    }
+
+    // ── Article Types & Categories ────────────────────────────────────────────
+    const typeIds = [...new Set(articles.map((a) => a.typeId).filter(Boolean))];
+    const categoryIds = [
+      ...new Set(articles.map((a) => a.categoryId).filter(Boolean)),
+    ];
+
+    const typeMap = new Map();
+    const categoryMap = new Map();
+
+    try {
+      await Promise.all([
+        ...typeIds.map(async (id) => {
+          const res = await subsystemApi.articleType(id, req.accessToken);
+          if (res?.articleType) typeMap.set(id, res.articleType.Description);
+        }),
+        ...categoryIds.map(async (id) => {
+          const res = await subsystemApi.articleCategory(id, req.accessToken);
+          if (res?.articleCategory)
+            categoryMap.set(id, res.articleCategory.Description);
+        }),
+      ]);
+    } catch (error) {
+      console.error("Error fetching article types/categories:", error);
+    }
+
+    // ── Merge everything onto each article row ────────────────────────────────
+    articles.forEach((a) => {
+      // Resolve lookups
+      a.type = typeMap.get(a.typeId) || "N/A";
+      a.category = categoryMap.get(a.categoryId) || "N/A";
+
+      // Attach customer info
+      const customer = customersMap.get(a.Customer_idCustomer);
+      a.customerName = customer
+        ? `${customer.First_Name || ""} ${customer.Last_Name || ""}`.trim() ||
+          customer.Full_Name ||
+          "N/A"
+        : "N/A";
+      a.NIC = customer?.Nic ?? "N/A";
+      a.contact = customer?.Contact_No ?? "N/A";
+
+      // Clean up internal FK columns from the response
+      delete a.typeId;
+      delete a.categoryId;
+      delete a.Customer_idCustomer;
+    });
+
+    return res.status(200).json({
+      success: true,
+      articlesInHand: articles,
+      pagination: paginationData,
+    });
+  } catch (error) {
+    console.error("Error in articles in hand report:", error);
+    return next(errorHandler(500, "Internal server error"));
+  }
+};

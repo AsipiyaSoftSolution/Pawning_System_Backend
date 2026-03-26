@@ -1,7 +1,10 @@
 import express from "express";
 import { protectedRoute } from "../middlewares/auth.middleware.js";
 import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
-import { fullTicketDetailsReport } from "../controllers/report.controller.js";
+import {
+  fullTicketDetailsReport,
+  articlesInHandReport,
+} from "../controllers/report.controller.js";
 
 const route = express.Router();
 
@@ -11,5 +14,8 @@ route.get(
   protectedRoute,
   fullTicketDetailsReport,
 );
+
+// Route to get Articles In Hand Report
+route.get("/:branchId/articles-in-hand", protectedRoute, articlesInHandReport);
 
 export default route;

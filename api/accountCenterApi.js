@@ -241,6 +241,9 @@ export const subsystemApi = {
       `/subsystem/generate-pawning-customer-number?companyId=${companyId}&branchId=${branchId}`,
       accessToken,
     ),
+
+  getBranchesOfTheCompany: (companyId, accessToken) =>
+    accCenterGet(`/subsystem/branch-ids`, accessToken),
 };
 
 // Pawning Payments

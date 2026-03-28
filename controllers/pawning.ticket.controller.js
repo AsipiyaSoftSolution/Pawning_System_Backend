@@ -5064,14 +5064,6 @@ export const findTicketBySearchInput = async (req, res, next) => {
             ticketsByCustomers.forEach((t) => {
               ticketMap.set(t.idPawning_Ticket, t);
             });
-          } else {
-            // zero-ticket customer implementation
-            ticketMap.set(`dummy-${pawningUserId}`, {
-              idPawning_Ticket: null,
-              Ticket_No: null,
-              Customer_idCustomer: pawningUserId,
-              Amount: 0,
-            });
           }
 
           tickets = Array.from(ticketMap.values()).sort(

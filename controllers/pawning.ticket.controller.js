@@ -5014,3 +5014,111 @@ export const batchUpdateTicketNumbers = async (req, res, next) => {
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
+
+// find ticket by search input for cheque realisation
+export const findTicketBySearchInput = async (req, res, next) => {
+  try {
+    const { searchInput } = req.query;
+    if (!searchInput) return next(errorHandler(400, "Search input is missing"));
+
+    const accessToken = req.accessToken || req.cookies?.accessToken;
+    const companyId = req.companyId.toString();
+    const branchId = req.branchId;
+
+    // 1. Search for tickets by Ticket Number (LIKE match)
+    const [ticketsByNo] = await pool.query(
+      "SELECT idPawning_Ticket, Ticket_No, Customer_idCustomer, Pawning_Advance_Amount AS Amount FROM pawning_ticket WHERE Ticket_No LIKE ? AND Branch_idBranch = ?",
+      [`%${searchInput}%`, branchId],
+    );
+
+    const ticketMap = new Map();
+    ticketsByNo.forEach((t) => ticketMap.set(t.idPawning_Ticket, t));
+
+    // 2. Search for customers by term (Name, NIC, Phone, etc.) and get their related tickets
+    try {
+      const searchResponse = await subsystemApi.searchCustomerByTerm(
+        searchInput,
+        companyId,
+        branchId,
+        accessToken,
+      );
+
+      const customersFound = searchResponse.data || [];
+
+      if (Array.isArray(customersFound) && customersFound.length > 0) {
+        const pawningUserIds = customersFound
+          .map((c) => c.isPawningUserId)
+          .filter((id) => id);
+
+        if (pawningUserIds.length > 0) {
+          const placeholders = pawningUserIds.map(() => "?").join(",");
+          const [ticketsByCustomers] = await pool.query(
+            `SELECT idPawning_Ticket, Ticket_No, Customer_idCustomer, Pawning_Advance_Amount AS Amount 
+             FROM pawning_ticket 
+             WHERE Customer_idCustomer IN (${placeholders}) AND Branch_idBranch = ?`,
+            [...pawningUserIds, branchId],
+          );
+
+          // Merge without duplicates (by idPawning_Ticket) using Map
+          ticketsByCustomers.forEach((t) => {
+            if (!ticketMap.has(t.idPawning_Ticket)) {
+              ticketMap.set(t.idPawning_Ticket, t);
+            }
+          });
+        }
+      }
+    } catch (err) {
+      console.error("Error searching customers by term in Pawning:", err);
+    }
+
+    const tickets = Array.from(ticketMap.values()).sort(
+      (a, b) => b.idPawning_Ticket - a.idPawning_Ticket,
+    );
+
+    if (tickets.length === 0) {
+      return res.status(200).json({
+        success: true,
+        groupedData: [],
+      });
+    }
+
+    // 3. Batch fetch all unique customers from the collected tickets
+    const uniqueCustomerIds = [
+      ...new Set(tickets.map((t) => t.Customer_idCustomer)),
+    ];
+    let customerDataMap = new Map();
+
+    try {
+      const response = await subsystemApi.customersByPawningIds(
+        uniqueCustomerIds,
+        companyId,
+        accessToken,
+      );
+
+      const customers = response.customers || [];
+
+      if (Array.isArray(customers)) {
+        customers.forEach((cust) => {
+          // Map by isPawningUserId which corresponds to Customer_idCustomer in pawning_ticket
+          customerDataMap.set(cust.isPawningUserId, cust);
+        });
+      }
+    } catch (apiError) {
+      console.error("Error fetching customers in batch:", apiError);
+    }
+
+    // 4. Group tickets with their customer data
+    const groupedData = tickets.map((ticket) => ({
+      ...ticket,
+      customer: customerDataMap.get(ticket.Customer_idCustomer) || null,
+    }));
+
+    return res.status(200).json({
+      success: true,
+      groupedData,
+    });
+  } catch (error) {
+    console.error("Error in findTicketBySearchInput controller", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};

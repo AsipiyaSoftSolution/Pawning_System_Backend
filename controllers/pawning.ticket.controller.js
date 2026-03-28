@@ -5034,46 +5034,57 @@ export const findTicketBySearchInput = async (req, res, next) => {
     const ticketMap = new Map();
     ticketsByNo.forEach((t) => ticketMap.set(t.idPawning_Ticket, t));
 
-    // 2. Search for customers by term (Name, NIC, Phone, etc.) and get their related tickets
-    try {
-      const searchResponse = await subsystemApi.searchCustomerByTerm(
-        searchInput,
-        companyId,
-        branchId,
-        accessToken,
-      );
+    let tickets = Array.from(ticketMap.values()).sort(
+      (a, b) => b.idPawning_Ticket - a.idPawning_Ticket,
+    );
 
-      const customersFound = searchResponse.data || [];
+    // 2. Fallback: If no tickets found by number, search for customer by NIC
+    if (tickets.length === 0) {
+      try {
+        const queryParams = { companyId, branchId };
+        const nicResponse = await customerApi.findCustomerByNic(
+          searchInput,
+          queryParams,
+          accessToken,
+        );
+        console.log("nicResponse", nicResponse);
 
-      if (Array.isArray(customersFound) && customersFound.length > 0) {
-        const pawningUserIds = customersFound
-          .map((c) => c.isPawningUserId)
-          .filter((id) => id);
+        if (nicResponse && nicResponse.isPawningUserId) {
+          const pawningUserId = nicResponse.isPawningUserId;
 
-        if (pawningUserIds.length > 0) {
-          const placeholders = pawningUserIds.map(() => "?").join(",");
           const [ticketsByCustomers] = await pool.query(
             `SELECT idPawning_Ticket, Ticket_No, Customer_idCustomer, Pawning_Advance_Amount AS Amount 
              FROM pawning_ticket 
-             WHERE Customer_idCustomer IN (${placeholders}) AND Branch_idBranch = ?`,
-            [...pawningUserIds, branchId],
+             WHERE Customer_idCustomer = ? AND Branch_idBranch = ?`,
+            [pawningUserId, branchId],
           );
+          console.log("ticketsByCustomers", ticketsByCustomers);
 
-          // Merge without duplicates (by idPawning_Ticket) using Map
-          ticketsByCustomers.forEach((t) => {
-            if (!ticketMap.has(t.idPawning_Ticket)) {
+          if (ticketsByCustomers.length > 0) {
+            ticketsByCustomers.forEach((t) => {
               ticketMap.set(t.idPawning_Ticket, t);
-            }
-          });
-        }
-      }
-    } catch (err) {
-      console.error("Error searching customers by term in Pawning:", err);
-    }
+            });
+          } else {
+            // zero-ticket customer implementation
+            ticketMap.set(`dummy-${pawningUserId}`, {
+              idPawning_Ticket: null,
+              Ticket_No: null,
+              Customer_idCustomer: pawningUserId,
+              Amount: 0,
+            });
+          }
 
-    const tickets = Array.from(ticketMap.values()).sort(
-      (a, b) => b.idPawning_Ticket - a.idPawning_Ticket,
-    );
+          tickets = Array.from(ticketMap.values()).sort(
+            (a, b) => (b.idPawning_Ticket || 0) - (a.idPawning_Ticket || 0),
+          );
+        }
+      } catch (err) {
+        console.error(
+          "Error searching customer by NIC in Pawning fallback:",
+          err,
+        );
+      }
+    }
 
     if (tickets.length === 0) {
       return res.status(200).json({

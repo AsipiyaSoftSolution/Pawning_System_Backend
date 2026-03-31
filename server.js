@@ -17,6 +17,7 @@ import pawningTicketRoutes from "./routes/pawning.ticket.route.js";
 import pawningTicketPaymentRoutes from "./routes/pawning.ticket.payment.route.js";
 import accountRoutes from "./routes/account.route.js";
 import reportRoutes from "./routes/report.route.js";
+import dashboardRoutes from "./routes/dashboard.route.js";
 
 // Shedule cron jobs
 import { addDailyTicketLog } from "./utils/pawning.ticket.logs.js";
@@ -69,6 +70,7 @@ app.use("/api/pawning-ticket", pawningTicketRoutes);
 app.use("/api/pawning-ticket-payment", pawningTicketPaymentRoutes);
 app.use("/api/account", accountRoutes);
 app.use("/api/report", reportRoutes);
+app.use("/api/dashboard", dashboardRoutes);
 
 const PORT = process.env.PORT || 3000;
 

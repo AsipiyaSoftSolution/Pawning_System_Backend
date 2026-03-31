@@ -681,6 +681,7 @@ export const createPaymentForTicket = async (req, res, next) => {
       currentReceiptBookNumber,
       currentVoucherNumber,
     } = req.body;
+
     if (!ticketId) {
       return next(errorHandler(400, "Ticket ID is required"));
     }
@@ -843,9 +844,16 @@ export const createPaymentForTicket = async (req, res, next) => {
           data,
           req.accessToken,
         );
+        console.log("createPaymentForTicket result:", result);
         // console.log(result, "result");
       } catch (error) {
-        return next(errorHandler(500, "Failed to create ticket payment"));
+        const status = error?.response?.status || 500;
+        const message =
+          error?.response?.message ||
+          error?.response?.data?.message ||
+          error?.message ||
+          "Failed to create ticket payment";
+        return next(errorHandler(status, message));
       }
 
       // Insert ticket log record
@@ -1122,9 +1130,13 @@ export const createTicketRenewalPayment = async (req, res, next) => {
         );
         console.log(result, "result");
       } catch (error) {
-        return next(
-          errorHandler(500, "Failed to create ticket renewal payment"),
-        );
+        const status = error?.response?.status || 500;
+        const message =
+          error?.response?.message ||
+          error?.response?.data?.message ||
+          error?.message ||
+          "Failed to create ticket renewal payment";
+        return next(errorHandler(status, message));
       }
 
       // get the day count by from today date to ticket Date_Time
@@ -1450,9 +1462,13 @@ export const createTicketSettlementPayment = async (req, res, next) => {
         );
         console.log(result, "result");
       } catch (error) {
-        return next(
-          errorHandler(500, "Failed to create ticket settlement payment"),
-        );
+        const status = error?.response?.status || 500;
+        const message =
+          error?.response?.message ||
+          error?.response?.data?.message ||
+          error?.message ||
+          "Failed to create ticket settlement payment";
+        return next(errorHandler(status, message));
       }
 
       // insert into the payment table (pool)

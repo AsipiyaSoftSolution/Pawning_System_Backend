@@ -35,6 +35,7 @@ import {
   updateTicketStatusAfterLoanDisbursement,
   getAllTicketsForCompany,
   batchUpdateTicketNumbers,
+  findTicketBySearchInput,
 } from "../controllers/pawning.ticket.controller.js";
 
 const router = express.Router();
@@ -261,4 +262,11 @@ router.patch(
   protectedRoute,
   batchUpdateTicketNumbers,
 ); // Batch update ticket numbers from Account Center
+
+router.get(
+  "/:branchId/find-ticket-by-search-input",
+  protectedRoute,
+  checkUserBranchAccess,
+  findTicketBySearchInput,
+); // Find ticket by search input
 export default router;

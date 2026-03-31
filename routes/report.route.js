@@ -2,28 +2,20 @@ import express from "express";
 import { protectedRoute } from "../middlewares/auth.middleware.js";
 import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
 import {
-  loanToMarketValueReport,
-  getCompanyBranches,
-  ticketDayEndReport,
+  fullTicketDetailsReport,
+  articlesInHandReport,
 } from "../controllers/report.controller.js";
 
 const route = express.Router();
 
-// Route to get Loan to Market Value report for a specific branch
+// Route to get Full Ticket Details Report
 route.get(
-  "/:branchId/loan-to-market-value",
+  "/:branchId/full-ticket-details",
   protectedRoute,
-  checkUserBranchAccess,
-  loanToMarketValueReport
+  fullTicketDetailsReport,
 );
 
-// Route to get Day End Ticket Report
-route.get(
-  "/:branchId/day-end-ticket-report",
-  protectedRoute,
-  ticketDayEndReport
-);
+// Route to get Articles In Hand Report
+route.get("/:branchId/articles-in-hand", protectedRoute, articlesInHandReport);
 
-// New route to get company branches for the filter dropdown
-route.get("/company-branches", protectedRoute, getCompanyBranches);
 export default route;

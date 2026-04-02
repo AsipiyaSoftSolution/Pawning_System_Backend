@@ -1440,3 +1440,42 @@ export const batchUpdateCustomerNumbers = async (req, res, next) => {
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
+
+// customer blacklist callback (from acc center)
+export const blacklistCustomerCallback = async (req, res, next) => {
+  try {
+    const { customerId, reason } = req.body;
+
+    if (!customerId || !reason) {
+      return next(errorHandler(400, "Customer ID and reason are required"));
+    }
+
+    // check if the customer exists
+    const [customer] = await pool.query(
+      "SELECT idCustomer FROM customer WHERE idCustomer = ?",
+      [customerId],
+    );
+
+    if (customer.length === 0) {
+      return next(errorHandler(404, "Customer not found"));
+    }
+
+    // update the customer status to 0 (blacklist)
+    const [result] = await pool.query(
+      "UPDATE customer SET Behaviour_Status = 0,Blacklist_Reason = ?, Blacklist_Date = ? WHERE idCustomer = ?",
+      [reason, new Date(), customerId],
+    );
+
+    if (result.affectedRows === 0) {
+      return next(errorHandler(400, "Failed to blacklist customer"));
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Customer blacklisted successfully",
+    });
+  } catch (error) {
+    console.error("Error in blacklistCustomerCallback:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};

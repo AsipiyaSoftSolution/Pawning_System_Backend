@@ -1444,7 +1444,7 @@ export const batchUpdateCustomerNumbers = async (req, res, next) => {
 // customer blacklist callback (from acc center)
 export const blacklistCustomerCallback = async (req, res, next) => {
   try {
-    const { customerId, reason } = req.body;
+    const { customerId, reason, blacklistDateTime } = req.body;
 
     if (!customerId || !reason) {
       return next(errorHandler(400, "Customer ID and reason are required"));
@@ -1462,7 +1462,7 @@ export const blacklistCustomerCallback = async (req, res, next) => {
 
     // update the customer status to 0 (blacklist)
     const [result] = await pool.query(
-      "UPDATE customer SET Behaviour_Status = 0,Blacklist_Reason = ?, Blacklist_Date = ? WHERE idCustomer = ?",
+      "UPDATE customer SET status = 0,Blacklist_Reason = ?, Blacklist_Date = ? WHERE idCustomer = ?",
       [reason, new Date(), customerId],
     );
 

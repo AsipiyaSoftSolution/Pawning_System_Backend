@@ -6,6 +6,8 @@ import {
   articlesInHandReport,
   paymentsReport,
   dailyTicketIncomeReport,
+  fetchAndSendAllProductsForSelectedBranch,
+  fetchAndSendAllTicketsForSelectedPawningProduct,
 } from "../controllers/report.controller.js";
 
 const route = express.Router();
@@ -40,6 +42,22 @@ route.get(
   protectedRoute,
   checkUserBranchAccess,
   dailyTicketIncomeReport,
+);
+
+// Route to fetch and send all products for the selected branch
+route.get(
+  "/:branchId/fetch-and-send-all-products",
+  protectedRoute,
+  checkUserBranchAccess,
+  fetchAndSendAllProductsForSelectedBranch,
+);
+
+// Route to fetch and send all tickets for the selected pawning product
+route.get(
+  "/:branchId/fetch-and-send-all-tickets",
+  protectedRoute,
+  checkUserBranchAccess,
+  fetchAndSendAllTicketsForSelectedPawningProduct,
 );
 
 export default route;

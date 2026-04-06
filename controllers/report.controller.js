@@ -602,3 +602,103 @@ export const dailyTicketIncomeReport = async (req, res, next) => {
     return next(errorHandler(500, "Internal server error"));
   }
 };
+
+// Fetch and sends all the products for the selected branch
+export const fetchAndSendAllProductsForSelectedBranch = async (
+  req,
+  res,
+  next,
+) => {
+  try {
+    const { branchId } = req.query;
+
+    if (!branchId) {
+      return next(errorHandler(400, "branchId is required"));
+    }
+
+    const [products] = await pool.query(
+      `SELECT idPawning_Product, Name FROM pawning_product WHERE Branch_idBranch = ? ORDER BY Name ASC`,
+      [branchId],
+    );
+
+    return res.status(200).json({
+      success: true,
+      products: products,
+    });
+  } catch (error) {
+    console.error(
+      "Error in fetch and send all products for selected branch:",
+      error,
+    );
+    return next(errorHandler(500, "Internal server error"));
+  }
+};
+
+// Fetch and sends all the Tickets for selected pawning product
+export const fetchAndSendAllTicketsForSelectedPawningProduct = async (
+  req,
+  res,
+  next,
+) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const { productId, branchId, status } = req.query;
+
+    if (!productId || !branchId) {
+      return next(errorHandler(400, "productId and branchId are required"));
+    }
+
+    const [product] = await pool.query(
+      `SELECT idPawning_Product, Name FROM pawning_product WHERE idPawning_Product = ?`,
+      [productId],
+    );
+    if (product.length === 0) {
+      return next(errorHandler(404, "Product not found"));
+    }
+
+    const ticketWhereParams = [productId, branchId];
+    let ticketWhereSql =
+      "Pawning_Product_idPawning_Product = ? AND Branch_idBranch = ?";
+    if (status !== undefined && status !== null && status !== "") {
+      ticketWhereSql += " AND Status = ?";
+      ticketWhereParams.push(status);
+    }
+
+    const paginationData = await getReportPaginationData(
+      `SELECT COUNT(*) as count FROM pawning_ticket WHERE ${ticketWhereSql}`,
+      ticketWhereParams,
+      page,
+      limit,
+    );
+
+    if (paginationData.totalCount === 0) {
+      return res.status(200).json({
+        success: true,
+        tickets: [],
+        pagination: paginationData,
+      });
+    }
+
+    const [tickets] = await pool.query(
+      `SELECT idPawning_Ticket, Ticket_No, SEQ_No, Date_Time, Maturity_date, Status, Pawning_Advance_Amount, Balance_Amount,Gross_Weight,Net_Weight,No_Of_Items,Assessed_Value,Payble_Value
+       FROM pawning_ticket
+       WHERE ${ticketWhereSql}
+       ORDER BY Date_Time DESC
+       LIMIT ? OFFSET ?`,
+      [...ticketWhereParams, limit, paginationData.offset],
+    );
+
+    return res.status(200).json({
+      success: true,
+      tickets: tickets,
+      pagination: paginationData,
+    });
+  } catch (error) {
+    console.error(
+      "Error in fetch and send all tickets for selected pawning product:",
+      error,
+    );
+    return next(errorHandler(500, "Internal server error"));
+  }
+};

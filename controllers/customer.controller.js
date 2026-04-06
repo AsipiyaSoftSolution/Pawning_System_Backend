@@ -398,6 +398,7 @@ export const checkCustomerExistsForCreation = async (req, res, next) => {
       companyId: req.companyId.toString(),
       branchId: req.branchId.toString(),
       nic,
+      software: "pawning",
     };
     const accCenterResponse = await customerApi.checkExistsForCreation(
       queryParams,

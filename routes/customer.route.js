@@ -20,6 +20,7 @@ import {
   generateCustomerNumber,
   updateCustomerNumberFormat,
   batchUpdateCustomerNumbers,
+  blacklistCustomerCallback,
 } from "../controllers/customer.controller.js";
 import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
 import { checkUserSelectedHeadBranch } from "../middlewares/headBranch.middleware.js";
@@ -160,4 +161,6 @@ router.patch(
   batchUpdateCustomerNumbers,
 );
 
+// customer blacklist callback (from acc center)
+router.patch("/blacklist", protectedRoute, blacklistCustomerCallback);
 export default router;

@@ -63,14 +63,6 @@ export const customerApi = {
     );
   },
 
-  getCustomersByIds: (ids, params, accessToken) => {
-    const qs = new URLSearchParams(params).toString();
-    return accCenterGet(
-      `/customer/get-customers-by-ids/${ids}?${qs}`,
-      accessToken,
-    );
-  },
-
   getAllCustomers: (params, accessToken) => {
     const qs = new URLSearchParams(params).toString();
     return accCenterGet(`/customer/get-all-customers?${qs}`, accessToken);
@@ -81,6 +73,16 @@ export const customerApi = {
     return accCenterPut(
       `/customer/update-customer/${id}?${qs}`,
       data,
+      accessToken,
+    );
+  },
+
+  /** Link existing company_customer row to a Pawning idCustomer (sets isPawningUserId). */
+  linkPawningUserId: (idCompany_Customer, body, params, accessToken) => {
+    const qs = new URLSearchParams(params).toString();
+    return accCenterPut(
+      `/customer/company-customer/${idCompany_Customer}/link-pawning-user?${qs}`,
+      body,
       accessToken,
     );
   },

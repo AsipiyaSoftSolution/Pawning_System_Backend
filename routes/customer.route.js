@@ -21,6 +21,8 @@ import {
   updateCustomerNumberFormat,
   batchUpdateCustomerNumbers,
   blacklistCustomerCallback,
+  linkExistingCustomer,
+  linkCustomerCallback,
 } from "../controllers/customer.controller.js";
 import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
 import { checkUserSelectedHeadBranch } from "../middlewares/headBranch.middleware.js";
@@ -35,7 +37,14 @@ router.post(
   protectedRoute,
   checkUserBranchAccess,
   createCustomer,
-); // Create a new customer
+); // Create a new customer (not link-to-existing; use link-existing for that)
+
+router.post(
+  "/:branchId/link-existing",
+  protectedRoute,
+  checkUserBranchAccess,
+  linkExistingCustomer,
+); // Link Pawning customer to existing Account Center company_customer
 
 // Called by Account Center when CUSTOMER CREATE approval is fully approved (server-to-server)
 router.post("/:branchId/create-from-approval", createFromApproval);
@@ -163,4 +172,7 @@ router.patch(
 
 // customer blacklist callback (from acc center)
 router.patch("/blacklist", protectedRoute, blacklistCustomerCallback);
+
+// customer link callback (from acc center) || after link approval is fully approved we call this endpoint to link the customer in pawning system (create customer and link pawning user id to account center)
+router.post("/:branchId/link-customer", protectedRoute, linkCustomerCallback);
 export default router;

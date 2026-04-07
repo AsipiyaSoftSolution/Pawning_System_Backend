@@ -22,6 +22,7 @@ import {
   batchUpdateCustomerNumbers,
   blacklistCustomerCallback,
   linkExistingCustomer,
+  linkCustomerCallback,
 } from "../controllers/customer.controller.js";
 import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
 import { checkUserSelectedHeadBranch } from "../middlewares/headBranch.middleware.js";
@@ -171,4 +172,7 @@ router.patch(
 
 // customer blacklist callback (from acc center)
 router.patch("/blacklist", protectedRoute, blacklistCustomerCallback);
+
+// customer link callback (from acc center) || after link approval is fully approved we call this endpoint to link the customer in pawning system (create customer and link pawning user id to account center)
+router.post("/:branchId/link-customer", protectedRoute, linkCustomerCallback);
 export default router;

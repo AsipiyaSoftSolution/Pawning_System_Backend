@@ -1665,3 +1665,132 @@ export const blacklistCustomerCallback = async (req, res, next) => {
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
+
+// customer link callback (from Account Center after CUSTOMER LINK approval is fully approved)
+export const linkCustomerCallback = async (req, res, next) => {
+  const connection = await pool.getConnection();
+  try {
+    const branchId = req.params.branchId
+      ? Number(req.params.branchId)
+      : null;
+    const { customerData } = req.body;
+
+    if (!branchId || Number.isNaN(branchId)) {
+      connection.release();
+      return next(errorHandler(400, "branchId is required in URL"));
+    }
+    if (!customerData || typeof customerData !== "object") {
+      connection.release();
+      return next(errorHandler(400, "customerData is required"));
+    }
+
+    const accessToken = req.accessToken || req.cookies?.accessToken;
+    if (!accessToken) {
+      connection.release();
+      return next(errorHandler(401, "Authentication token is required"));
+    }
+
+    const ac = customerData.existingAccountCenterCustomer || {};
+    const idCompany_Customer = Number(
+      customerData.linkExistingCompanyCustomerId ??
+        customerData.idCompany_Customer ??
+        ac.idCompany_Customer,
+    );
+
+    if (!idCompany_Customer || Number.isNaN(idCompany_Customer)) {
+      connection.release();
+      return next(
+        errorHandler(
+          400,
+          "linkExistingCompanyCustomerId or existingAccountCenterCustomer.idCompany_Customer is required",
+        ),
+      );
+    }
+
+    let customerNumber =
+      customerData.cus_number ||
+      customerData.Customer_Number ||
+      customerData.customer_number;
+
+    if (!customerNumber) {
+      const genRes = await subsystemApi.generatePawningCustomerNumber(
+        req.companyId,
+        branchId,
+        accessToken,
+      );
+      customerNumber = genRes?.customerNumber;
+    }
+
+    if (!customerNumber) {
+      connection.release();
+      return next(
+        errorHandler(
+          400,
+          "Customer number could not be resolved (cus_number or generated number)",
+        ),
+      );
+    }
+
+    await connection.beginTransaction();
+
+    const [result] = await connection.query(
+      `INSERT INTO customer (Branch_idBranch, Customer_Number, created_at) VALUES (?, ?, ?)`,
+      [branchId, customerNumber, new Date()],
+    );
+    const pawningCustomerId = result.insertId;
+    if (!pawningCustomerId) {
+      await connection.rollback();
+      connection.release();
+      return next(errorHandler(500, "Failed to create customer in Pawning"));
+    }
+
+    const linkRes = await customerApi.linkPawningUserId(
+      idCompany_Customer,
+      { isPawningUserId: pawningCustomerId },
+      { companyId: req.companyId.toString() },
+      accessToken,
+    );
+
+    if (!linkRes?.success) {
+      await connection.rollback();
+      connection.release();
+      return next(
+        errorHandler(
+          400,
+          linkRes?.message || "Failed to link customer in Account Center",
+        ),
+      );
+    }
+
+    await connection.query(
+      "UPDATE customer SET accountCenterCusId = ? WHERE idCustomer = ?",
+      [idCompany_Customer, pawningCustomerId],
+    );
+
+    await connection.commit();
+    connection.release();
+
+    return res.status(201).json({
+      success: true,
+      message:
+        linkRes?.message ||
+        "Customer created in Pawning and linked to Account Center",
+      customerId: pawningCustomerId,
+      accountCenterCusId: idCompany_Customer,
+    });
+  } catch (error) {
+    try {
+      await connection.rollback();
+    } catch (e) {}
+    try {
+      connection.release();
+    } catch (e) {}
+    console.error("Error in linkCustomerCallback:", error);
+    return next(
+      errorHandler(
+        error.status || 500,
+        error.message || "Internal Server Error",
+      ),
+    );
+  }
+};

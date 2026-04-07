@@ -63,14 +63,6 @@ export const customerApi = {
     );
   },
 
-  getCustomersByIds: (ids, params, accessToken) => {
-    const qs = new URLSearchParams(params).toString();
-    return accCenterGet(
-      `/customer/get-customers-by-ids/${ids}?${qs}`,
-      accessToken,
-    );
-  },
-
   getAllCustomers: (params, accessToken) => {
     const qs = new URLSearchParams(params).toString();
     return accCenterGet(`/customer/get-all-customers?${qs}`, accessToken);

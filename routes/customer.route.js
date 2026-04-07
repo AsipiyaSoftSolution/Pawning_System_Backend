@@ -21,6 +21,7 @@ import {
   updateCustomerNumberFormat,
   batchUpdateCustomerNumbers,
   blacklistCustomerCallback,
+  linkExistingCustomer,
 } from "../controllers/customer.controller.js";
 import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
 import { checkUserSelectedHeadBranch } from "../middlewares/headBranch.middleware.js";
@@ -35,7 +36,14 @@ router.post(
   protectedRoute,
   checkUserBranchAccess,
   createCustomer,
-); // Create a new customer
+); // Create a new customer (not link-to-existing; use link-existing for that)
+
+router.post(
+  "/:branchId/link-existing",
+  protectedRoute,
+  checkUserBranchAccess,
+  linkExistingCustomer,
+); // Link Pawning customer to existing Account Center company_customer
 
 // Called by Account Center when CUSTOMER CREATE approval is fully approved (server-to-server)
 router.post("/:branchId/create-from-approval", createFromApproval);

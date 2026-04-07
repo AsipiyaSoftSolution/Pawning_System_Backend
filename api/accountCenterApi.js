@@ -85,6 +85,16 @@ export const customerApi = {
     );
   },
 
+  /** Link existing company_customer row to a Pawning idCustomer (sets isPawningUserId). */
+  linkPawningUserId: (idCompany_Customer, body, params, accessToken) => {
+    const qs = new URLSearchParams(params).toString();
+    return accCenterPut(
+      `/customer/company-customer/${idCompany_Customer}/link-pawning-user?${qs}`,
+      body,
+      accessToken,
+    );
+  },
+
   searchByNic: (nic, params, accessToken) =>
     accCenterGet(
       `/customer/search-by-nic/${encodeURIComponent(nic)}?${new URLSearchParams(

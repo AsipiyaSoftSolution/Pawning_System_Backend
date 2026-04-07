@@ -89,35 +89,37 @@ export const createCustomer = async (req, res, next) => {
       );
     }
 
-    let hasApprovalProcess = false;
-    const approvalCheckParams = {
+    let hasCustomerCreateApproval = false;
+    const createApprovalCheckParams = {
       companyId: req.companyId.toString(),
       approvalName: "CUSTOMER CREATE",
       asipiyaSoftware: "pawning",
     };
 
-    const fetchApprovalCheck = () =>
-      approvalApi.checkApprovalProcess(approvalCheckParams, accessToken);
+    const fetchCreateApprovalCheck = () =>
+      approvalApi.checkApprovalProcess(createApprovalCheckParams, accessToken);
 
     try {
       let approvalCheckResponse;
       try {
-        approvalCheckResponse = await fetchApprovalCheck();
+        approvalCheckResponse = await fetchCreateApprovalCheck();
       } catch (firstError) {
         console.warn(
-          "First approval check attempt failed, retrying once:",
+          "First CUSTOMER CREATE approval check attempt failed, retrying once:",
           firstError?.message || firstError,
         );
-        approvalCheckResponse = await fetchApprovalCheck();
+        approvalCheckResponse = await fetchCreateApprovalCheck();
       }
-      console.log("approvalCheckResponse", approvalCheckResponse);
 
-      if (approvalCheckResponse.success && approvalCheckResponse.data) {
-        hasApprovalProcess = true;
+      if (
+        approvalCheckResponse.success &&
+        approvalCheckResponse.approvalProcess
+      ) {
+        hasCustomerCreateApproval = true;
       }
     } catch (error) {
       console.warn(
-        "Failed to check approval process after retry:",
+        "Failed to check CUSTOMER CREATE approval process after retry:",
         error?.message || error,
       );
       connection.release();
@@ -159,8 +161,8 @@ export const createCustomer = async (req, res, next) => {
       }
     }
 
-    // FLOW A: Approval Process Exists -> No Local Creation Yet
-    if (hasApprovalProcess) {
+    // FLOW A: CUSTOMER CREATE approval -> No Local Creation Yet
+    if (hasCustomerCreateApproval) {
       apiCustomerData.isPawningUserId = null;
 
       const accCenterPayload = { data: apiCustomerData };
@@ -186,7 +188,7 @@ export const createCustomer = async (req, res, next) => {
       });
     }
 
-    // FLOW B: No Approval Process -> Create Local First
+    // FLOW B: No CUSTOMER CREATE approval -> Create Local First
     else {
       await connection.beginTransaction();
 
@@ -243,6 +245,189 @@ export const createCustomer = async (req, res, next) => {
   } catch (error) {
     console.error("Error creating customer:", error);
     // Ensure connection is released if logic falls through
+    try {
+      connection.release();
+    } catch (e) {}
+    return next(
+      errorHandler(
+        error.status || 500,
+        error.message || "Internal Server Error",
+      ),
+    );
+  }
+};
+
+export const linkExistingCustomer = async (req, res, next) => {
+  const connection = await pool.getConnection();
+
+  try {
+    const { customerData } = req.body;
+    const data = customerData || req.body.data;
+
+    if (!data) {
+      connection.release();
+      return next(errorHandler(400, "Customer data is required"));
+    }
+
+    const { documents: _documents, ...customerFields } = data;
+
+    const accessToken = req.accessToken || req.cookies?.accessToken;
+    if (!accessToken) {
+      connection.release();
+      return next(
+        errorHandler(
+          401,
+          "Authentication token is required for linking a customer.",
+        ),
+      );
+    }
+
+    const linkExistingRaw =
+      data.linkExistingCompanyCustomerId ?? data.idCompany_Customer;
+    const linkExistingId =
+      linkExistingRaw != null && linkExistingRaw !== ""
+        ? Number(linkExistingRaw)
+        : null;
+
+    if (!linkExistingId || Number.isNaN(linkExistingId)) {
+      connection.release();
+      return next(
+        errorHandler(
+          400,
+          "linkExistingCompanyCustomerId or idCompany_Customer is required and must be a valid id.",
+        ),
+      );
+    }
+
+    let hasCustomerLinkApproval = false;
+    const linkApprovalCheckParams = {
+      companyId: req.companyId.toString(),
+      approvalName: "CUSTOMER LINK",
+      asipiyaSoftware: "pawning",
+    };
+    const fetchLinkApprovalCheck = () =>
+      approvalApi.checkApprovalProcess(linkApprovalCheckParams, accessToken);
+
+    try {
+      let linkApprovalCheckResponse;
+      try {
+        linkApprovalCheckResponse = await fetchLinkApprovalCheck();
+      } catch (firstError) {
+        console.warn(
+          "First CUSTOMER LINK approval check attempt failed, retrying once:",
+          firstError?.message || firstError,
+        );
+        linkApprovalCheckResponse = await fetchLinkApprovalCheck();
+      }
+      if (
+        linkApprovalCheckResponse.success &&
+        linkApprovalCheckResponse.approvalProcess
+      ) {
+        hasCustomerLinkApproval = true;
+      }
+    } catch (error) {
+      console.warn(
+        "Failed to check CUSTOMER LINK approval process after retry:",
+        error?.message || error,
+      );
+      connection.release();
+      return next(
+        errorHandler(500, "Failed to determine link approval requirements."),
+      );
+    }
+
+    if (customerFields.cus_number?.includes("NIC")) {
+      if (customerFields.New_NIC) {
+        customerFields.cus_number = customerFields.cus_number.replace(
+          "NIC",
+          customerFields.New_NIC,
+        );
+      } else if (customerFields.Old_NIC) {
+        customerFields.cus_number = customerFields.cus_number.replace(
+          "NIC",
+          customerFields.Old_NIC,
+        );
+      }
+    }
+
+    if (hasCustomerLinkApproval) {
+      const approvalResponse = await approvalApi.submitApprovalRequest(
+        {
+          companyId: req.companyId,
+          branchId: req.branchId,
+          userId: req.userId,
+          asipiyaSoftware: "pawning",
+          approvalName: "CUSTOMER LINK",
+          description: "Linking an existing Account Center customer to Pawning",
+          data: { customer: data },
+        },
+        accessToken,
+      );
+      if (!approvalResponse.success) {
+        connection.release();
+        return next(
+          errorHandler(
+            400,
+            approvalResponse.message ||
+              "Failed to create customer linking approval request",
+          ),
+        );
+      }
+      connection.release();
+      return res.status(200).json({
+        success: true,
+        message: "Customer linking approval request created",
+      });
+    }
+
+    await connection.beginTransaction();
+    try {
+      const [result] = await connection.query(
+        `INSERT INTO customer (Branch_idBranch, Customer_Number, created_at) VALUES (?, ?, ?)`,
+        [req.branchId, customerFields.cus_number, new Date()],
+      );
+
+      const pawningCustomerId = result.insertId;
+      if (!pawningCustomerId) {
+        throw new Error("Failed to create customer in pawning database");
+      }
+
+      const linkRes = await customerApi.linkPawningUserId(
+        linkExistingId,
+        { isPawningUserId: pawningCustomerId },
+        { companyId: req.companyId.toString() },
+        accessToken,
+      );
+
+      if (!linkRes?.success) {
+        throw new Error(
+          linkRes?.message || "Failed to link customer in Account Center",
+        );
+      }
+
+      await connection.query(
+        "UPDATE customer SET accountCenterCusId = ? WHERE idCustomer = ?",
+        [linkExistingId, pawningCustomerId],
+      );
+
+      await connection.commit();
+      connection.release();
+
+      return res.status(201).json({
+        success: true,
+        message:
+          linkRes?.message ||
+          "Customer created in Pawning and linked to Account Center",
+        customerId: pawningCustomerId,
+        accountCenterCusId: linkExistingId,
+      });
+    } catch (error) {
+      await connection.rollback();
+      connection.release();
+      throw error;
+    }
+  } catch (error) {
+    console.error("Error linking existing customer:", error);
     try {
       connection.release();
     } catch (e) {}
@@ -398,7 +583,7 @@ export const checkCustomerExistsForCreation = async (req, res, next) => {
       companyId: req.companyId.toString(),
       branchId: req.branchId.toString(),
       nic,
-      software: "pawning",
+      system: "pawning",
     };
     const accCenterResponse = await customerApi.checkExistsForCreation(
       queryParams,

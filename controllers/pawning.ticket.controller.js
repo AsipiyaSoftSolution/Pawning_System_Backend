@@ -10,6 +10,15 @@ import {
 } from "../utils/pawning.ticket.logs.js";
 import { createCustomerLogOnCreateTicket } from "../utils/customer.logs.js";
 import { formatSearchPattern } from "../utils/helper.js";
+import {
+  TICKET_SUFFIX_TO_COLUMN,
+  ARTICLE_SUFFIX_TO_COLUMN,
+  ARTICLE_NAME_SUFFIX,
+  ARTICLE_CATEGORY_SUFFIX,
+  UNKNOWN_TICKET_SUFFIXES,
+  normalizePawningTemplateFieldToken,
+  fullTemplateKey,
+} from "../utils/pawningLetterTemplateFields.js";
 
 /** Fetch company_customer data by Pawning customer ids via Account Center subsystem API */
 async function fetchCustomersByPawningIds(
@@ -174,6 +183,40 @@ async function fetchArticleCategoryById(id, accessToken) {
     return res?.articleCategory;
   } catch (e) {
     console.error("fetchArticleCategoryById:", e);
+    return null;
+  }
+}
+
+/** Resolve article type label from account_center.article_types (DB2) */
+async function resolveArticleTypeDescriptionFromAccDb(typeId) {
+  if (typeId == null || typeId === "") return null;
+  const id = parseInt(String(typeId), 10);
+  if (Number.isNaN(id)) return null;
+  try {
+    const [rows] = await pool2.query(
+      "SELECT Description FROM article_types WHERE idArticle_Types = ? LIMIT 1",
+      [id],
+    );
+    return rows[0]?.Description ?? null;
+  } catch (e) {
+    console.error("resolveArticleTypeDescriptionFromAccDb:", e);
+    return null;
+  }
+}
+
+/** Resolve article category label from account_center.article_categories (DB2) */
+async function resolveArticleCategoryDescriptionFromAccDb(categoryId) {
+  if (categoryId == null || categoryId === "") return null;
+  const id = parseInt(String(categoryId), 10);
+  if (Number.isNaN(id)) return null;
+  try {
+    const [rows] = await pool2.query(
+      "SELECT Description FROM article_categories WHERE idArticle_Categories = ? LIMIT 1",
+      [id],
+    );
+    return rows[0]?.Description ?? null;
+  } catch (e) {
+    console.error("resolveArticleCategoryDescriptionFromAccDb:", e);
     return null;
   }
 }
@@ -5122,6 +5165,154 @@ export const findTicketBySearchInput = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Error in findTicketBySearchInput controller", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+function formatLetterTemplateCell(value) {
+  if (value === null || value === undefined) return "";
+  if (value instanceof Date) {
+    const iso = value.toISOString();
+    return iso.slice(0, 19).replace("T", " ");
+  }
+  return String(value);
+}
+
+/** Letter merge data for Account Center: ticketId + comma-separated field suffixes (after Pawning_Ticket_). */
+export const getPawningTicketDataByIdAndFields = async (req, res, next) => {
+  try {
+    const ticketId = req.params.ticketId;
+    const fieldsRaw = req.query.fields;
+
+    if (!ticketId) {
+      return next(errorHandler(400, "Ticket ID is missing"));
+    }
+    if (
+      fieldsRaw === undefined ||
+      fieldsRaw === null ||
+      String(fieldsRaw).trim() === ""
+    ) {
+      return next(errorHandler(400, "Fields are required"));
+    }
+
+    const suffixes = String(fieldsRaw)
+      .split(",")
+      .map((s) => normalizePawningTemplateFieldToken(s))
+      .filter(Boolean);
+
+    const uniqueSuffixes = [...new Set(suffixes)];
+
+    const [ticketRows] = await pool.query(
+      "SELECT * FROM pawning_ticket WHERE idPawning_Ticket = ? LIMIT 1",
+      [ticketId],
+    );
+    if (!ticketRows.length) {
+      return next(errorHandler(404, "Ticket not found"));
+    }
+    const ticket = ticketRows[0];
+
+    const needArticle = uniqueSuffixes.some(
+      (s) =>
+        ARTICLE_SUFFIX_TO_COLUMN[s] ||
+        s === ARTICLE_NAME_SUFFIX ||
+        s === ARTICLE_CATEGORY_SUFFIX,
+    );
+
+    let firstArticle = null;
+    if (needArticle) {
+      const [articles] = await pool.query(
+        `SELECT * FROM ticket_articles
+         WHERE Pawning_Ticket_idPawning_Ticket = ?
+         ORDER BY idTicket_Articles ASC
+         LIMIT 1`,
+        [ticketId],
+      );
+      firstArticle = articles[0] || null;
+    }
+
+    const accessToken = req.accessToken;
+
+    const ticketData = {};
+    for (const suffix of uniqueSuffixes) {
+      const templateKey = fullTemplateKey(suffix);
+
+      if (UNKNOWN_TICKET_SUFFIXES.has(suffix)) {
+        ticketData[templateKey] = "";
+        continue;
+      }
+
+      const ticketCol = TICKET_SUFFIX_TO_COLUMN[suffix];
+      if (ticketCol) {
+        if (Object.prototype.hasOwnProperty.call(ticket, ticketCol)) {
+          ticketData[templateKey] = formatLetterTemplateCell(ticket[ticketCol]);
+        } else {
+          ticketData[templateKey] = "";
+        }
+        continue;
+      }
+
+      if (suffix === ARTICLE_NAME_SUFFIX) {
+        if (!firstArticle?.Article_type) {
+          ticketData[templateKey] = "";
+        } else {
+          let label = await resolveArticleTypeDescriptionFromAccDb(
+            firstArticle.Article_type,
+          );
+          if (!label && accessToken) {
+            const row = await fetchArticleTypeById(
+              parseInt(String(firstArticle.Article_type), 10),
+              accessToken,
+            );
+            label = row?.Description ?? "";
+          }
+          ticketData[templateKey] = label ?? "";
+        }
+        continue;
+      }
+
+      if (suffix === ARTICLE_CATEGORY_SUFFIX) {
+        if (firstArticle?.Article_category == null || firstArticle?.Article_category === "") {
+          ticketData[templateKey] = "";
+        } else {
+          let label = await resolveArticleCategoryDescriptionFromAccDb(
+            firstArticle.Article_category,
+          );
+          if (!label && accessToken) {
+            const row = await fetchArticleCategoryById(
+              parseInt(String(firstArticle.Article_category), 10),
+              accessToken,
+            );
+            label = row?.Description ?? "";
+          }
+          ticketData[templateKey] = label ?? "";
+        }
+        continue;
+      }
+
+      const artCol = ARTICLE_SUFFIX_TO_COLUMN[suffix];
+      if (artCol) {
+        if (
+          firstArticle &&
+          Object.prototype.hasOwnProperty.call(firstArticle, artCol)
+        ) {
+          ticketData[templateKey] = formatLetterTemplateCell(
+            firstArticle[artCol],
+          );
+        } else {
+          ticketData[templateKey] = "";
+        }
+        continue;
+      }
+
+      ticketData[templateKey] = "";
+    }
+
+    return res.status(200).json({
+      success: true,
+      ticketData,
+    });
+  } catch (error) {
+    console.error("Error in getPawningTicketDataByIdAndFields:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

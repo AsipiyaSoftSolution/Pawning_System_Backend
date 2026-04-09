@@ -36,9 +36,17 @@ import {
   getAllTicketsForCompany,
   batchUpdateTicketNumbers,
   findTicketBySearchInput,
+  getPawningTicketDataByIdAndFields,
 } from "../controllers/pawning.ticket.controller.js";
 
 const router = express.Router();
+
+// Account Center letter templates — must be before /:branchId/* routes
+router.get(
+  "/letter-template/:ticketId",
+  protectedRoute,
+  getPawningTicketDataByIdAndFields,
+);
 
 router.post(
   "/:branchId/create",

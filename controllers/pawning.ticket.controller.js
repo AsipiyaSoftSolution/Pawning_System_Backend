@@ -5178,6 +5178,66 @@ function formatLetterTemplateCell(value) {
   return String(value);
 }
 
+function mapTicketStatusLabel(status) {
+  const code = String(status ?? "").trim();
+  switch (code) {
+    case "-1":
+      return "Approved";
+    case "0":
+      return "Pending Approval";
+    case "1":
+      return "Active";
+    case "2":
+      return "Settled";
+    case "3":
+      return "Overdue";
+    case "4":
+      return "Rejected";
+    default:
+      return code || "";
+  }
+}
+
+function normalizeNumberOrNull(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function buildStageInterestText(ticket) {
+  const baseRate = normalizeNumberOrNull(ticket?.Interest_Rate);
+  if (baseRate && baseRate > 0) return formatLetterTemplateCell(ticket?.Interest_Rate);
+
+  const stageRates = [
+    ticket?.stage1Interest,
+    ticket?.stage2Interest,
+    ticket?.stage3Interest,
+    ticket?.stage4Interest,
+  ]
+    .map((v) => normalizeNumberOrNull(v))
+    .filter((v) => v !== null);
+
+  if (!stageRates.length) return "Stage Interest";
+  return `Stage Interest (${stageRates.join(", ")})`;
+}
+
+function buildStageLateChargeText(ticket) {
+  const baseRate = normalizeNumberOrNull(ticket?.Late_charge_Precentage);
+  if (baseRate && baseRate > 0) return formatLetterTemplateCell(ticket?.Late_charge_Precentage);
+
+  const stageRates = [
+    ticket?.lateChargeStage1,
+    ticket?.lateChargeStage2,
+    ticket?.lateChargeStage3,
+    ticket?.lateChargeStage4,
+  ]
+    .map((v) => normalizeNumberOrNull(v))
+    .filter((v) => v !== null);
+
+  if (!stageRates.length) return "Stage Late Charge";
+  return `Stage Late Charge (${stageRates.join(", ")})`;
+}
+
 /** Letter merge data for Account Center: ticketId + comma-separated field suffixes (after Pawning_Ticket_). */
 export const getPawningTicketDataByIdAndFields = async (req, res, next) => {
   try {
@@ -5218,19 +5278,43 @@ export const getPawningTicketDataByIdAndFields = async (req, res, next) => {
         s === ARTICLE_CATEGORY_SUFFIX,
     );
 
-    let firstArticle = null;
+    let articles = [];
     if (needArticle) {
-      const [articles] = await pool.query(
+      const [articleRows] = await pool.query(
         `SELECT * FROM ticket_articles
          WHERE Pawning_Ticket_idPawning_Ticket = ?
-         ORDER BY idTicket_Articles ASC
-         LIMIT 1`,
+         ORDER BY idTicket_Articles ASC`,
         [ticketId],
       );
-      firstArticle = articles[0] || null;
+      articles = Array.isArray(articleRows) ? articleRows : [];
     }
 
     const accessToken = req.accessToken;
+    const needsUserName = uniqueSuffixes.includes("User_idUser");
+    const needsBranchName = uniqueSuffixes.includes("Branch_idBranch");
+    const userMap = new Map();
+    const branchMap = new Map();
+
+    if (needsUserName && ticket?.User_idUser && accessToken) {
+      const users = await fetchUserNamesByIds([ticket.User_idUser], accessToken);
+      users.forEach((u) => {
+        if (u?.idUser != null) {
+          userMap.set(String(u.idUser), u?.full_name || "");
+        }
+      });
+    }
+
+    if (needsBranchName && ticket?.Branch_idBranch && accessToken) {
+      const branches = await fetchBranchNamesByIds(
+        [ticket.Branch_idBranch],
+        accessToken,
+      );
+      branches.forEach((b) => {
+        if (b?.idBranch != null) {
+          branchMap.set(String(b.idBranch), b?.Name || "");
+        }
+      });
+    }
 
     const ticketData = {};
     for (const suffix of uniqueSuffixes) {
@@ -5243,7 +5327,22 @@ export const getPawningTicketDataByIdAndFields = async (req, res, next) => {
 
       const ticketCol = TICKET_SUFFIX_TO_COLUMN[suffix];
       if (ticketCol) {
-        if (Object.prototype.hasOwnProperty.call(ticket, ticketCol)) {
+        if (suffix === "Status") {
+          ticketData[templateKey] = mapTicketStatusLabel(ticket?.Status);
+        } else if (suffix === "Interest_Rate") {
+          ticketData[templateKey] = buildStageInterestText(ticket);
+        } else if (suffix === "Late_charge_Precentage") {
+          ticketData[templateKey] = buildStageLateChargeText(ticket);
+        } else if (suffix === "User_idUser") {
+          const nameFromAccCenter = userMap.get(String(ticket?.User_idUser));
+          ticketData[templateKey] =
+            nameFromAccCenter || formatLetterTemplateCell(ticket?.User_idUser);
+        } else if (suffix === "Branch_idBranch") {
+          const nameFromAccCenter = branchMap.get(String(ticket?.Branch_idBranch));
+          ticketData[templateKey] =
+            nameFromAccCenter ||
+            formatLetterTemplateCell(ticket?.Branch_idBranch);
+        } else if (Object.prototype.hasOwnProperty.call(ticket, ticketCol)) {
           ticketData[templateKey] = formatLetterTemplateCell(ticket[ticketCol]);
         } else {
           ticketData[templateKey] = "";
@@ -5252,52 +5351,69 @@ export const getPawningTicketDataByIdAndFields = async (req, res, next) => {
       }
 
       if (suffix === ARTICLE_NAME_SUFFIX) {
-        if (!firstArticle?.Article_type) {
+        if (!articles.length) {
           ticketData[templateKey] = "";
         } else {
-          let label = await resolveArticleTypeDescriptionFromAccDb(
-            firstArticle.Article_type,
-          );
-          if (!label && accessToken) {
-            const row = await fetchArticleTypeById(
-              parseInt(String(firstArticle.Article_type), 10),
-              accessToken,
+          const labels = [];
+          for (const article of articles) {
+            if (!article?.Article_type) continue;
+            let label = await resolveArticleTypeDescriptionFromAccDb(
+              article.Article_type,
             );
-            label = row?.Description ?? "";
+            if (!label && accessToken) {
+              const row = await fetchArticleTypeById(
+                parseInt(String(article.Article_type), 10),
+                accessToken,
+              );
+              label = row?.Description ?? "";
+            }
+            if (label) labels.push(label);
           }
-          ticketData[templateKey] = label ?? "";
+          ticketData[templateKey] = labels.join("\n");
         }
         continue;
       }
 
       if (suffix === ARTICLE_CATEGORY_SUFFIX) {
-        if (firstArticle?.Article_category == null || firstArticle?.Article_category === "") {
+        if (!articles.length) {
           ticketData[templateKey] = "";
         } else {
-          let label = await resolveArticleCategoryDescriptionFromAccDb(
-            firstArticle.Article_category,
-          );
-          if (!label && accessToken) {
-            const row = await fetchArticleCategoryById(
-              parseInt(String(firstArticle.Article_category), 10),
-              accessToken,
+          const labels = [];
+          for (const article of articles) {
+            if (
+              article?.Article_category == null ||
+              article?.Article_category === ""
+            ) {
+              continue;
+            }
+            let label = await resolveArticleCategoryDescriptionFromAccDb(
+              article.Article_category,
             );
-            label = row?.Description ?? "";
+            if (!label && accessToken) {
+              const row = await fetchArticleCategoryById(
+                parseInt(String(article.Article_category), 10),
+                accessToken,
+              );
+              label = row?.Description ?? "";
+            }
+            if (label) labels.push(label);
           }
-          ticketData[templateKey] = label ?? "";
+          ticketData[templateKey] = labels.join("\n");
         }
         continue;
       }
 
       const artCol = ARTICLE_SUFFIX_TO_COLUMN[suffix];
       if (artCol) {
-        if (
-          firstArticle &&
-          Object.prototype.hasOwnProperty.call(firstArticle, artCol)
-        ) {
-          ticketData[templateKey] = formatLetterTemplateCell(
-            firstArticle[artCol],
-          );
+        if (articles.length) {
+          const values = articles
+            .map((a) =>
+              Object.prototype.hasOwnProperty.call(a, artCol)
+                ? formatLetterTemplateCell(a[artCol])
+                : "",
+            )
+            .filter((v) => v !== "");
+          ticketData[templateKey] = values.join("\n");
         } else {
           ticketData[templateKey] = "";
         }

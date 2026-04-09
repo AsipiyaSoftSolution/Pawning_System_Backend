@@ -5178,6 +5178,46 @@ function formatLetterTemplateCell(value) {
   return String(value);
 }
 
+function formatHumanDate(value, includeTime = false) {
+  if (value === null || value === undefined || value === "") return "";
+  const raw = String(value).trim();
+  if (!raw) return "";
+
+  const parsed = value instanceof Date ? value : new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return raw;
+
+  if (includeTime) {
+    return new Intl.DateTimeFormat("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    }).format(parsed);
+  }
+
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(parsed);
+}
+
+function formatTicketMergeValueBySuffix(suffix, value) {
+  if (value === null || value === undefined) return "";
+  const lower = String(suffix || "").toLowerCase();
+  const includeTime =
+    lower === "date_time" || lower === "created_at" || lower === "updated_at";
+  const looksDateLike =
+    lower.includes("date") || lower.endsWith("_at") || lower === "date_time";
+
+  if (looksDateLike) {
+    return formatHumanDate(value, includeTime);
+  }
+  return formatLetterTemplateCell(value);
+}
+
 function mapTicketStatusLabel(status) {
   const code = String(status ?? "").trim();
   switch (code) {
@@ -5204,38 +5244,131 @@ function normalizeNumberOrNull(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+function parseStageCount(value) {
+  const n = parseInt(String(value ?? "").trim(), 10);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(n, 4);
+}
+
+function buildStageLine({ stageNo, start, end, rate }) {
+  const cleanBoundary = (value, fallback) => {
+    const text = formatLetterTemplateCell(value).trim();
+    if (!text) return fallback;
+    const compact = text.replace(/\s+/g, " ").toLowerCase();
+    if (compact === "to maturity date") return "Maturity date";
+    return text;
+  };
+
+  const startTxt = cleanBoundary(start, "");
+  const endTxt = cleanBoundary(end, "");
+  const rateTxt = rate === null ? "Rate not set" : `${rate}%`;
+  const hasRange = Boolean(startTxt || endTxt);
+  const rangeTxt = hasRange ? ` (${startTxt || "Start"} to ${endTxt || "End"})` : "";
+  return `Stage ${stageNo}${rangeTxt}: ${rateTxt}`;
+}
+
 function buildStageInterestText(ticket) {
   const baseRate = normalizeNumberOrNull(ticket?.Interest_Rate);
   if (baseRate && baseRate > 0) return formatLetterTemplateCell(ticket?.Interest_Rate);
 
+  const configuredStages = parseStageCount(ticket?.noOfStages);
   const stageRates = [
-    ticket?.stage1Interest,
-    ticket?.stage2Interest,
-    ticket?.stage3Interest,
-    ticket?.stage4Interest,
-  ]
-    .map((v) => normalizeNumberOrNull(v))
-    .filter((v) => v !== null);
+    normalizeNumberOrNull(ticket?.stage1Interest),
+    normalizeNumberOrNull(ticket?.stage2Interest),
+    normalizeNumberOrNull(ticket?.stage3Interest),
+    normalizeNumberOrNull(ticket?.stage4Interest),
+  ];
+  const stageStarts = [
+    ticket?.stage1StartDate,
+    ticket?.stage2StartDate,
+    ticket?.stage3StartDate,
+    ticket?.stage4StartDate,
+  ];
+  const stageEnds = [
+    ticket?.stage1EndDate,
+    ticket?.stage2EndDate,
+    ticket?.stage3EndDate,
+    ticket?.stage4EndDate,
+  ];
 
-  if (!stageRates.length) return "Stage Interest";
-  return `Stage Interest (${stageRates.join(", ")})`;
+  const detectedStages = stageRates.reduce(
+    (acc, v, idx) =>
+      v !== null || stageStarts[idx] || stageEnds[idx] ? idx + 1 : acc,
+    0,
+  );
+  const useStages = configuredStages || detectedStages;
+  if (!useStages) return "Stage Interest";
+
+  const lines = [];
+  for (let i = 0; i < useStages; i += 1) {
+    const line = buildStageLine({
+      stageNo: i + 1,
+      start: stageStarts[i],
+      end: stageEnds[i],
+      rate: stageRates[i],
+    });
+    if (line) lines.push(line);
+  }
+  if (!lines.length) return `Stage Interest - ${useStages} stages`;
+  return `Stage Interest - ${useStages} stages: ${lines.join("; ")}`;
 }
 
 function buildStageLateChargeText(ticket) {
   const baseRate = normalizeNumberOrNull(ticket?.Late_charge_Precentage);
   if (baseRate && baseRate > 0) return formatLetterTemplateCell(ticket?.Late_charge_Precentage);
 
+  const configuredStages = parseStageCount(ticket?.numberOfLateChargeStages);
   const stageRates = [
-    ticket?.lateChargeStage1,
-    ticket?.lateChargeStage2,
-    ticket?.lateChargeStage3,
-    ticket?.lateChargeStage4,
-  ]
-    .map((v) => normalizeNumberOrNull(v))
-    .filter((v) => v !== null);
+    normalizeNumberOrNull(ticket?.lateChargeStage1),
+    normalizeNumberOrNull(ticket?.lateChargeStage2),
+    normalizeNumberOrNull(ticket?.lateChargeStage3),
+    normalizeNumberOrNull(ticket?.lateChargeStage4),
+  ];
+  const stageStarts = [
+    ticket?.lateChargeStage1StartDate,
+    ticket?.lateChargeStage2StartDate,
+    ticket?.lateChargeStage3StartDate,
+    ticket?.lateChargeStage4StartDate,
+  ];
+  const stageEnds = [
+    ticket?.lateChargeStage1EndDate,
+    ticket?.lateChargeStage2EndDate,
+    ticket?.lateChargeStage3EndDate,
+    ticket?.lateChargeStage4EndDate,
+  ];
 
-  if (!stageRates.length) return "Stage Late Charge";
-  return `Stage Late Charge (${stageRates.join(", ")})`;
+  const detectedStages = stageRates.reduce(
+    (acc, v, idx) =>
+      v !== null || stageStarts[idx] || stageEnds[idx] ? idx + 1 : acc,
+    0,
+  );
+  const useStages = configuredStages || detectedStages;
+  if (!useStages) return "Stage Late Charge";
+
+  const lines = [];
+  for (let i = 0; i < useStages; i += 1) {
+    const line = buildStageLine({
+      stageNo: i + 1,
+      start: stageStarts[i],
+      end: stageEnds[i],
+      rate: stageRates[i],
+    });
+    if (line) lines.push(line);
+  }
+  if (!lines.length) return `Stage Late Charge - ${useStages} stages`;
+  return `Stage Late Charge - ${useStages} stages: ${lines.join("; ")}`;
+}
+
+function getInterestTypeLabel(ticket) {
+  const baseRate = normalizeNumberOrNull(ticket?.Interest_Rate);
+  if (baseRate && baseRate > 0) return "Fixed Interest";
+  return "Stage Interest";
+}
+
+function getLateChargeTypeLabel(ticket) {
+  const baseRate = normalizeNumberOrNull(ticket?.Late_charge_Precentage);
+  if (baseRate && baseRate > 0) return "Fixed Late Charge";
+  return "Stage Late Charge";
 }
 
 /** Letter merge data for Account Center: ticketId + comma-separated field suffixes (after Pawning_Ticket_). */
@@ -5320,6 +5453,16 @@ export const getPawningTicketDataByIdAndFields = async (req, res, next) => {
     for (const suffix of uniqueSuffixes) {
       const templateKey = fullTemplateKey(suffix);
 
+      if (suffix === "Interest_Rate_Type") {
+        ticketData[templateKey] = getInterestTypeLabel(ticket);
+        continue;
+      }
+
+      if (suffix === "Late_charge_Type") {
+        ticketData[templateKey] = getLateChargeTypeLabel(ticket);
+        continue;
+      }
+
       if (UNKNOWN_TICKET_SUFFIXES.has(suffix)) {
         ticketData[templateKey] = "";
         continue;
@@ -5343,7 +5486,10 @@ export const getPawningTicketDataByIdAndFields = async (req, res, next) => {
             nameFromAccCenter ||
             formatLetterTemplateCell(ticket?.Branch_idBranch);
         } else if (Object.prototype.hasOwnProperty.call(ticket, ticketCol)) {
-          ticketData[templateKey] = formatLetterTemplateCell(ticket[ticketCol]);
+          ticketData[templateKey] = formatTicketMergeValueBySuffix(
+            suffix,
+            ticket[ticketCol],
+          );
         } else {
           ticketData[templateKey] = "";
         }

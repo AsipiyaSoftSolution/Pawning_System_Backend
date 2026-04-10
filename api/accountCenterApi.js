@@ -250,13 +250,29 @@ export const subsystemApi = {
 
 // Pawning Payments
 export const pawningPaymentsApi = {
-  ticketPaymentsDoubleEntries: (data, accessToken) => {
-    return accCenterPost(
-      "/double-entries/pawning-ticket-payments-double-entries",
+  /** Phase 1: Account Center validates and stores payload; no journal posted yet. */
+  prepareTicketPaymentsDoubleEntries: (data, accessToken) =>
+    accCenterPost(
+      "/double-entries/pawning-ticket-payments-double-entries/prepare",
       data,
       accessToken,
-    );
-  },
+    ),
+
+  /** Phase 2: Post journals after Pawning DB commit (same payload as prepare). */
+  commitTicketPaymentsDoubleEntries: (prepareToken, accessToken) =>
+    accCenterPost(
+      "/double-entries/pawning-ticket-payments-double-entries/commit",
+      { prepareToken },
+      accessToken,
+    ),
+
+  /** Drop prepare token without posting (Pawning rolled back). */
+  abortTicketPaymentsDoubleEntries: (prepareToken, accessToken) =>
+    accCenterPost(
+      "/double-entries/pawning-ticket-payments-double-entries/abort",
+      { prepareToken },
+      accessToken,
+    ),
 
   ticketInterestDoubleEntries: (data, accessToken) => {
     return accCenterPost(

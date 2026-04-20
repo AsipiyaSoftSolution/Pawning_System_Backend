@@ -285,25 +285,29 @@ export const getPawningProductById = async (req, res, next) => {
           ...(earlySettlementChargeType === "Charge For Product" && {
             earlySettlementStage1StartDay:
               product.early_settlement_stage1_start_day,
-            earlySettlementStage1EndDay: product.early_settlement_stage1_end_day,
+            earlySettlementStage1EndDay:
+              product.early_settlement_stage1_end_day,
             earlySettlementStage1Value: product.early_settlement_stage1_value,
             earlySettlementStage1ValueType:
               product.early_settlement_stage1_value_type,
             earlySettlementStage2StartDay:
               product.early_settlement_stage2_start_day,
-            earlySettlementStage2EndDay: product.early_settlement_stage2_end_day,
+            earlySettlementStage2EndDay:
+              product.early_settlement_stage2_end_day,
             earlySettlementStage2Value: product.early_settlement_stage2_value,
             earlySettlementStage2ValueType:
               product.early_settlement_stage2_value_type,
             earlySettlementStage3StartDay:
               product.early_settlement_stage3_start_day,
-            earlySettlementStage3EndDay: product.early_settlement_stage3_end_day,
+            earlySettlementStage3EndDay:
+              product.early_settlement_stage3_end_day,
             earlySettlementStage3Value: product.early_settlement_stage3_value,
             earlySettlementStage3ValueType:
               product.early_settlement_stage3_value_type,
             earlySettlementStage4StartDay:
               product.early_settlement_stage4_start_day,
-            earlySettlementStage4EndDay: product.early_settlement_stage4_end_day,
+            earlySettlementStage4EndDay:
+              product.early_settlement_stage4_end_day,
             earlySettlementStage4Value: product.early_settlement_stage4_value,
             earlySettlementStage4ValueType:
               product.early_settlement_stage4_value_type,
@@ -384,22 +388,26 @@ export const getPawningProductById = async (req, res, next) => {
         }
         if (earlySettlementChargeType === "Charge For Product Item") {
           Object.assign(base, {
-            earlySettlementStage1StartDay: plan.early_settlement_stage1_start_day,
+            earlySettlementStage1StartDay:
+              plan.early_settlement_stage1_start_day,
             earlySettlementStage1EndDay: plan.early_settlement_stage1_end_day,
             earlySettlementStage1Value: plan.early_settlement_stage1_value,
             earlySettlementStage1ValueType:
               plan.early_settlement_stage1_value_type,
-            earlySettlementStage2StartDay: plan.early_settlement_stage2_start_day,
+            earlySettlementStage2StartDay:
+              plan.early_settlement_stage2_start_day,
             earlySettlementStage2EndDay: plan.early_settlement_stage2_end_day,
             earlySettlementStage2Value: plan.early_settlement_stage2_value,
             earlySettlementStage2ValueType:
               plan.early_settlement_stage2_value_type,
-            earlySettlementStage3StartDay: plan.early_settlement_stage3_start_day,
+            earlySettlementStage3StartDay:
+              plan.early_settlement_stage3_start_day,
             earlySettlementStage3EndDay: plan.early_settlement_stage3_end_day,
             earlySettlementStage3Value: plan.early_settlement_stage3_value,
             earlySettlementStage3ValueType:
               plan.early_settlement_stage3_value_type,
-            earlySettlementStage4StartDay: plan.early_settlement_stage4_start_day,
+            earlySettlementStage4StartDay:
+              plan.early_settlement_stage4_start_day,
             earlySettlementStage4EndDay: plan.early_settlement_stage4_end_day,
             earlySettlementStage4Value: plan.early_settlement_stage4_value,
             earlySettlementStage4ValueType:
@@ -1115,23 +1123,48 @@ export const updatePawningProductById = async (req, res, next) => {
     const serviceChargeValue = parseFloat(data.serviceCharge?.value) || 0;
 
     // Prepare early settlement data for pawning product table
+    const requestedEarlySettlementStatus =
+      data.earlysettlementsData?.newEarlySettlement?.status;
+    const requestedEarlySettlementType =
+      data.earlysettlementsData?.newEarlySettlement?.chargeType;
+
+    const hasProductLevelEarlyStages = [1, 2, 3, 4].some((s) => {
+      const start =
+        data.earlysettlementsData?.newEarlySettlement?.[
+          `earlySettlementStage${s}StartDay`
+        ];
+      return start !== undefined && start !== null && start !== "";
+    });
+    const hasItemLevelEarlyStages = (data.productItems || []).some((plan) =>
+      [1, 2, 3, 4].some((s) => {
+        const start = plan?.[`earlySettlementStage${s}StartDay`];
+        return start !== undefined && start !== null && start !== "";
+      }),
+    );
+
     const earlySettlementCharge =
-      data.earlysettlementsData?.newEarlySettlement?.status === "Active"
+      requestedEarlySettlementStatus === "Active" ||
+      hasProductLevelEarlyStages ||
+      hasItemLevelEarlyStages
         ? 1
         : 0;
-    const earlySettlementChargeCreateAs =
-      data.earlysettlementsData?.newEarlySettlement?.chargeType || "inactive";
-    let earlySettlementChargeValueType = "inactive";
-    let earlySettlementChargeValue = 0;
 
-    // Handle different early settlement charge types
-    if (earlySettlementChargeCreateAs === "Charge For Product") {
-      earlySettlementChargeValueType =
-        data.earlysettlementsData?.newEarlySettlement?.valueType || "inactive";
-      earlySettlementChargeValue =
-        parseFloat(data.earlysettlementsData?.newEarlySettlement?.value) ||
-        "inactive";
+    let earlySettlementChargeCreateAs =
+      requestedEarlySettlementType || "inactive";
+    if (
+      earlySettlementCharge === 1 &&
+      (!requestedEarlySettlementType || requestedEarlySettlementType === "")
+    ) {
+      if (hasItemLevelEarlyStages) {
+        earlySettlementChargeCreateAs = "Charge For Product Item";
+      } else if (hasProductLevelEarlyStages) {
+        earlySettlementChargeCreateAs = "Charge For Product";
+      }
     }
+
+    // Keep legacy columns neutral; stage columns are the source of truth.
+    const earlySettlementChargeValueType = "inactive";
+    const earlySettlementChargeValue = 0;
 
     // Prepare late charge data for pawning product table
     const lateCharge = data.lateCharge?.status === "Active" ? 1 : 0;
@@ -1146,10 +1179,7 @@ export const updatePawningProductById = async (req, res, next) => {
         Service_Charge_Create_As = ?,
         Service_Charge_Value_type = ?,
         Service_Charge_Value = ?,
-        Early_Settlement_Charge = ?,
         Early_Settlement_Charge_Create_As = ?,
-        Early_Settlement_Charge_Value_type = ?,
-        Early_Settlement_Charge_Value = ?,
         Late_Charge_Status = ?,
         Late_Charge_Create_As = ?,
         Late_Charge = ?,
@@ -1180,10 +1210,7 @@ export const updatePawningProductById = async (req, res, next) => {
         serviceChargeCreateAs === "Charge For Product Item"
           ? "N/A"
           : serviceChargeValue,
-        earlySettlementCharge,
         earlySettlementChargeCreateAs,
-        earlySettlementChargeValueType,
-        earlySettlementChargeValue,
         lateCharge,
         lateChargeCreateAs,
         lateChargePresentage,
@@ -1429,8 +1456,12 @@ export const updatePawningProductById = async (req, res, next) => {
           parseInt(plan.interestAfter) || 0,
           plan.serviceChargeValueType || null,
           parseFloat(plan.serviceChargeValue) || 0,
-          plan.earlySettlementChargeValueType || null,
-          parseFloat(plan.earlySettlementChargeValue) || 0,
+          earlySettlementChargeCreateAs === "Charge For Product Item"
+            ? null
+            : plan.earlySettlementChargeValueType || null,
+          earlySettlementChargeCreateAs === "Charge For Product Item"
+            ? 0
+            : parseFloat(plan.earlySettlementChargeValue) || 0,
           parseFloat(plan.lateChargePerDay) || 0,
           amount22CaratValue,
           req.userId,
@@ -1629,10 +1660,7 @@ export const updatePawningProductById = async (req, res, next) => {
         Service_Charge_Create_As,
         Service_Charge_Value_type,
         Service_Charge_Value,
-        Early_Settlement_Charge,
         Early_Settlement_Charge_Create_As,
-        Early_Settlement_Charge_Value_type,
-        Early_Settlement_Charge_Value,
         Late_Charge_Status,
         Late_Charge_Create_As,
         Late_Charge,

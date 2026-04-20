@@ -5,11 +5,24 @@ import { formatSearchPattern } from "../utils/helper.js";
 import { getCompanyBranches } from "../utils/helper.js";
 import { createPawningTicketLogOnAdditionalCharge } from "../utils/pawning.ticket.logs.js";
 import { sendPawningSmsSafely } from "../utils/smsHelper.js";
+import { commitPawningTicketPaymentsWithRetry } from "../utils/accountCenterCommitRetry.js";
 import {
   customerApi,
   pawningPaymentsApi,
   subsystemApi,
 } from "../api/accountCenterApi.js";
+
+async function abortPawningPaymentPrepare(prepareToken, accessToken) {
+  if (!prepareToken) return;
+  try {
+    await pawningPaymentsApi.abortTicketPaymentsDoubleEntries(
+      prepareToken,
+      accessToken,
+    );
+  } catch {
+    /* best-effort */
+  }
+}
 // Search tickets by ticket number, customer NIC, or customer name with pagination
 export const searchByTickerNumberCustomerNICOrName = async (req, res, next) => {
   try {
@@ -671,6 +684,7 @@ export const createTicketAdditionalCharge = async (req, res, next) => {
 // create the part payment for a ticket
 export const createPaymentForTicket = async (req, res, next) => {
   let connection;
+  let prepareToken;
   try {
     const ticketId = req.params.id || req.params.ticketId;
     const {
@@ -693,46 +707,129 @@ export const createPaymentForTicket = async (req, res, next) => {
       return next(errorHandler(400, "To Account ID is required"));
     }
 
-    // Get connections from both pools
     connection = await pool.getConnection();
 
-    // Start transactions on both connections
+    const [existingTicket] = await connection.query(
+      "SELECT Interest_apply_on,Maturity_date,Date_Time,Ticket_No,Customer_idCustomer FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+      [ticketId, req.branchId],
+    );
+    if (existingTicket.length === 0) {
+      return next(errorHandler(404, "No ticket found for the given ID"));
+    }
+
+    const [ticketLog] = await connection.query(
+      "SELECT * FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? ORDER BY idTicket_Log DESC LIMIT 1",
+      [ticketId],
+    );
+
+    if (ticketLog.length === 0) {
+      return next(
+        errorHandler(500, "No ticket log found for the given ticket"),
+      );
+    }
+
+    const today = new Date();
+    const ticketDate = new Date(existingTicket[0].Date_Time);
+    const timeDiff = Math.abs(today - ticketDate);
+    const dayCount = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
+
+    let remainingPayment = paymentAmount;
+    let {
+      Interest_Balance,
+      Service_Charge_Balance,
+      Late_Charges_Balance,
+      Aditional_Charge_Balance,
+      Advance_Balance,
+    } = ticketLog[0];
+
+    let paidInterest = 0;
+    let paidServiceCharge = 0;
+    let paidLateCharges = 0;
+    let paidAdditionalCharges = 0;
+    let paidAdvance = 0;
+
+    function safePay(balance, remaining) {
+      balance = parseFloat(balance);
+      balance = isNaN(balance) ? 0 : balance;
+      let paid = 0;
+      if (remaining > 0 && balance > 0) {
+        paid = Math.min(remaining, balance);
+        remaining -= paid;
+        balance -= paid;
+      }
+      return { paid, balance, remaining };
+    }
+
+    let result = safePay(Aditional_Charge_Balance, remainingPayment);
+    paidAdditionalCharges = result.paid;
+    Aditional_Charge_Balance = result.balance;
+    remainingPayment = result.remaining;
+
+    result = safePay(Late_Charges_Balance, remainingPayment);
+    paidLateCharges = result.paid;
+    Late_Charges_Balance = result.balance;
+    remainingPayment = result.remaining;
+
+    result = safePay(Interest_Balance, remainingPayment);
+    paidInterest = result.paid;
+    Interest_Balance = result.balance;
+    remainingPayment = result.remaining;
+
+    result = safePay(Service_Charge_Balance, remainingPayment);
+    paidServiceCharge = result.paid;
+    Service_Charge_Balance = result.balance;
+    remainingPayment = result.remaining;
+
+    result = safePay(Advance_Balance, remainingPayment);
+    paidAdvance = result.paid;
+    Advance_Balance = result.balance;
+    remainingPayment = result.remaining;
+
+    const Total_Balance =
+      parseFloat(ticketLog[0].Total_Balance || 0) -
+      parseFloat(paymentAmount || 0);
+
+    const data = {
+      paymentType: "part",
+      toAccountId: toAccountId,
+      amount: paymentAmount,
+      paidAdvance: paidAdvance,
+      paidInterest: paidInterest,
+      paidLateCharges: paidLateCharges,
+      paidServiceCharge: paidServiceCharge,
+      paidAdditionalCharges: paidAdditionalCharges,
+      ticketNo: existingTicket[0].Ticket_No,
+      userId: req.userId,
+      companyId: req.companyId,
+      branchId: req.branchId,
+      sourceId: ticketId,
+      sourceType: "pawning",
+      customerId: existingTicket[0].Customer_idCustomer,
+      hasTemporaryReceipt,
+      currentBookId,
+      currentReceiptBookNumber,
+      currentVoucherNumber,
+      dateTime: new Date(),
+    };
+
+    try {
+      const prep = await pawningPaymentsApi.prepareTicketPaymentsDoubleEntries(
+        data,
+        req.accessToken,
+      );
+      prepareToken = prep.prepareToken;
+    } catch (error) {
+      const status = error?.status || error?.response?.status || 500;
+      const message =
+        error?.response?.message ||
+        error?.message ||
+        "Failed to prepare ticket payment accounting";
+      return next(errorHandler(status, message));
+    }
+
     await connection.beginTransaction();
 
     try {
-      // check if the ticket exists and belongs to the branch
-      const [existingTicket] = await connection.query(
-        "SELECT Interest_apply_on,Maturity_date,Date_Time,Ticket_No,Customer_idCustomer FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
-        [ticketId, req.branchId],
-      );
-      if (existingTicket.length === 0) {
-        await connection.rollback();
-        connection.release();
-        return next(errorHandler(404, "No ticket found for the given ID"));
-      }
-
-      // get the lastest ticket log entry for the ticket
-      const [ticketLog] = await connection.query(
-        "SELECT * FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? ORDER BY idTicket_Log DESC LIMIT 1",
-        [ticketId],
-      );
-
-      if (ticketLog.length === 0) {
-        await connection.rollback();
-
-        connection.release();
-        return next(
-          errorHandler(500, "No ticket log found for the given ticket"),
-        );
-      }
-
-      // get the day count by from today date to ticket Date_Time
-      const today = new Date();
-      const ticketDate = new Date(existingTicket[0].Date_Time);
-      const timeDiff = Math.abs(today - ticketDate);
-      const dayCount = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
-
-      // Insert into payment table
       const [ticketPaymentResult] = await connection.query(
         "INSERT INTO payment(Date_time,Description,Ticket_no,Amount,User,Ticket_Date,Maturity_Date,Day_Count,Type,Pawning_Ticket_idPawning_Ticket) VALUES(NOW(),?,?,?,?,?,?,?,?,?)",
         [
@@ -754,109 +851,6 @@ export const createPaymentForTicket = async (req, res, next) => {
 
       const createdTicketPaymentId = ticketPaymentResult.insertId;
 
-      // Calculate payment distribution
-      let remainingPayment = paymentAmount;
-      let {
-        Interest_Balance,
-        Service_Charge_Balance,
-        Late_Charges_Balance,
-        Aditional_Charge_Balance,
-        Advance_Balance,
-      } = ticketLog[0];
-
-      let paidInterest = 0;
-      let paidServiceCharge = 0;
-      let paidLateCharges = 0;
-      let paidAdditionalCharges = 0;
-      let paidAdvance = 0;
-
-      function safePay(balance, remaining) {
-        balance = parseFloat(balance);
-        balance = isNaN(balance) ? 0 : balance;
-        let paid = 0;
-        if (remaining > 0 && balance > 0) {
-          paid = Math.min(remaining, balance);
-          remaining -= paid;
-          balance -= paid;
-        }
-        return { paid, balance, remaining };
-      }
-
-      // Additional Charges
-      let result = safePay(Aditional_Charge_Balance, remainingPayment);
-      paidAdditionalCharges = result.paid;
-      Aditional_Charge_Balance = result.balance;
-      remainingPayment = result.remaining;
-
-      // Late Charges
-      result = safePay(Late_Charges_Balance, remainingPayment);
-      paidLateCharges = result.paid;
-      Late_Charges_Balance = result.balance;
-      remainingPayment = result.remaining;
-
-      // Interest Charges
-      result = safePay(Interest_Balance, remainingPayment);
-      paidInterest = result.paid;
-      Interest_Balance = result.balance;
-      remainingPayment = result.remaining;
-
-      // Service Charges
-      result = safePay(Service_Charge_Balance, remainingPayment);
-      paidServiceCharge = result.paid;
-      Service_Charge_Balance = result.balance;
-      remainingPayment = result.remaining;
-
-      // Advance Balance
-      result = safePay(Advance_Balance, remainingPayment);
-      paidAdvance = result.paid;
-      Advance_Balance = result.balance;
-      remainingPayment = result.remaining;
-
-      // Total Balance
-      const Total_Balance =
-        parseFloat(ticketLog[0].Total_Balance || 0) -
-        parseFloat(paymentAmount || 0);
-
-      const data = {
-        paymentType: "part",
-        toAccountId: toAccountId,
-        amount: paymentAmount,
-        paidAdvance: paidAdvance,
-        paidInterest: paidInterest,
-        paidLateCharges: paidLateCharges,
-        paidServiceCharge: paidServiceCharge,
-        paidAdditionalCharges: paidAdditionalCharges,
-        ticketNo: existingTicket[0].Ticket_No,
-        userId: req.userId,
-        companyId: req.companyId,
-        branchId: req.branchId,
-        sourceId: ticketId,
-        sourceType: "pawning",
-        customerId: existingTicket[0].Customer_idCustomer,
-        hasTemporaryReceipt,
-        currentBookId,
-        currentReceiptBookNumber,
-        currentVoucherNumber,
-      };
-
-      try {
-        const result = await pawningPaymentsApi.ticketPaymentsDoubleEntries(
-          data,
-          req.accessToken,
-        );
-        console.log("createPaymentForTicket result:", result);
-        // console.log(result, "result");
-      } catch (error) {
-        const status = error?.response?.status || 500;
-        const message =
-          error?.response?.message ||
-          error?.response?.data?.message ||
-          error?.message ||
-          "Failed to create ticket payment";
-        return next(errorHandler(status, message));
-      }
-
-      // Insert ticket log record
       const [logResult] = await connection.query(
         "INSERT INTO ticket_log(Pawning_Ticket_idPawning_Ticket,Date_Time,Type,Description,Amount,Interest_Balance,Service_Charge_Balance,Late_Charges_Balance,Aditional_Charge_Balance,Advance_Balance,Total_Balance,User_idUser,Type_Id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [
@@ -880,7 +874,6 @@ export const createPaymentForTicket = async (req, res, next) => {
         throw errorHandler(500, "Failed to update ticket log");
       }
 
-      // Update payment record
       const [updatePaymentResult] = await connection.query(
         "UPDATE payment SET Interest_Payment = ?, Service_Charge_Payment = ?, Late_Charges_Payment = ?, Other_Charges_Payment = ?, Advance_Payment = ? WHERE id = ?",
         [
@@ -897,52 +890,64 @@ export const createPaymentForTicket = async (req, res, next) => {
         throw errorHandler(500, "Failed to update payment details");
       }
 
-      // Commit both transactions
       await connection.commit();
-      connection.release();
-
-      // time for get sms template for part payment and send the sms data to acc center
-      sendPawningSmsSafely({
-        branchId: req.branchId,
-        templateName: "Customer Part Payment",
-        accessToken: req.accessToken,
-        placeholders: {
-          Payment_Date: new Date().toISOString().split("T")[0],
-          Paid_Amount: paymentAmount,
-          Balance_Amount: Total_Balance,
-          Maturity_Date: existingTicket[0].Maturity_date
-            ? new Date(existingTicket[0].Maturity_date)
-                .toISOString()
-                .split("T")[0]
-            : "",
-        },
-        customerId: existingTicket[0].Customer_idCustomer,
-        smsDescription: "customer pawning ticket part payment",
-      });
-
-      res.status(201).json({
-        success: true,
-        message: "Part payment created successfully.",
-      });
     } catch (innerError) {
       await connection.rollback();
-      connection.release();
+      await abortPawningPaymentPrepare(prepareToken, req.accessToken);
       console.error("Error creating part payment for ticket:", innerError);
+      if (innerError.statusCode) {
+        return next(innerError);
+      }
       return next(errorHandler(500, "Internal Server Error"));
     }
-  } catch (error) {
-    if (connection) {
-      await connection.rollback();
-      connection.release();
+
+    try {
+      await commitPawningTicketPaymentsWithRetry(prepareToken, req.accessToken);
+    } catch (error) {
+      const status = error?.status || error?.response?.status || 502;
+      const message =
+        error?.response?.message ||
+        error?.message ||
+        "Payment saved but accounting sync failed; retry or contact support.";
+      return next(errorHandler(status, message));
     }
+
+    sendPawningSmsSafely({
+      branchId: req.branchId,
+      templateName: "Customer Part Payment",
+      accessToken: req.accessToken,
+      placeholders: {
+        Payment_Date: new Date().toISOString().split("T")[0],
+        Paid_Amount: paymentAmount,
+        Balance_Amount: Total_Balance,
+        Maturity_Date: existingTicket[0].Maturity_date
+          ? new Date(existingTicket[0].Maturity_date)
+              .toISOString()
+              .split("T")[0]
+          : "",
+      },
+      customerId: existingTicket[0].Customer_idCustomer,
+      smsDescription: "customer pawning ticket part payment",
+    });
+
+    res.status(201).json({
+      success: true,
+      message: "Part payment created successfully.",
+    });
+  } catch (error) {
     console.error("Error creating part payment for ticket:", error);
     return next(errorHandler(500, "Internal Server Error"));
+  } finally {
+    if (connection) {
+      connection.release();
+    }
   }
 };
 
 // make a payment for ticket renewal
 export const createTicketRenewalPayment = async (req, res, next) => {
   let connection;
+  let prepareToken;
   try {
     const ticketId = req.params.id || req.params.ticketId;
     const { paymentAmount, toAccountId } = req.body;
@@ -962,6 +967,7 @@ export const createTicketRenewalPayment = async (req, res, next) => {
 
     // Start transactions on both connections
     await connection.beginTransaction();
+    let pawningCommitted = false;
 
     try {
       // check if the ticket exists and belongs to the branch
@@ -1124,18 +1130,18 @@ export const createTicketRenewalPayment = async (req, res, next) => {
       };
 
       try {
-        const result = await pawningPaymentsApi.ticketPaymentsDoubleEntries(
-          data,
-          req.accessToken,
-        );
-        console.log(result, "result");
+        const prep =
+          await pawningPaymentsApi.prepareTicketPaymentsDoubleEntries(
+            data,
+            req.accessToken,
+          );
+        prepareToken = prep.prepareToken;
       } catch (error) {
-        const status = error?.response?.status || 500;
+        const status = error?.status || error?.response?.status || 500;
         const message =
           error?.response?.message ||
-          error?.response?.data?.message ||
           error?.message ||
-          "Failed to create ticket renewal payment";
+          "Failed to prepare ticket renewal payment accounting";
         return next(errorHandler(status, message));
       }
 
@@ -1208,8 +1214,14 @@ export const createTicketRenewalPayment = async (req, res, next) => {
         throw errorHandler(500, "Failed to update payment details");
       }
 
-      // Commit both transactions
+      // Commit local pawning transaction first
       await connection.commit();
+      pawningCommitted = true;
+
+      // Then finalize AC accounting transaction using prepare token
+      await commitPawningTicketPaymentsWithRetry(prepareToken, req.accessToken);
+      prepareToken = null;
+
       connection.release();
 
       // time for get sms template for ticket renewal and send the sms data to acc center
@@ -1234,9 +1246,18 @@ export const createTicketRenewalPayment = async (req, res, next) => {
         message: "Renewal payment created successfully.",
       });
     } catch (innerError) {
-      await connection.rollback();
+      if (!pawningCommitted) {
+        await connection.rollback();
+        await abortPawningPaymentPrepare(prepareToken, req.accessToken);
+      }
       connection.release();
       console.error("Error creating renewal payment for ticket:", innerError);
+      if (pawningCommitted) {
+        const msg =
+          innerError?.message ||
+          "Payment saved but accounting sync failed; retry or contact support.";
+        return next(errorHandler(502, msg));
+      }
       return next(errorHandler(500, "Internal Server Error"));
     }
   } catch (error) {
@@ -1252,6 +1273,7 @@ export const createTicketRenewalPayment = async (req, res, next) => {
 // make ticket settlement payment
 export const createTicketSettlementPayment = async (req, res, next) => {
   let connection;
+  let prepareToken;
   try {
     const ticketId = req.params.id || req.params.ticketId;
     const {
@@ -1280,6 +1302,7 @@ export const createTicketSettlementPayment = async (req, res, next) => {
 
     // Start transactions on both connections
     await connection.beginTransaction();
+    let pawningCommitted = false;
 
     try {
       // check if the ticket exists and belongs to the branch
@@ -1456,18 +1479,18 @@ export const createTicketSettlementPayment = async (req, res, next) => {
       };
 
       try {
-        const result = await pawningPaymentsApi.ticketPaymentsDoubleEntries(
-          data,
-          req.accessToken,
-        );
-        console.log(result, "result");
+        const prep =
+          await pawningPaymentsApi.prepareTicketPaymentsDoubleEntries(
+            data,
+            req.accessToken,
+          );
+        prepareToken = prep.prepareToken;
       } catch (error) {
-        const status = error?.response?.status || 500;
+        const status = error?.status || error?.response?.status || 500;
         const message =
           error?.response?.message ||
-          error?.response?.data?.message ||
           error?.message ||
-          "Failed to create ticket settlement payment";
+          "Failed to prepare ticket settlement payment accounting";
         return next(errorHandler(status, message));
       }
 
@@ -1549,8 +1572,14 @@ export const createTicketSettlementPayment = async (req, res, next) => {
         throw errorHandler(500, "Failed to update ticket status");
       }
 
-      // Commit
+      // Commit local pawning transaction first
       await connection.commit();
+      pawningCommitted = true;
+
+      // Then finalize AC accounting transaction using prepare token
+      await commitPawningTicketPaymentsWithRetry(prepareToken, req.accessToken);
+      prepareToken = null;
+
       connection.release();
 
       // time for get sms template for ticket settlement and send the sms data to acc center
@@ -1588,12 +1617,21 @@ export const createTicketSettlementPayment = async (req, res, next) => {
         },
       });
     } catch (innerError) {
-      await connection.rollback();
+      if (!pawningCommitted) {
+        await connection.rollback();
+        await abortPawningPaymentPrepare(prepareToken, req.accessToken);
+      }
       connection.release();
       console.error(
         "Error creating settlement payment for ticket:",
         innerError,
       );
+      if (pawningCommitted) {
+        const msg =
+          innerError?.message ||
+          "Payment saved but accounting sync failed; retry or contact support.";
+        return next(errorHandler(502, msg));
+      }
       return next(errorHandler(500, "Internal Server Error"));
     }
   } catch (error) {

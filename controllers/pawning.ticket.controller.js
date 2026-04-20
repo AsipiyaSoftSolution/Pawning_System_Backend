@@ -10,6 +10,15 @@ import {
 } from "../utils/pawning.ticket.logs.js";
 import { createCustomerLogOnCreateTicket } from "../utils/customer.logs.js";
 import { formatSearchPattern } from "../utils/helper.js";
+import {
+  TICKET_SUFFIX_TO_COLUMN,
+  ARTICLE_SUFFIX_TO_COLUMN,
+  ARTICLE_NAME_SUFFIX,
+  ARTICLE_CATEGORY_SUFFIX,
+  UNKNOWN_TICKET_SUFFIXES,
+  normalizePawningTemplateFieldToken,
+  fullTemplateKey,
+} from "../utils/pawningLetterTemplateFields.js";
 
 /** Fetch company_customer data by Pawning customer ids via Account Center subsystem API */
 async function fetchCustomersByPawningIds(
@@ -174,6 +183,40 @@ async function fetchArticleCategoryById(id, accessToken) {
     return res?.articleCategory;
   } catch (e) {
     console.error("fetchArticleCategoryById:", e);
+    return null;
+  }
+}
+
+/** Resolve article type label from account_center.article_types (DB2) */
+async function resolveArticleTypeDescriptionFromAccDb(typeId) {
+  if (typeId == null || typeId === "") return null;
+  const id = parseInt(String(typeId), 10);
+  if (Number.isNaN(id)) return null;
+  try {
+    const [rows] = await pool2.query(
+      "SELECT Description FROM article_types WHERE idArticle_Types = ? LIMIT 1",
+      [id],
+    );
+    return rows[0]?.Description ?? null;
+  } catch (e) {
+    console.error("resolveArticleTypeDescriptionFromAccDb:", e);
+    return null;
+  }
+}
+
+/** Resolve article category label from account_center.article_categories (DB2) */
+async function resolveArticleCategoryDescriptionFromAccDb(categoryId) {
+  if (categoryId == null || categoryId === "") return null;
+  const id = parseInt(String(categoryId), 10);
+  if (Number.isNaN(id)) return null;
+  try {
+    const [rows] = await pool2.query(
+      "SELECT Description FROM article_categories WHERE idArticle_Categories = ? LIMIT 1",
+      [id],
+    );
+    return rows[0]?.Description ?? null;
+  } catch (e) {
+    console.error("resolveArticleCategoryDescriptionFromAccDb:", e);
     return null;
   }
 }
@@ -5122,6 +5165,416 @@ export const findTicketBySearchInput = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Error in findTicketBySearchInput controller", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+function formatLetterTemplateCell(value) {
+  if (value === null || value === undefined) return "";
+  if (value instanceof Date) {
+    const iso = value.toISOString();
+    return iso.slice(0, 19).replace("T", " ");
+  }
+  return String(value);
+}
+
+function formatHumanDate(value, includeTime = false) {
+  if (value === null || value === undefined || value === "") return "";
+  const raw = String(value).trim();
+  if (!raw) return "";
+
+  const parsed = value instanceof Date ? value : new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return raw;
+
+  if (includeTime) {
+    return new Intl.DateTimeFormat("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    }).format(parsed);
+  }
+
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(parsed);
+}
+
+function formatTicketMergeValueBySuffix(suffix, value) {
+  if (value === null || value === undefined) return "";
+  const lower = String(suffix || "").toLowerCase();
+  const includeTime =
+    lower === "date_time" || lower === "created_at" || lower === "updated_at";
+  const looksDateLike =
+    lower.includes("date") || lower.endsWith("_at") || lower === "date_time";
+
+  if (looksDateLike) {
+    return formatHumanDate(value, includeTime);
+  }
+  return formatLetterTemplateCell(value);
+}
+
+function mapTicketStatusLabel(status) {
+  const code = String(status ?? "").trim();
+  switch (code) {
+    case "-1":
+      return "Approved";
+    case "0":
+      return "Pending Approval";
+    case "1":
+      return "Active";
+    case "2":
+      return "Settled";
+    case "3":
+      return "Overdue";
+    case "4":
+      return "Rejected";
+    default:
+      return code || "";
+  }
+}
+
+function normalizeNumberOrNull(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseStageCount(value) {
+  const n = parseInt(String(value ?? "").trim(), 10);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(n, 4);
+}
+
+function buildStageLine({ stageNo, start, end, rate }) {
+  const cleanBoundary = (value, fallback) => {
+    const text = formatLetterTemplateCell(value).trim();
+    if (!text) return fallback;
+    const compact = text.replace(/\s+/g, " ").toLowerCase();
+    if (compact === "to maturity date") return "Maturity date";
+    return text;
+  };
+
+  const startTxt = cleanBoundary(start, "");
+  const endTxt = cleanBoundary(end, "");
+  const rateTxt = rate === null ? "Rate not set" : `${rate}%`;
+  const hasRange = Boolean(startTxt || endTxt);
+  const rangeTxt = hasRange ? ` (${startTxt || "Start"} to ${endTxt || "End"})` : "";
+  return `Stage ${stageNo}${rangeTxt}: ${rateTxt}`;
+}
+
+function buildStageInterestText(ticket) {
+  const baseRate = normalizeNumberOrNull(ticket?.Interest_Rate);
+  if (baseRate && baseRate > 0) return formatLetterTemplateCell(ticket?.Interest_Rate);
+
+  const configuredStages = parseStageCount(ticket?.noOfStages);
+  const stageRates = [
+    normalizeNumberOrNull(ticket?.stage1Interest),
+    normalizeNumberOrNull(ticket?.stage2Interest),
+    normalizeNumberOrNull(ticket?.stage3Interest),
+    normalizeNumberOrNull(ticket?.stage4Interest),
+  ];
+  const stageStarts = [
+    ticket?.stage1StartDate,
+    ticket?.stage2StartDate,
+    ticket?.stage3StartDate,
+    ticket?.stage4StartDate,
+  ];
+  const stageEnds = [
+    ticket?.stage1EndDate,
+    ticket?.stage2EndDate,
+    ticket?.stage3EndDate,
+    ticket?.stage4EndDate,
+  ];
+
+  const detectedStages = stageRates.reduce(
+    (acc, v, idx) =>
+      v !== null || stageStarts[idx] || stageEnds[idx] ? idx + 1 : acc,
+    0,
+  );
+  const useStages = configuredStages || detectedStages;
+  if (!useStages) return "Stage Interest";
+
+  const lines = [];
+  for (let i = 0; i < useStages; i += 1) {
+    const line = buildStageLine({
+      stageNo: i + 1,
+      start: stageStarts[i],
+      end: stageEnds[i],
+      rate: stageRates[i],
+    });
+    if (line) lines.push(line);
+  }
+  if (!lines.length) return `Stage Interest - ${useStages} stages`;
+  return `Stage Interest - ${useStages} stages: ${lines.join("; ")}`;
+}
+
+function buildStageLateChargeText(ticket) {
+  const baseRate = normalizeNumberOrNull(ticket?.Late_charge_Precentage);
+  if (baseRate && baseRate > 0) return formatLetterTemplateCell(ticket?.Late_charge_Precentage);
+
+  const configuredStages = parseStageCount(ticket?.numberOfLateChargeStages);
+  const stageRates = [
+    normalizeNumberOrNull(ticket?.lateChargeStage1),
+    normalizeNumberOrNull(ticket?.lateChargeStage2),
+    normalizeNumberOrNull(ticket?.lateChargeStage3),
+    normalizeNumberOrNull(ticket?.lateChargeStage4),
+  ];
+  const stageStarts = [
+    ticket?.lateChargeStage1StartDate,
+    ticket?.lateChargeStage2StartDate,
+    ticket?.lateChargeStage3StartDate,
+    ticket?.lateChargeStage4StartDate,
+  ];
+  const stageEnds = [
+    ticket?.lateChargeStage1EndDate,
+    ticket?.lateChargeStage2EndDate,
+    ticket?.lateChargeStage3EndDate,
+    ticket?.lateChargeStage4EndDate,
+  ];
+
+  const detectedStages = stageRates.reduce(
+    (acc, v, idx) =>
+      v !== null || stageStarts[idx] || stageEnds[idx] ? idx + 1 : acc,
+    0,
+  );
+  const useStages = configuredStages || detectedStages;
+  if (!useStages) return "Stage Late Charge";
+
+  const lines = [];
+  for (let i = 0; i < useStages; i += 1) {
+    const line = buildStageLine({
+      stageNo: i + 1,
+      start: stageStarts[i],
+      end: stageEnds[i],
+      rate: stageRates[i],
+    });
+    if (line) lines.push(line);
+  }
+  if (!lines.length) return `Stage Late Charge - ${useStages} stages`;
+  return `Stage Late Charge - ${useStages} stages: ${lines.join("; ")}`;
+}
+
+function getInterestTypeLabel(ticket) {
+  const baseRate = normalizeNumberOrNull(ticket?.Interest_Rate);
+  if (baseRate && baseRate > 0) return "Fixed Interest";
+  return "Stage Interest";
+}
+
+function getLateChargeTypeLabel(ticket) {
+  const baseRate = normalizeNumberOrNull(ticket?.Late_charge_Precentage);
+  if (baseRate && baseRate > 0) return "Fixed Late Charge";
+  return "Stage Late Charge";
+}
+
+/** Letter merge data for Account Center: ticketId + comma-separated field suffixes (after Pawning_Ticket_). */
+export const getPawningTicketDataByIdAndFields = async (req, res, next) => {
+  try {
+    const ticketId = req.params.ticketId;
+    const fieldsRaw = req.query.fields;
+
+    if (!ticketId) {
+      return next(errorHandler(400, "Ticket ID is missing"));
+    }
+    if (
+      fieldsRaw === undefined ||
+      fieldsRaw === null ||
+      String(fieldsRaw).trim() === ""
+    ) {
+      return next(errorHandler(400, "Fields are required"));
+    }
+
+    const suffixes = String(fieldsRaw)
+      .split(",")
+      .map((s) => normalizePawningTemplateFieldToken(s))
+      .filter(Boolean);
+
+    const uniqueSuffixes = [...new Set(suffixes)];
+
+    const [ticketRows] = await pool.query(
+      "SELECT * FROM pawning_ticket WHERE idPawning_Ticket = ? LIMIT 1",
+      [ticketId],
+    );
+    if (!ticketRows.length) {
+      return next(errorHandler(404, "Ticket not found"));
+    }
+    const ticket = ticketRows[0];
+
+    const needArticle = uniqueSuffixes.some(
+      (s) =>
+        ARTICLE_SUFFIX_TO_COLUMN[s] ||
+        s === ARTICLE_NAME_SUFFIX ||
+        s === ARTICLE_CATEGORY_SUFFIX,
+    );
+
+    let articles = [];
+    if (needArticle) {
+      const [articleRows] = await pool.query(
+        `SELECT * FROM ticket_articles
+         WHERE Pawning_Ticket_idPawning_Ticket = ?
+         ORDER BY idTicket_Articles ASC`,
+        [ticketId],
+      );
+      articles = Array.isArray(articleRows) ? articleRows : [];
+    }
+
+    const accessToken = req.accessToken;
+    const needsUserName = uniqueSuffixes.includes("User_idUser");
+    const needsBranchName = uniqueSuffixes.includes("Branch_idBranch");
+    const userMap = new Map();
+    const branchMap = new Map();
+
+    if (needsUserName && ticket?.User_idUser && accessToken) {
+      const users = await fetchUserNamesByIds([ticket.User_idUser], accessToken);
+      users.forEach((u) => {
+        if (u?.idUser != null) {
+          userMap.set(String(u.idUser), u?.full_name || "");
+        }
+      });
+    }
+
+    if (needsBranchName && ticket?.Branch_idBranch && accessToken) {
+      const branches = await fetchBranchNamesByIds(
+        [ticket.Branch_idBranch],
+        accessToken,
+      );
+      branches.forEach((b) => {
+        if (b?.idBranch != null) {
+          branchMap.set(String(b.idBranch), b?.Name || "");
+        }
+      });
+    }
+
+    const ticketData = {};
+    for (const suffix of uniqueSuffixes) {
+      const templateKey = fullTemplateKey(suffix);
+
+      if (suffix === "Interest_Rate_Type") {
+        ticketData[templateKey] = getInterestTypeLabel(ticket);
+        continue;
+      }
+
+      if (suffix === "Late_charge_Type") {
+        ticketData[templateKey] = getLateChargeTypeLabel(ticket);
+        continue;
+      }
+
+      if (UNKNOWN_TICKET_SUFFIXES.has(suffix)) {
+        ticketData[templateKey] = "";
+        continue;
+      }
+
+      const ticketCol = TICKET_SUFFIX_TO_COLUMN[suffix];
+      if (ticketCol) {
+        if (suffix === "Status") {
+          ticketData[templateKey] = mapTicketStatusLabel(ticket?.Status);
+        } else if (suffix === "Interest_Rate") {
+          ticketData[templateKey] = buildStageInterestText(ticket);
+        } else if (suffix === "Late_charge_Precentage") {
+          ticketData[templateKey] = buildStageLateChargeText(ticket);
+        } else if (suffix === "User_idUser") {
+          const nameFromAccCenter = userMap.get(String(ticket?.User_idUser));
+          ticketData[templateKey] =
+            nameFromAccCenter || formatLetterTemplateCell(ticket?.User_idUser);
+        } else if (suffix === "Branch_idBranch") {
+          const nameFromAccCenter = branchMap.get(String(ticket?.Branch_idBranch));
+          ticketData[templateKey] =
+            nameFromAccCenter ||
+            formatLetterTemplateCell(ticket?.Branch_idBranch);
+        } else if (Object.prototype.hasOwnProperty.call(ticket, ticketCol)) {
+          ticketData[templateKey] = formatTicketMergeValueBySuffix(
+            suffix,
+            ticket[ticketCol],
+          );
+        } else {
+          ticketData[templateKey] = "";
+        }
+        continue;
+      }
+
+      if (suffix === ARTICLE_NAME_SUFFIX) {
+        if (!articles.length) {
+          ticketData[templateKey] = "";
+        } else {
+          const labels = [];
+          for (const article of articles) {
+            if (!article?.Article_type) continue;
+            let label = await resolveArticleTypeDescriptionFromAccDb(
+              article.Article_type,
+            );
+            if (!label && accessToken) {
+              const row = await fetchArticleTypeById(
+                parseInt(String(article.Article_type), 10),
+                accessToken,
+              );
+              label = row?.Description ?? "";
+            }
+            if (label) labels.push(label);
+          }
+          ticketData[templateKey] = labels.join("\n");
+        }
+        continue;
+      }
+
+      if (suffix === ARTICLE_CATEGORY_SUFFIX) {
+        if (!articles.length) {
+          ticketData[templateKey] = "";
+        } else {
+          const labels = [];
+          for (const article of articles) {
+            if (
+              article?.Article_category == null ||
+              article?.Article_category === ""
+            ) {
+              continue;
+            }
+            let label = await resolveArticleCategoryDescriptionFromAccDb(
+              article.Article_category,
+            );
+            if (!label && accessToken) {
+              const row = await fetchArticleCategoryById(
+                parseInt(String(article.Article_category), 10),
+                accessToken,
+              );
+              label = row?.Description ?? "";
+            }
+            if (label) labels.push(label);
+          }
+          ticketData[templateKey] = labels.join("\n");
+        }
+        continue;
+      }
+
+      const artCol = ARTICLE_SUFFIX_TO_COLUMN[suffix];
+      if (artCol) {
+        if (articles.length) {
+          const values = articles
+            .map((a) =>
+              Object.prototype.hasOwnProperty.call(a, artCol)
+                ? formatLetterTemplateCell(a[artCol])
+                : "",
+            )
+            .filter((v) => v !== "");
+          ticketData[templateKey] = values.join("\n");
+        } else {
+          ticketData[templateKey] = "";
+        }
+        continue;
+      }
+
+      ticketData[templateKey] = "";
+    }
+
+    return res.status(200).json({
+      success: true,
+      ticketData,
+    });
+  } catch (error) {
+    console.error("Error in getPawningTicketDataByIdAndFields:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

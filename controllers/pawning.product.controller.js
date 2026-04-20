@@ -85,7 +85,6 @@ export const getPawningProductById = async (req, res, next) => {
         Service_Charge_Create_As,
         Service_Charge_Value_type,
         Service_Charge_Value,
-        Early_Settlement_Charge_Create_As,
         Late_Charge_Status,
         Late_Charge_Create_As,
         Late_Charge,
@@ -132,7 +131,6 @@ export const getPawningProductById = async (req, res, next) => {
     }
 
     const product = productRows[0];
-
     // Get early settlement charges if they exist
     const [earlySettlementRows] = await pool.query(
       `SELECT 
@@ -145,7 +143,6 @@ export const getPawningProductById = async (req, res, next) => {
       WHERE Pawning_Product_idPawning_Product = ?`,
       [idPawning_Product],
     );
-
     // Get product plans
     const [productPlanRows] = await pool.query(
       `SELECT 
@@ -221,6 +218,23 @@ export const getPawningProductById = async (req, res, next) => {
       WHERE Pawning_Product_idPawning_Product = ?`,
       [idPawning_Product],
     );
+    const hasProductLevelEarlySettlement =
+      product.early_settlement_stage1_start_day !== null ||
+      product.early_settlement_stage2_start_day !== null ||
+      product.early_settlement_stage3_start_day !== null ||
+      product.early_settlement_stage4_start_day !== null;
+    const hasItemLevelEarlySettlement = productPlanRows.some(
+      (plan) =>
+        plan.early_settlement_stage1_start_day !== null ||
+        plan.early_settlement_stage2_start_day !== null ||
+        plan.early_settlement_stage3_start_day !== null ||
+        plan.early_settlement_stage4_start_day !== null,
+    );
+    const earlySettlementChargeType = hasItemLevelEarlySettlement
+      ? "Charge For Product Item"
+      : hasProductLevelEarlySettlement
+        ? "Charge For Product"
+        : "Inactive";
 
     // Structure the response data similar to the input format
     const responseData = {
@@ -264,35 +278,37 @@ export const getPawningProductById = async (req, res, next) => {
       earlysettlementsData: {
         newEarlySettlement: {
           status:
-            product.Early_Settlement_Charge === "1" ? "Active" : "Inactive",
-          chargeType: product.Early_Settlement_Charge_Create_As,
-          valueType: product.Early_Settlement_Charge_Value_type,
-          value: product.Early_Settlement_Charge_Value,
-          earlySettlementStage1StartDay:
-            product.early_settlement_stage1_start_day,
-          earlySettlementStage1EndDay: product.early_settlement_stage1_end_day,
-          earlySettlementStage1Value: product.early_settlement_stage1_value,
-          earlySettlementStage1ValueType:
-            product.early_settlement_stage1_value_type,
-          earlySettlementStage2StartDay:
-            product.early_settlement_stage2_start_day,
-          earlySettlementStage2EndDay: product.early_settlement_stage2_end_day,
-          earlySettlementStage2Value: product.early_settlement_stage2_value,
-          earlySettlementStage2ValueType:
-            product.early_settlement_stage2_value_type,
-          earlySettlementStage3StartDay:
-            product.early_settlement_stage3_start_day,
-          earlySettlementStage3EndDay: product.early_settlement_stage3_end_day,
-          earlySettlementStage3Value: product.early_settlement_stage3_value,
-          earlySettlementStage3ValueType:
-            product.early_settlement_stage3_value_type,
-          earlySettlementStage4StartDay:
-            product.early_settlement_stage4_start_day,
-          earlySettlementStage4EndDay: product.early_settlement_stage4_end_day,
-          earlySettlementStage4Value: product.early_settlement_stage4_value,
-          earlySettlementStage4ValueType:
-            product.early_settlement_stage4_value_type,
-          earlySettlementEffectType: product.early_settlement_effect_type,
+            hasProductLevelEarlySettlement || hasItemLevelEarlySettlement
+              ? "Active"
+              : "Inactive",
+          chargeType: earlySettlementChargeType,
+          ...(earlySettlementChargeType === "Charge For Product" && {
+            earlySettlementStage1StartDay:
+              product.early_settlement_stage1_start_day,
+            earlySettlementStage1EndDay: product.early_settlement_stage1_end_day,
+            earlySettlementStage1Value: product.early_settlement_stage1_value,
+            earlySettlementStage1ValueType:
+              product.early_settlement_stage1_value_type,
+            earlySettlementStage2StartDay:
+              product.early_settlement_stage2_start_day,
+            earlySettlementStage2EndDay: product.early_settlement_stage2_end_day,
+            earlySettlementStage2Value: product.early_settlement_stage2_value,
+            earlySettlementStage2ValueType:
+              product.early_settlement_stage2_value_type,
+            earlySettlementStage3StartDay:
+              product.early_settlement_stage3_start_day,
+            earlySettlementStage3EndDay: product.early_settlement_stage3_end_day,
+            earlySettlementStage3Value: product.early_settlement_stage3_value,
+            earlySettlementStage3ValueType:
+              product.early_settlement_stage3_value_type,
+            earlySettlementStage4StartDay:
+              product.early_settlement_stage4_start_day,
+            earlySettlementStage4EndDay: product.early_settlement_stage4_end_day,
+            earlySettlementStage4Value: product.early_settlement_stage4_value,
+            earlySettlementStage4ValueType:
+              product.early_settlement_stage4_value_type,
+            earlySettlementEffectType: product.early_settlement_effect_type,
+          }),
         },
         earlySettlements: earlySettlementRows.map((settlement) => ({
           id: settlement.idEarly_Settlement_Charges,
@@ -320,27 +336,6 @@ export const getPawningProductById = async (req, res, next) => {
           earlySettlementChargeValueType:
             plan.Early_Settlement_Charge_Value_type,
           earlySettlementChargeValue: plan.Early_Settlement_Charge_Value,
-          earlySettlementStage1StartDay: plan.early_settlement_stage1_start_day,
-          earlySettlementStage1EndDay: plan.early_settlement_stage1_end_day,
-          earlySettlementStage1Value: plan.early_settlement_stage1_value,
-          earlySettlementStage1ValueType:
-            plan.early_settlement_stage1_value_type,
-          earlySettlementStage2StartDay: plan.early_settlement_stage2_start_day,
-          earlySettlementStage2EndDay: plan.early_settlement_stage2_end_day,
-          earlySettlementStage2Value: plan.early_settlement_stage2_value,
-          earlySettlementStage2ValueType:
-            plan.early_settlement_stage2_value_type,
-          earlySettlementStage3StartDay: plan.early_settlement_stage3_start_day,
-          earlySettlementStage3EndDay: plan.early_settlement_stage3_end_day,
-          earlySettlementStage3Value: plan.early_settlement_stage3_value,
-          earlySettlementStage3ValueType:
-            plan.early_settlement_stage3_value_type,
-          earlySettlementStage4StartDay: plan.early_settlement_stage4_start_day,
-          earlySettlementStage4EndDay: plan.early_settlement_stage4_end_day,
-          earlySettlementStage4Value: plan.early_settlement_stage4_value,
-          earlySettlementStage4ValueType:
-            plan.early_settlement_stage4_value_type,
-          earlySettlementEffectType: plan.early_settlement_effect_type,
           lateChargePerDay: plan.Late_Charge,
           amount22Carat: plan.Amount_For_22_Caratage,
           lastUpdatedUser: plan.Last_Updated_User,
@@ -385,6 +380,31 @@ export const getPawningProductById = async (req, res, next) => {
             lateChargeStage4StartDate: plan.lateChargeStage4StartDate,
             lateChargeStage4EndDate: plan.lateChargeStage4EndDate,
             numberOfLateChargeStages: plan.numberOfLateChargeStages,
+          });
+        }
+        if (earlySettlementChargeType === "Charge For Product Item") {
+          Object.assign(base, {
+            earlySettlementStage1StartDay: plan.early_settlement_stage1_start_day,
+            earlySettlementStage1EndDay: plan.early_settlement_stage1_end_day,
+            earlySettlementStage1Value: plan.early_settlement_stage1_value,
+            earlySettlementStage1ValueType:
+              plan.early_settlement_stage1_value_type,
+            earlySettlementStage2StartDay: plan.early_settlement_stage2_start_day,
+            earlySettlementStage2EndDay: plan.early_settlement_stage2_end_day,
+            earlySettlementStage2Value: plan.early_settlement_stage2_value,
+            earlySettlementStage2ValueType:
+              plan.early_settlement_stage2_value_type,
+            earlySettlementStage3StartDay: plan.early_settlement_stage3_start_day,
+            earlySettlementStage3EndDay: plan.early_settlement_stage3_end_day,
+            earlySettlementStage3Value: plan.early_settlement_stage3_value,
+            earlySettlementStage3ValueType:
+              plan.early_settlement_stage3_value_type,
+            earlySettlementStage4StartDay: plan.early_settlement_stage4_start_day,
+            earlySettlementStage4EndDay: plan.early_settlement_stage4_end_day,
+            earlySettlementStage4Value: plan.early_settlement_stage4_value,
+            earlySettlementStage4ValueType:
+              plan.early_settlement_stage4_value_type,
+            earlySettlementEffectType: plan.early_settlement_effect_type,
           });
         }
 

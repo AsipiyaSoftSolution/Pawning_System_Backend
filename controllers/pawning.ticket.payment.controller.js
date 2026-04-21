@@ -80,26 +80,11 @@ function resolveEarlySettlementRawAmount(row, daysToMaturity, advanceAmount) {
   return { rawAmount: best.v };
 }
 
-function applyEarlySettlementEffect(
-  rawAmount,
-  effectType,
-  advanceAmount,
-  valueType,
-) {
-  const value = parseFloat(rawAmount);
-  const advance = parseFloat(advanceAmount);
-  const type = String(valueType || "").toLowerCase();
-  if (Number.isFinite(advance) && advance > 0) {
-    return Math.abs(value);
-  }
-  if (!Number.isFinite(value) || value === 0) return 0;
-  if (type === "percentage") {
-    return (value * 100) / advance;
-  }
-  if (type === "fixed") {
-    return value;
-  }
-  return Math.abs(value);
+/** Positive settlement adjustment amount (charge vs discount handled when combining with Total_Balance). */
+function applyEarlySettlementEffect(rawAmount) {
+  const r = parseFloat(rawAmount);
+  if (!Number.isFinite(r) || r === 0) return 0;
+  return Math.abs(r);
 }
 
 // Search tickets by ticket number, customer NIC, or customer name with pagination
@@ -448,12 +433,7 @@ export const getTicketDataById = async (req, res, next) => {
         daysToMaturity,
         advanceBase,
       );
-      earlySettlementCharge = applyEarlySettlementEffect(
-        rawAmount,
-        stageRow.early_settlement_effect_type,
-        ticketData[0].Pawning_Advance_Amount,
-        stageRow.early_settlement_stage1_value_type,
-      );
+      earlySettlementCharge = applyEarlySettlementEffect(rawAmount);
     }
 
     // calculate the minimum renewal amount
@@ -472,15 +452,14 @@ export const getTicketDataById = async (req, res, next) => {
 
     ticketCharges[0].minimumRenewalAmount = minimumRenewalAmount;
 
-    // calculaate the loan settlement amount
-    let loanSettlementAmount;
-    if (earlySettlementChargeType === "discount") {
-      loanSettlementAmount =
-        parseFloat(ticketCharges[0].Total_Balance) - earlySettlementCharge;
-    }
-    if (earlySettlementChargeType === "charge") {
-      loanSettlementAmount =
-        parseFloat(ticketCharges[0].Total_Balance) + earlySettlementCharge;
+    // calculaate the loan settlement amount (same rule as settlement payment validation)
+    const tbForLoan = parseFloat(ticketCharges[0].Total_Balance) || 0;
+    const esLoan = String(earlySettlementChargeType || "").toLowerCase();
+    let loanSettlementAmount = tbForLoan;
+    if (esLoan === "discount") {
+      loanSettlementAmount = Math.max(0, tbForLoan - earlySettlementCharge);
+    } else if (esLoan === "charge") {
+      loanSettlementAmount = tbForLoan + earlySettlementCharge;
     }
     ticketCharges[0].loanSettlementAmount = loanSettlementAmount;
 
@@ -1304,7 +1283,7 @@ export const createTicketSettlementPayment = async (req, res, next) => {
     try {
       // check if the ticket exists and belongs to the branch
       const [existingTicket] = await connection.query(
-        "SELECT Interest_apply_on,Maturity_date,Date_Time,Ticket_No,Status,Pawning_Product_idPawning_Product,Customer_idCustomer,Period,Period_Type FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+        "SELECT Interest_apply_on,Maturity_date,Date_Time,Ticket_No,Status,Pawning_Product_idPawning_Product,Customer_idCustomer,Period,Period_Type,Pawning_Advance_Amount,early_settlement_effect_type,early_settlement_stage1_start_day, early_settlement_stage1_end_day,early_settlement_stage1_value, early_settlement_stage1_value_type,early_settlement_stage2_start_day, early_settlement_stage2_end_day,early_settlement_stage2_value, early_settlement_stage2_value_type,early_settlement_stage3_start_day, early_settlement_stage3_end_day,early_settlement_stage3_value, early_settlement_stage3_value_type,early_settlement_stage4_start_day, early_settlement_stage4_end_day,early_settlement_stage4_value, early_settlement_stage4_value_type FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
         [ticketId, req.branchId],
       );
 
@@ -1335,129 +1314,57 @@ export const createTicketSettlementPayment = async (req, res, next) => {
         );
       }
 
-      // get product data for early settlement charge calculation (stage columns are source of truth)
-      const [productData] = await connection.query(
-        "SELECT Early_Settlement_Charge,Early_Settlement_Charge_Create_As,Interest_Method FROM pawning_product WHERE idPawning_Product = ?",
-        [existingTicket[0].Pawning_Product_idPawning_Product],
-      );
-
-      const earlySettlementStageColumns = `early_settlement_effect_type,
-        early_settlement_stage1_start_day, early_settlement_stage1_end_day,
-        early_settlement_stage1_value, early_settlement_stage1_value_type,
-        early_settlement_stage2_start_day, early_settlement_stage2_end_day,
-        early_settlement_stage2_value, early_settlement_stage2_value_type,
-        early_settlement_stage3_start_day, early_settlement_stage3_end_day,
-        early_settlement_stage3_value, early_settlement_stage3_value_type,
-        early_settlement_stage4_start_day, early_settlement_stage4_end_day,
-        early_settlement_stage4_value, early_settlement_stage4_value_type`;
-
+      // Early settlement (ticket snapshot) — same logic as getTicketDataById loan settlement
       let earlySettlementCharge = 0;
-      const esActive =
-        productData[0]?.Early_Settlement_Charge === 1 ||
-        productData[0]?.Early_Settlement_Charge === "1";
-      if (esActive && productData[0]?.Early_Settlement_Charge_Create_As) {
-        const createAs = productData[0].Early_Settlement_Charge_Create_As;
-        if (createAs !== "inactive") {
-          const daysToMaturity = calendarDaysUntil(
-            new Date(),
-            existingTicket[0].Maturity_date,
-          );
-          const advanceBase = parseFloat(ticketLog[0].Advance_Balance) || 0;
-
-          if (createAs === "Charge For Product") {
-            const [stagesData] = await connection.query(
-              `SELECT ${earlySettlementStageColumns} FROM pawning_product WHERE idPawning_Product = ?`,
-              [existingTicket[0].Pawning_Product_idPawning_Product],
-            );
-            if (stagesData.length > 0) {
-              const stageRow = stagesData[0];
-              const { rawAmount } = resolveEarlySettlementRawAmount(
-                stageRow,
-                daysToMaturity,
-                advanceBase,
-              );
-              earlySettlementCharge = applyEarlySettlementEffect(
-                rawAmount,
-                stageRow.early_settlement_effect_type,
-              );
-            }
-          } else if (createAs === "Charge For Product Item") {
-            if (productData[0].Interest_Method === "Interest For Period") {
-              const [planData] = await connection.query(
-                `SELECT ${earlySettlementStageColumns} FROM product_plan WHERE Pawning_Product_idPawning_Product = ? AND Period_Type = ? AND CAST(? AS UNSIGNED) BETWEEN CAST(Minimum_Period AS UNSIGNED) AND CAST(Maximum_Period AS UNSIGNED)`,
-                [
-                  existingTicket[0].Pawning_Product_idPawning_Product,
-                  existingTicket[0].Period_Type,
-                  existingTicket[0].Period,
-                ],
-              );
-              if (planData.length > 0) {
-                const stageRow = planData[0];
-                const { rawAmount } = resolveEarlySettlementRawAmount(
-                  stageRow,
-                  daysToMaturity,
-                  advanceBase,
-                );
-                earlySettlementCharge = applyEarlySettlementEffect(
-                  rawAmount,
-                  stageRow.early_settlement_effect_type,
-                );
-              }
-            } else if (
-              productData[0].Interest_Method === "Interest For Pawning Amount"
-            ) {
-              const [planData] = await connection.query(
-                `SELECT ${earlySettlementStageColumns} FROM product_plan WHERE Pawning_Product_idPawning_Product = ? AND CAST(Minimum_Amount AS UNSIGNED) <= CAST(? AS UNSIGNED) AND CAST(Maximum_Amount AS UNSIGNED) >= CAST(? AS UNSIGNED)`,
-                [
-                  existingTicket[0].Pawning_Product_idPawning_Product,
-                  advanceBase,
-                  advanceBase,
-                ],
-              );
-              if (planData.length > 0) {
-                const stageRow = planData[0];
-                const { rawAmount } = resolveEarlySettlementRawAmount(
-                  stageRow,
-                  daysToMaturity,
-                  advanceBase,
-                );
-                earlySettlementCharge = applyEarlySettlementEffect(
-                  rawAmount,
-                  stageRow.early_settlement_effect_type,
-                );
-              }
-            }
-          }
-        }
+      let earlySettlementChargeType;
+      const esEffect = existingTicket[0].early_settlement_effect_type;
+      if (esEffect != null && esEffect !== "") {
+        const daysToMaturity = calendarDaysUntil(
+          new Date(),
+          existingTicket[0].Maturity_date,
+        );
+        const advanceBase =
+          parseFloat(ticketLog[0].Advance_Balance) ||
+          parseFloat(existingTicket[0].Pawning_Advance_Amount) ||
+          0;
+        const stageRow = existingTicket[0];
+        earlySettlementChargeType = stageRow.early_settlement_effect_type;
+        const { rawAmount } = resolveEarlySettlementRawAmount(
+          stageRow,
+          daysToMaturity,
+          advanceBase,
+        );
+        earlySettlementCharge = applyEarlySettlementEffect(rawAmount);
       }
 
-      const earlySettlementPayable = Math.max(
-        0,
-        parseFloat(earlySettlementCharge) || 0,
-      );
+      const totalBal = parseFloat(ticketLog[0].Total_Balance) || 0;
+      const esType = String(earlySettlementChargeType || "").toLowerCase();
+      let settlementAmountRequired = totalBal;
+      if (esType === "discount") {
+        settlementAmountRequired = Math.max(0, totalBal - earlySettlementCharge);
+      } else if (esType === "charge") {
+        settlementAmountRequired = totalBal + earlySettlementCharge;
+      }
 
-      // calculate total settlement amount required
-      const totalBalanceRequired =
-        (parseFloat(ticketLog[0].Interest_Balance) || 0) +
-        (parseFloat(ticketLog[0].Service_Charge_Balance) || 0) +
-        (parseFloat(ticketLog[0].Late_Charges_Balance) || 0) +
-        (parseFloat(ticketLog[0].Aditional_Charge_Balance) || 0) +
-        (parseFloat(ticketLog[0].Advance_Balance) || 0) +
-        (parseFloat(earlySettlementCharge) || 0);
-
-      // validate payment amount covers total settlement
-      if (paymentAmount < totalBalanceRequired) {
+      const payAmount = parseFloat(paymentAmount);
+      if (
+        !Number.isFinite(payAmount) ||
+        payAmount + 1e-6 < settlementAmountRequired
+      ) {
         await connection.rollback();
         connection.release();
         return next(
           errorHandler(
             400,
-            `Settlement payment amount should be at least ${totalBalanceRequired.toFixed(
+            `Settlement payment amount should be at least ${settlementAmountRequired.toFixed(
               2,
-            )} to cover all balances and charges.`,
+            )} to cover the loan settlement amount.`,
           ),
         );
       }
+
+      const earlySettlementPayable =
+        esType === "charge" ? Math.max(0, earlySettlementCharge) : 0;
 
       // get the day count from today date to ticket Date_Time
       const today = new Date();

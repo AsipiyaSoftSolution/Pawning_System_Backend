@@ -87,6 +87,16 @@ function applyEarlySettlementEffect(rawAmount) {
   return Math.abs(r);
 }
 
+function isInvalidOrExpiredPrepareTokenError(error) {
+  const status = error?.status ?? error?.response?.status;
+  const message =
+    String(error?.response?.message || error?.message || "").toLowerCase();
+  return (
+    (status === 400 || status === 404 || status === 409) &&
+    message.includes("invalid or expired prepare token")
+  );
+}
+
 // Search tickets by ticket number, customer NIC, or customer name with pagination
 export const searchByTickerNumberCustomerNICOrName = async (req, res, next) => {
   try {
@@ -1194,9 +1204,21 @@ export const createTicketRenewalPayment = async (req, res, next) => {
       await connection.commit();
       pawningCommitted = true;
 
-      // Then finalize AC accounting transaction using prepare token
-      await commitPawningTicketPaymentsWithRetry(prepareToken, req.accessToken);
-      prepareToken = null;
+      // Then finalize AC accounting transaction using prepare token.
+      // If token was already consumed/expired after local commit, keep ticket settled.
+      try {
+        await commitPawningTicketPaymentsWithRetry(prepareToken, req.accessToken);
+        prepareToken = null;
+      } catch (acCommitError) {
+        if (isInvalidOrExpiredPrepareTokenError(acCommitError)) {
+          console.warn(
+            "AC commit returned invalid/expired prepare token after pawning commit; keeping settled ticket.",
+          );
+          prepareToken = null;
+        } else {
+          throw acCommitError;
+        }
+      }
 
       connection.release();
 
@@ -1455,22 +1477,6 @@ export const createTicketSettlementPayment = async (req, res, next) => {
         currentVoucherNumber,
       };
 
-      try {
-        const prep =
-          await pawningPaymentsApi.prepareTicketPaymentsDoubleEntries(
-            data,
-            req.accessToken,
-          );
-        prepareToken = prep.prepareToken;
-      } catch (error) {
-        const status = error?.status || error?.response?.status || 500;
-        const message =
-          error?.response?.message ||
-          error?.message ||
-          "Failed to prepare ticket settlement payment accounting";
-        return next(errorHandler(status, message));
-      }
-
       // insert into the payment table (pool)
       const [ticketPaymentResult] = await connection.query(
         "INSERT INTO payment(Date_time,Description,Ticket_no,Amount,User,Ticket_Date,Maturity_Date,Day_Count,Type,Pawning_Ticket_idPawning_Ticket) VALUES(NOW(),?,?,?,?,?,?,?,?,?)",
@@ -1549,13 +1555,42 @@ export const createTicketSettlementPayment = async (req, res, next) => {
         throw errorHandler(500, "Failed to update ticket status");
       }
 
+      // Prepare AC payload as late as possible so prepareToken does not expire.
+      try {
+        const prep =
+          await pawningPaymentsApi.prepareTicketPaymentsDoubleEntries(
+            data,
+            req.accessToken,
+          );
+        prepareToken = prep.prepareToken;
+      } catch (error) {
+        const status = error?.status || error?.response?.status || 500;
+        const message =
+          error?.response?.message ||
+          error?.message ||
+          "Failed to prepare ticket settlement payment accounting";
+        throw errorHandler(status, message);
+      }
+
       // Commit local pawning transaction first
       await connection.commit();
       pawningCommitted = true;
 
-      // Then finalize AC accounting transaction using prepare token
-      await commitPawningTicketPaymentsWithRetry(prepareToken, req.accessToken);
-      prepareToken = null;
+      // Then finalize AC accounting transaction using prepare token.
+      // If token was already consumed/expired after local commit, keep ticket settled.
+      try {
+        await commitPawningTicketPaymentsWithRetry(prepareToken, req.accessToken);
+        prepareToken = null;
+      } catch (acCommitError) {
+        if (isInvalidOrExpiredPrepareTokenError(acCommitError)) {
+          console.warn(
+            "AC commit returned invalid/expired prepare token after pawning commit; keeping settled ticket.",
+          );
+          prepareToken = null;
+        } else {
+          throw acCommitError;
+        }
+      }
 
       connection.release();
 

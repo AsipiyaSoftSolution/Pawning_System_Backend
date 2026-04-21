@@ -627,7 +627,10 @@ export const createPawningTicket = async (req, res, next) => {
         earlySettlementRow = esRows[0] || null;
       } else if (earlySettlementCreateAs === "Charge For Product Item") {
         let planId = productPlanData?.[0]?.idProduct_Plan;
-        if (!planId && productData[0].Interest_Method === "Interest For Period") {
+        if (
+          !planId &&
+          productData[0].Interest_Method === "Interest For Period"
+        ) {
           const [pid] = await connection.query(
             "SELECT idProduct_Plan FROM product_plan WHERE Pawning_Product_idPawning_Product = ? AND Period_Type = ? AND CAST(? AS UNSIGNED) BETWEEN CAST(Minimum_Period AS UNSIGNED) AND CAST(Maximum_Period AS UNSIGNED)",
             [
@@ -4594,7 +4597,11 @@ export const generatePawningTicketNumber = async (req, res, next) => {
 
         if (part === "Customer Number") {
           if (customerId) {
-            ticketNo += customerId.toString().padStart(4, "0");
+            const [customer] = await pool.query(
+              "SELECT Customer_Number FROM customer WHERE idCustomer = ?",
+              [customerId],
+            );
+            ticketNo += customer[0].Customer_Number.toString().padStart(4, "0");
           } else {
             ticketNo += "0000"; // default if customerId not provided
           }
@@ -5335,13 +5342,16 @@ function buildStageLine({ stageNo, start, end, rate }) {
   const endTxt = cleanBoundary(end, "");
   const rateTxt = rate === null ? "Rate not set" : `${rate}%`;
   const hasRange = Boolean(startTxt || endTxt);
-  const rangeTxt = hasRange ? ` (${startTxt || "Start"} to ${endTxt || "End"})` : "";
+  const rangeTxt = hasRange
+    ? ` (${startTxt || "Start"} to ${endTxt || "End"})`
+    : "";
   return `Stage ${stageNo}${rangeTxt}: ${rateTxt}`;
 }
 
 function buildStageInterestText(ticket) {
   const baseRate = normalizeNumberOrNull(ticket?.Interest_Rate);
-  if (baseRate && baseRate > 0) return formatLetterTemplateCell(ticket?.Interest_Rate);
+  if (baseRate && baseRate > 0)
+    return formatLetterTemplateCell(ticket?.Interest_Rate);
 
   const configuredStages = parseStageCount(ticket?.noOfStages);
   const stageRates = [
@@ -5387,7 +5397,8 @@ function buildStageInterestText(ticket) {
 
 function buildStageLateChargeText(ticket) {
   const baseRate = normalizeNumberOrNull(ticket?.Late_charge_Precentage);
-  if (baseRate && baseRate > 0) return formatLetterTemplateCell(ticket?.Late_charge_Precentage);
+  if (baseRate && baseRate > 0)
+    return formatLetterTemplateCell(ticket?.Late_charge_Precentage);
 
   const configuredStages = parseStageCount(ticket?.numberOfLateChargeStages);
   const stageRates = [
@@ -5501,7 +5512,10 @@ export const getPawningTicketDataByIdAndFields = async (req, res, next) => {
     const branchMap = new Map();
 
     if (needsUserName && ticket?.User_idUser && accessToken) {
-      const users = await fetchUserNamesByIds([ticket.User_idUser], accessToken);
+      const users = await fetchUserNamesByIds(
+        [ticket.User_idUser],
+        accessToken,
+      );
       users.forEach((u) => {
         if (u?.idUser != null) {
           userMap.set(String(u.idUser), u?.full_name || "");
@@ -5553,7 +5567,9 @@ export const getPawningTicketDataByIdAndFields = async (req, res, next) => {
           ticketData[templateKey] =
             nameFromAccCenter || formatLetterTemplateCell(ticket?.User_idUser);
         } else if (suffix === "Branch_idBranch") {
-          const nameFromAccCenter = branchMap.get(String(ticket?.Branch_idBranch));
+          const nameFromAccCenter = branchMap.get(
+            String(ticket?.Branch_idBranch),
+          );
           ticketData[templateKey] =
             nameFromAccCenter ||
             formatLetterTemplateCell(ticket?.Branch_idBranch);
@@ -5679,7 +5695,9 @@ export const getPawningTicketDataByIdAndFields = async (req, res, next) => {
         ticketArticlesTable.push({
           articleType: typeLabel,
           articleCategory: categoryLabel,
-          articleCondition: formatLetterTemplateCell(article?.Article_Condition),
+          articleCondition: formatLetterTemplateCell(
+            article?.Article_Condition,
+          ),
           caratage: formatLetterTemplateCell(article?.Caratage),
           noOfItems: formatLetterTemplateCell(article?.No_Of_Items),
           grossWeight: formatLetterTemplateCell(article?.Gross_Weight),

@@ -80,12 +80,26 @@ function resolveEarlySettlementRawAmount(row, daysToMaturity, advanceAmount) {
   return { rawAmount: best.v };
 }
 
-function applyEarlySettlementEffect(rawAmount, effectType) {
-  const r = parseFloat(rawAmount);
-  if (!Number.isFinite(r) || r === 0) return 0;
-  const et = String(effectType || "").toLowerCase();
-  if (et === "discount") return -Math.abs(r);
-  return Math.abs(r);
+function applyEarlySettlementEffect(
+  rawAmount,
+  effectType,
+  advanceAmount,
+  valueType,
+) {
+  const value = parseFloat(rawAmount);
+  const advance = parseFloat(advanceAmount);
+  const type = String(valueType || "").toLowerCase();
+  if (Number.isFinite(advance) && advance > 0) {
+    return Math.abs(value);
+  }
+  if (!Number.isFinite(value) || value === 0) return 0;
+  if (type === "percentage") {
+    return (value * 100) / advance;
+  }
+  if (type === "fixed") {
+    return value;
+  }
+  return Math.abs(value);
 }
 
 // Search tickets by ticket number, customer NIC, or customer name with pagination
@@ -437,6 +451,8 @@ export const getTicketDataById = async (req, res, next) => {
       earlySettlementCharge = applyEarlySettlementEffect(
         rawAmount,
         stageRow.early_settlement_effect_type,
+        ticketData[0].Pawning_Advance_Amount,
+        stageRow.early_settlement_stage1_value_type,
       );
     }
 
@@ -457,9 +473,15 @@ export const getTicketDataById = async (req, res, next) => {
     ticketCharges[0].minimumRenewalAmount = minimumRenewalAmount;
 
     // calculaate the loan settlement amount
-    let loanSettlementAmount =
-      safeParse(ticketCharges[0].Total_Balance) +
-      safeParse(earlySettlementCharge);
+    let loanSettlementAmount;
+    if (earlySettlementChargeType === "discount") {
+      loanSettlementAmount =
+        parseFloat(ticketCharges[0].Total_Balance) - earlySettlementCharge;
+    }
+    if (earlySettlementChargeType === "charge") {
+      loanSettlementAmount =
+        parseFloat(ticketCharges[0].Total_Balance) + earlySettlementCharge;
+    }
     ticketCharges[0].loanSettlementAmount = loanSettlementAmount;
 
     res.status(200).json({

@@ -395,7 +395,7 @@ export const createPawningTicket = async (req, res, next) => {
 
     // get the ticket's product service charge type and other data
     const [productData] = await connection.query(
-      "SELECT Service_Charge_Create_As,Interest_Method,Service_Charge_Value,Service_Charge_Value_Type,Late_Charge_Create_As FROM pawning_product WHERE idPawning_Product = ?",
+      "SELECT Service_Charge_Create_As,Interest_Method,Service_Charge_Value,Service_Charge_Value_Type,Late_Charge_Create_As,Early_Settlement_Charge_Create_As FROM pawning_product WHERE idPawning_Product = ?",
       [data.ticketData.productId],
     );
 
@@ -604,9 +604,64 @@ export const createPawningTicket = async (req, res, next) => {
     }
     console.log(productPlanStagesData, "productPlanStagesData");
 
+    // Snapshot early settlement stage config onto the ticket (same columns as pawning_product / product_plan)
+    const earlySettlementStageColumns = `early_settlement_effect_type,
+        early_settlement_stage1_start_day, early_settlement_stage1_end_day,
+        early_settlement_stage1_value, early_settlement_stage1_value_type,
+        early_settlement_stage2_start_day, early_settlement_stage2_end_day,
+        early_settlement_stage2_value, early_settlement_stage2_value_type,
+        early_settlement_stage3_start_day, early_settlement_stage3_end_day,
+        early_settlement_stage3_value, early_settlement_stage3_value_type,
+        early_settlement_stage4_start_day, early_settlement_stage4_end_day,
+        early_settlement_stage4_value, early_settlement_stage4_value_type`;
+
+    let earlySettlementRow = null;
+    const earlySettlementCreateAs =
+      productData[0].Early_Settlement_Charge_Create_As;
+    if (earlySettlementCreateAs && earlySettlementCreateAs !== "inactive") {
+      if (earlySettlementCreateAs === "Charge For Product") {
+        const [esRows] = await connection.query(
+          `SELECT ${earlySettlementStageColumns} FROM pawning_product WHERE idPawning_Product = ?`,
+          [data.ticketData.productId],
+        );
+        earlySettlementRow = esRows[0] || null;
+      } else if (earlySettlementCreateAs === "Charge For Product Item") {
+        let planId = productPlanData?.[0]?.idProduct_Plan;
+        if (!planId && productData[0].Interest_Method === "Interest For Period") {
+          const [pid] = await connection.query(
+            "SELECT idProduct_Plan FROM product_plan WHERE Pawning_Product_idPawning_Product = ? AND Period_Type = ? AND CAST(? AS UNSIGNED) BETWEEN CAST(Minimum_Period AS UNSIGNED) AND CAST(Maximum_Period AS UNSIGNED)",
+            [
+              data.ticketData.productId,
+              data.ticketData.periodType,
+              data.ticketData.period,
+            ],
+          );
+          planId = pid[0]?.idProduct_Plan;
+        } else if (
+          !planId &&
+          productData[0].Interest_Method === "Interest For Pawning Amount"
+        ) {
+          const [pid] = await connection.query(
+            "SELECT idProduct_Plan FROM product_plan WHERE Pawning_Product_idPawning_Product = ? AND CAST(? AS UNSIGNED) BETWEEN CAST(Minimum_Amount AS UNSIGNED) AND CAST(Maximum_Amount AS UNSIGNED)",
+            [data.ticketData.productId, data.ticketData.pawningAdvance],
+          );
+          planId = pid[0]?.idProduct_Plan;
+        }
+        if (planId) {
+          const [esRows] = await connection.query(
+            `SELECT ${earlySettlementStageColumns} FROM product_plan WHERE idProduct_Plan = ?`,
+            [planId],
+          );
+          earlySettlementRow = esRows[0] || null;
+        }
+      }
+    }
+
+    const es = earlySettlementRow || {};
+
     // Insert into pawning_ticket table
     const [result] = await connection.query(
-      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount,Service_Charge_Type,Service_Charge_Rate,Early_Settlement_Charge_Balance,Additiona_Charges_Balance,Service_Charge_Balance,Late_Charge_Balance,Interest_Amount_Balance,Balance_Amount,Interest_Rate_Duration,stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,Status,service_charge_paid_by_customer,service_charge_paid_from_pawning_advance,noOfStages,lateChargeStage1,lateChargeStage2,lateChargeStage3,lateChargeStage4,lateChargeStage1StartDate,lateChargeStage2StartDate,lateChargeStage3StartDate,lateChargeStage4StartDate,lateChargeStage1EndDate,lateChargeStage2EndDate,lateChargeStage3EndDate,lateChargeStage4EndDate,numberOfLateChargeStages) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount,Service_Charge_Type,Service_Charge_Rate,Early_Settlement_Charge_Balance,Additiona_Charges_Balance,Service_Charge_Balance,Late_Charge_Balance,Interest_Amount_Balance,Balance_Amount,Interest_Rate_Duration,stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,Status,service_charge_paid_by_customer,service_charge_paid_from_pawning_advance,noOfStages,lateChargeStage1,lateChargeStage2,lateChargeStage3,lateChargeStage4,lateChargeStage1StartDate,lateChargeStage2StartDate,lateChargeStage3StartDate,lateChargeStage4StartDate,lateChargeStage1EndDate,lateChargeStage2EndDate,lateChargeStage3EndDate,lateChargeStage4EndDate,numberOfLateChargeStages,early_settlement_effect_type,early_settlement_stage1_start_day,early_settlement_stage1_end_day,early_settlement_stage1_value,early_settlement_stage1_value_type,early_settlement_stage2_start_day,early_settlement_stage2_end_day,early_settlement_stage2_value,early_settlement_stage2_value_type,early_settlement_stage3_start_day,early_settlement_stage3_end_day,early_settlement_stage3_value,early_settlement_stage3_value_type,early_settlement_stage4_start_day,early_settlement_stage4_end_day,early_settlement_stage4_value,early_settlement_stage4_value_type) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [
         data.ticketData.ticketNo,
         data.ticketData.grantSeqNo,
@@ -666,6 +721,23 @@ export const createPawningTicket = async (req, res, next) => {
         lateChargeData[0]?.lateChargeStage3EndDate || null,
         lateChargeData[0]?.lateChargeStage4EndDate || null,
         lateChargeData[0]?.numberOfLateChargeStages || 0,
+        es.early_settlement_effect_type ?? null,
+        es.early_settlement_stage1_start_day ?? null,
+        es.early_settlement_stage1_end_day ?? null,
+        es.early_settlement_stage1_value ?? null,
+        es.early_settlement_stage1_value_type ?? null,
+        es.early_settlement_stage2_start_day ?? null,
+        es.early_settlement_stage2_end_day ?? null,
+        es.early_settlement_stage2_value ?? null,
+        es.early_settlement_stage2_value_type ?? null,
+        es.early_settlement_stage3_start_day ?? null,
+        es.early_settlement_stage3_end_day ?? null,
+        es.early_settlement_stage3_value ?? null,
+        es.early_settlement_stage3_value_type ?? null,
+        es.early_settlement_stage4_start_day ?? null,
+        es.early_settlement_stage4_end_day ?? null,
+        es.early_settlement_stage4_value ?? null,
+        es.early_settlement_stage4_value_type ?? null,
       ],
     );
 

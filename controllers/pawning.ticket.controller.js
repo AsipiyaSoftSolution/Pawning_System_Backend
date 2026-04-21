@@ -5569,9 +5569,61 @@ export const getPawningTicketDataByIdAndFields = async (req, res, next) => {
       ticketData[templateKey] = "";
     }
 
+    /** One row per ticket_articles row — for letter HTML table body injection (Account Center). */
+    const ticketArticlesTable = [];
+    if (articles.length > 0) {
+      for (const article of articles) {
+        let typeLabel = "";
+        if (article?.Article_type) {
+          typeLabel =
+            (await resolveArticleTypeDescriptionFromAccDb(
+              article.Article_type,
+            )) || "";
+          if (!typeLabel && accessToken) {
+            const row = await fetchArticleTypeById(
+              parseInt(String(article.Article_type), 10),
+              accessToken,
+            );
+            typeLabel = row?.Description ?? "";
+          }
+        }
+        let categoryLabel = "";
+        if (
+          article?.Article_category != null &&
+          article?.Article_category !== ""
+        ) {
+          categoryLabel =
+            (await resolveArticleCategoryDescriptionFromAccDb(
+              article.Article_category,
+            )) || "";
+          if (!categoryLabel && accessToken) {
+            const row = await fetchArticleCategoryById(
+              parseInt(String(article.Article_category), 10),
+              accessToken,
+            );
+            categoryLabel = row?.Description ?? "";
+          }
+        }
+        ticketArticlesTable.push({
+          articleType: typeLabel,
+          articleCategory: categoryLabel,
+          articleCondition: formatLetterTemplateCell(article?.Article_Condition),
+          caratage: formatLetterTemplateCell(article?.Caratage),
+          noOfItems: formatLetterTemplateCell(article?.No_Of_Items),
+          grossWeight: formatLetterTemplateCell(article?.Gross_Weight),
+          acidTestStatus: formatLetterTemplateCell(article?.Acid_Test_Status),
+          dmReading: formatLetterTemplateCell(article?.DM_Reading),
+          netWeight: formatLetterTemplateCell(article?.Net_Weight),
+          assessedValue: formatLetterTemplateCell(article?.Assessed_Value),
+          declaredValue: formatLetterTemplateCell(article?.Declared_Value),
+        });
+      }
+    }
+
     return res.status(200).json({
       success: true,
       ticketData,
+      ticketArticlesTable,
     });
   } catch (error) {
     console.error("Error in getPawningTicketDataByIdAndFields:", error);

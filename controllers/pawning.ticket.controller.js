@@ -395,7 +395,7 @@ export const createPawningTicket = async (req, res, next) => {
 
     // get the ticket's product service charge type and other data
     const [productData] = await connection.query(
-      "SELECT Service_Charge_Create_As,Interest_Method,Service_Charge_Value,Service_Charge_Value_Type,Late_Charge_Create_As FROM pawning_product WHERE idPawning_Product = ?",
+      "SELECT Service_Charge_Create_As,Interest_Method,Service_Charge_Value,Service_Charge_Value_Type,Late_Charge_Create_As,Early_Settlement_Charge_Create_As FROM pawning_product WHERE idPawning_Product = ?",
       [data.ticketData.productId],
     );
 
@@ -604,9 +604,67 @@ export const createPawningTicket = async (req, res, next) => {
     }
     console.log(productPlanStagesData, "productPlanStagesData");
 
+    // Snapshot early settlement stage config onto the ticket (same columns as pawning_product / product_plan)
+    const earlySettlementStageColumns = `early_settlement_effect_type,
+        early_settlement_stage1_start_day, early_settlement_stage1_end_day,
+        early_settlement_stage1_value, early_settlement_stage1_value_type,
+        early_settlement_stage2_start_day, early_settlement_stage2_end_day,
+        early_settlement_stage2_value, early_settlement_stage2_value_type,
+        early_settlement_stage3_start_day, early_settlement_stage3_end_day,
+        early_settlement_stage3_value, early_settlement_stage3_value_type,
+        early_settlement_stage4_start_day, early_settlement_stage4_end_day,
+        early_settlement_stage4_value, early_settlement_stage4_value_type`;
+
+    let earlySettlementRow = null;
+    const earlySettlementCreateAs =
+      productData[0].Early_Settlement_Charge_Create_As;
+    if (earlySettlementCreateAs && earlySettlementCreateAs !== "inactive") {
+      if (earlySettlementCreateAs === "Charge For Product") {
+        const [esRows] = await connection.query(
+          `SELECT ${earlySettlementStageColumns} FROM pawning_product WHERE idPawning_Product = ?`,
+          [data.ticketData.productId],
+        );
+        earlySettlementRow = esRows[0] || null;
+      } else if (earlySettlementCreateAs === "Charge For Product Item") {
+        let planId = productPlanData?.[0]?.idProduct_Plan;
+        if (
+          !planId &&
+          productData[0].Interest_Method === "Interest For Period"
+        ) {
+          const [pid] = await connection.query(
+            "SELECT idProduct_Plan FROM product_plan WHERE Pawning_Product_idPawning_Product = ? AND Period_Type = ? AND CAST(? AS UNSIGNED) BETWEEN CAST(Minimum_Period AS UNSIGNED) AND CAST(Maximum_Period AS UNSIGNED)",
+            [
+              data.ticketData.productId,
+              data.ticketData.periodType,
+              data.ticketData.period,
+            ],
+          );
+          planId = pid[0]?.idProduct_Plan;
+        } else if (
+          !planId &&
+          productData[0].Interest_Method === "Interest For Pawning Amount"
+        ) {
+          const [pid] = await connection.query(
+            "SELECT idProduct_Plan FROM product_plan WHERE Pawning_Product_idPawning_Product = ? AND CAST(? AS UNSIGNED) BETWEEN CAST(Minimum_Amount AS UNSIGNED) AND CAST(Maximum_Amount AS UNSIGNED)",
+            [data.ticketData.productId, data.ticketData.pawningAdvance],
+          );
+          planId = pid[0]?.idProduct_Plan;
+        }
+        if (planId) {
+          const [esRows] = await connection.query(
+            `SELECT ${earlySettlementStageColumns} FROM product_plan WHERE idProduct_Plan = ?`,
+            [planId],
+          );
+          earlySettlementRow = esRows[0] || null;
+        }
+      }
+    }
+
+    const es = earlySettlementRow || {};
+
     // Insert into pawning_ticket table
     const [result] = await connection.query(
-      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount,Service_Charge_Type,Service_Charge_Rate,Early_Settlement_Charge_Balance,Additiona_Charges_Balance,Service_Charge_Balance,Late_Charge_Balance,Interest_Amount_Balance,Balance_Amount,Interest_Rate_Duration,stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,Status,service_charge_paid_by_customer,service_charge_paid_from_pawning_advance,noOfStages,lateChargeStage1,lateChargeStage2,lateChargeStage3,lateChargeStage4,lateChargeStage1StartDate,lateChargeStage2StartDate,lateChargeStage3StartDate,lateChargeStage4StartDate,lateChargeStage1EndDate,lateChargeStage2EndDate,lateChargeStage3EndDate,lateChargeStage4EndDate,numberOfLateChargeStages) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount,Service_Charge_Type,Service_Charge_Rate,Early_Settlement_Charge_Balance,Additiona_Charges_Balance,Service_Charge_Balance,Late_Charge_Balance,Interest_Amount_Balance,Balance_Amount,Interest_Rate_Duration,stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,Status,service_charge_paid_by_customer,service_charge_paid_from_pawning_advance,noOfStages,lateChargeStage1,lateChargeStage2,lateChargeStage3,lateChargeStage4,lateChargeStage1StartDate,lateChargeStage2StartDate,lateChargeStage3StartDate,lateChargeStage4StartDate,lateChargeStage1EndDate,lateChargeStage2EndDate,lateChargeStage3EndDate,lateChargeStage4EndDate,numberOfLateChargeStages,early_settlement_effect_type,early_settlement_stage1_start_day,early_settlement_stage1_end_day,early_settlement_stage1_value,early_settlement_stage1_value_type,early_settlement_stage2_start_day,early_settlement_stage2_end_day,early_settlement_stage2_value,early_settlement_stage2_value_type,early_settlement_stage3_start_day,early_settlement_stage3_end_day,early_settlement_stage3_value,early_settlement_stage3_value_type,early_settlement_stage4_start_day,early_settlement_stage4_end_day,early_settlement_stage4_value,early_settlement_stage4_value_type) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [
         data.ticketData.ticketNo,
         data.ticketData.grantSeqNo,
@@ -666,6 +724,23 @@ export const createPawningTicket = async (req, res, next) => {
         lateChargeData[0]?.lateChargeStage3EndDate || null,
         lateChargeData[0]?.lateChargeStage4EndDate || null,
         lateChargeData[0]?.numberOfLateChargeStages || 0,
+        es.early_settlement_effect_type ?? null,
+        es.early_settlement_stage1_start_day ?? null,
+        es.early_settlement_stage1_end_day ?? null,
+        es.early_settlement_stage1_value ?? null,
+        es.early_settlement_stage1_value_type ?? null,
+        es.early_settlement_stage2_start_day ?? null,
+        es.early_settlement_stage2_end_day ?? null,
+        es.early_settlement_stage2_value ?? null,
+        es.early_settlement_stage2_value_type ?? null,
+        es.early_settlement_stage3_start_day ?? null,
+        es.early_settlement_stage3_end_day ?? null,
+        es.early_settlement_stage3_value ?? null,
+        es.early_settlement_stage3_value_type ?? null,
+        es.early_settlement_stage4_start_day ?? null,
+        es.early_settlement_stage4_end_day ?? null,
+        es.early_settlement_stage4_value ?? null,
+        es.early_settlement_stage4_value_type ?? null,
       ],
     );
 
@@ -4522,7 +4597,11 @@ export const generatePawningTicketNumber = async (req, res, next) => {
 
         if (part === "Customer Number") {
           if (customerId) {
-            ticketNo += customerId.toString().padStart(4, "0");
+            const [customer] = await pool.query(
+              "SELECT Customer_Number FROM customer WHERE idCustomer = ?",
+              [customerId],
+            );
+            ticketNo += customer[0].Customer_Number.toString().padStart(4, "0");
           } else {
             ticketNo += "0000"; // default if customerId not provided
           }
@@ -5263,13 +5342,16 @@ function buildStageLine({ stageNo, start, end, rate }) {
   const endTxt = cleanBoundary(end, "");
   const rateTxt = rate === null ? "Rate not set" : `${rate}%`;
   const hasRange = Boolean(startTxt || endTxt);
-  const rangeTxt = hasRange ? ` (${startTxt || "Start"} to ${endTxt || "End"})` : "";
+  const rangeTxt = hasRange
+    ? ` (${startTxt || "Start"} to ${endTxt || "End"})`
+    : "";
   return `Stage ${stageNo}${rangeTxt}: ${rateTxt}`;
 }
 
 function buildStageInterestText(ticket) {
   const baseRate = normalizeNumberOrNull(ticket?.Interest_Rate);
-  if (baseRate && baseRate > 0) return formatLetterTemplateCell(ticket?.Interest_Rate);
+  if (baseRate && baseRate > 0)
+    return formatLetterTemplateCell(ticket?.Interest_Rate);
 
   const configuredStages = parseStageCount(ticket?.noOfStages);
   const stageRates = [
@@ -5315,7 +5397,8 @@ function buildStageInterestText(ticket) {
 
 function buildStageLateChargeText(ticket) {
   const baseRate = normalizeNumberOrNull(ticket?.Late_charge_Precentage);
-  if (baseRate && baseRate > 0) return formatLetterTemplateCell(ticket?.Late_charge_Precentage);
+  if (baseRate && baseRate > 0)
+    return formatLetterTemplateCell(ticket?.Late_charge_Precentage);
 
   const configuredStages = parseStageCount(ticket?.numberOfLateChargeStages);
   const stageRates = [
@@ -5429,7 +5512,10 @@ export const getPawningTicketDataByIdAndFields = async (req, res, next) => {
     const branchMap = new Map();
 
     if (needsUserName && ticket?.User_idUser && accessToken) {
-      const users = await fetchUserNamesByIds([ticket.User_idUser], accessToken);
+      const users = await fetchUserNamesByIds(
+        [ticket.User_idUser],
+        accessToken,
+      );
       users.forEach((u) => {
         if (u?.idUser != null) {
           userMap.set(String(u.idUser), u?.full_name || "");
@@ -5481,7 +5567,9 @@ export const getPawningTicketDataByIdAndFields = async (req, res, next) => {
           ticketData[templateKey] =
             nameFromAccCenter || formatLetterTemplateCell(ticket?.User_idUser);
         } else if (suffix === "Branch_idBranch") {
-          const nameFromAccCenter = branchMap.get(String(ticket?.Branch_idBranch));
+          const nameFromAccCenter = branchMap.get(
+            String(ticket?.Branch_idBranch),
+          );
           ticketData[templateKey] =
             nameFromAccCenter ||
             formatLetterTemplateCell(ticket?.Branch_idBranch);
@@ -5569,9 +5657,63 @@ export const getPawningTicketDataByIdAndFields = async (req, res, next) => {
       ticketData[templateKey] = "";
     }
 
+    /** One row per ticket_articles row — for letter HTML table body injection (Account Center). */
+    const ticketArticlesTable = [];
+    if (articles.length > 0) {
+      for (const article of articles) {
+        let typeLabel = "";
+        if (article?.Article_type) {
+          typeLabel =
+            (await resolveArticleTypeDescriptionFromAccDb(
+              article.Article_type,
+            )) || "";
+          if (!typeLabel && accessToken) {
+            const row = await fetchArticleTypeById(
+              parseInt(String(article.Article_type), 10),
+              accessToken,
+            );
+            typeLabel = row?.Description ?? "";
+          }
+        }
+        let categoryLabel = "";
+        if (
+          article?.Article_category != null &&
+          article?.Article_category !== ""
+        ) {
+          categoryLabel =
+            (await resolveArticleCategoryDescriptionFromAccDb(
+              article.Article_category,
+            )) || "";
+          if (!categoryLabel && accessToken) {
+            const row = await fetchArticleCategoryById(
+              parseInt(String(article.Article_category), 10),
+              accessToken,
+            );
+            categoryLabel = row?.Description ?? "";
+          }
+        }
+        ticketArticlesTable.push({
+          articleType: typeLabel,
+          articleCategory: categoryLabel,
+          articleCondition: formatLetterTemplateCell(
+            article?.Article_Condition,
+          ),
+          caratage: formatLetterTemplateCell(article?.Caratage),
+          noOfItems: formatLetterTemplateCell(article?.No_Of_Items),
+          grossWeight: formatLetterTemplateCell(article?.Gross_Weight),
+          acidTestStatus: formatLetterTemplateCell(article?.Acid_Test_Status),
+          dmReading: formatLetterTemplateCell(article?.DM_Reading),
+          netWeight: formatLetterTemplateCell(article?.Net_Weight),
+          assessedValue: formatLetterTemplateCell(article?.Assessed_Value),
+          declaredValue: formatLetterTemplateCell(article?.Declared_Value),
+        });
+      }
+    }
+
     return res.status(200).json({
       success: true,
       ticketData,
+      ticketArticlesTable,
     });
   } catch (error) {
     console.error("Error in getPawningTicketDataByIdAndFields:", error);

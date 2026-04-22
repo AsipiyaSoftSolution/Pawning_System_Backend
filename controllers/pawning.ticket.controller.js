@@ -1633,12 +1633,16 @@ export const getTicketDataById = async (req, res, next) => {
       );
     }
 
+    console.log(
+      pawningCustomer[0].accountCenterCusId,
+      "pawning customer account center cus id",
+    );
     // Fetch full details from Account Center company_customer via subsystem API
     const accCustomers = await subsystemApi.customerDataForPawningTicketView(
       pawningCustomer[0].accountCenterCusId,
       req.accessToken,
     );
-
+    console.log(accCustomers, "acc customers");
     if (accCustomers.data) {
       const accCus = accCustomers.data;
 

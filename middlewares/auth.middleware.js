@@ -16,11 +16,11 @@ export const protectedRoute = async (req, res, next) => {
 
     // Verify the token
     try {
-      console.log(`[protectedRoute] Verifying token for path: ${req.path}`);
-      console.log(`[protectedRoute] Token: ${accessToken}`);
+      // console.log(`[protectedRoute] Verifying token for path: ${req.path}`);
+      //console.log(`[protectedRoute] Token: ${accessToken}`);
 
       const decoded = jwt.verify(accessToken, process.env.JWT_ACCESS_SECRET);
-      console.log(`[protectedRoute] Decoded Token:`, decoded);
+      // console.log(`[protectedRoute] Decoded Token:`, decoded);
 
       const [user] = await pool2.query(
         "SELECT idUser FROM user WHERE idUser = ? and Email = ? and Company_idCompany = ? and Designation_idDesignation = ?",

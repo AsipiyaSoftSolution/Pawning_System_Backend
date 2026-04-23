@@ -659,13 +659,19 @@ export const getCustomersForTheBranch = async (req, res, next) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const search = req.query.search || "";
-
-    // Default to the current branch ID; if user is head branch, fetch all company branch IDs
+    const branchIdForQuery = req.query.branchId || null;
+    // Default to current branch; for head branch, use all accessible branches
+    // when no branch filter is provided, otherwise only the requested branch.
     let userBranches = [branchId];
     if (req.isHeadBranch) {
-      const companyBranchIds = await getCompanyBranches(req.companyId);
-      if (Array.isArray(companyBranchIds) && companyBranchIds.length > 0) {
-        userBranches = companyBranchIds;
+      if (
+        branchIdForQuery == null ||
+        branchIdForQuery == undefined ||
+        branchIdForQuery == ""
+      ) {
+        userBranches = req.branches; // all branches user has access to
+      } else {
+        userBranches = [branchIdForQuery]; // only the searched branch
       }
     }
 
@@ -685,6 +691,7 @@ export const getCustomersForTheBranch = async (req, res, next) => {
       Object.fromEntries(queryParams),
       req.accessToken || req.cookies?.accessToken,
     );
+    console.log(accCenterResponse);
 
     // Extract customers and pagination from ACC Center response
     const accountCenterCustomers = accCenterResponse.customers || [];
@@ -1670,9 +1677,7 @@ export const blacklistCustomerCallback = async (req, res, next) => {
 export const linkCustomerCallback = async (req, res, next) => {
   const connection = await pool.getConnection();
   try {
-    const branchId = req.params.branchId
-      ? Number(req.params.branchId)
-      : null;
+    const branchId = req.params.branchId ? Number(req.params.branchId) : null;
     const { customerData } = req.body;
 
     if (!branchId || Number.isNaN(branchId)) {

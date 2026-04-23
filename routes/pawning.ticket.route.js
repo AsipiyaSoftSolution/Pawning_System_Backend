@@ -37,6 +37,7 @@ import {
   batchUpdateTicketNumbers,
   findTicketBySearchInput,
   getPawningTicketDataByIdAndFields,
+  getPawningTicketPrintAvailability,
 } from "../controllers/pawning.ticket.controller.js";
 
 const router = express.Router();
@@ -277,4 +278,11 @@ router.get(
   checkUserBranchAccess,
   findTicketBySearchInput,
 ); // Find ticket by search input
+
+router.get(
+  "/:branchId/pawning-ticket-print-available-page",
+  protectedRoute,
+  checkUserBranchAccess,
+  getPawningTicketPrintAvailability,
+); // Get pawning ticket print available page
 export default router;

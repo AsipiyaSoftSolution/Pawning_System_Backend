@@ -5719,3 +5719,29 @@ export const getPawningTicketDataByIdAndFields = async (req, res, next) => {
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
+
+export const getPawningTicketPrintAvailability = async (req, res, next) => {
+  try {
+    const { printLocation } = req.query;
+    const response = await subsystemApi.getPawningTicketPrintAvailablePage(
+      printLocation,
+      req.branchId,
+      req.accessToken,
+    );
+
+    if (!response.success) {
+      return next(errorHandler(400, response.message));
+    }
+
+    const printAvailability = response.pawningSettingsTicketPrintAvailability;
+
+    return res.status(200).json({
+      success: true,
+      message: "Pawning ticket print available page fetched successfully",
+      printAvailability,
+    });
+  } catch (error) {
+    console.error("Error in getPawningTicketPrintAvailablePage:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};

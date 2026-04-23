@@ -880,6 +880,7 @@ export const createPawningTicket = async (req, res, next) => {
     res.status(201).json({
       success: true,
       message: "Pawning ticket created successfully.",
+      ticketId,
     });
   } catch (error) {
     if (connection) {

@@ -2320,7 +2320,7 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
         limit,
       );
 
-      let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, 
+      let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date,pt.Print_Status,
                           pt.Pawning_Advance_Amount, pt.Status, pt.Branch_idBranch,
                           pt.Customer_idCustomer, pp.Name AS ProductName
                    FROM pawning_ticket pt
@@ -2331,11 +2331,11 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
       dataParams.push(limit, offset);
       const [tickets] = await pool.query(query, dataParams);
 
-      console.log(
+      /*console.log(
         "getPawningTicketsForApproval - Simple mode, tickets found:",
         tickets.length,
       );
-      console.log("baseWhereConditions:", baseWhereConditions);
+      console.log("baseWhereConditions:", baseWhereConditions); */
 
       // Enrich with customer NIC from account center
       await enrichTicketsWithCustomerData(tickets);
@@ -2368,7 +2368,7 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
     }
 
     // Multi-level approval mode
-    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, 
+    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date,pt.Print_Status,
                         pt.Pawning_Advance_Amount, pt.Status, pt.Branch_idBranch,
                         pt.Customer_idCustomer, pp.Name AS ProductName
                  FROM pawning_ticket pt

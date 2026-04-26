@@ -246,6 +246,12 @@ export const subsystemApi = {
 
   getBranchesOfTheCompany: (companyId, accessToken) =>
     accCenterGet(`/subsystem/branch-ids`, accessToken),
+
+  getPawningTicketPrintAvailablePage: (printLocation, branchId, accessToken) =>
+    accCenterGet(
+      `/company/${branchId}/pawning-settings-ticket-print-available-pages?printLocation=${printLocation}`,
+      accessToken,
+    ),
 };
 
 // Pawning Payments

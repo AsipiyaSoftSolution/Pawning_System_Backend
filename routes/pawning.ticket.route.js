@@ -39,7 +39,6 @@ import {
   getPawningTicketDataByIdAndFields,
   getPawningTicketPrintAvailability,
   checkTicketPrintOriginalOrDuplicate,
-  checkUserCanPrintDuplicateTicket,
 } from "../controllers/pawning.ticket.controller.js";
 
 const router = express.Router();
@@ -295,10 +294,4 @@ router.get(
   checkTicketPrintOriginalOrDuplicate,
 ); // Check ticket print original or duplicate
 
-router.get(
-  "/:branchId/check-user-can-print-duplicate-ticket",
-  protectedRoute,
-  checkUserBranchAccess,
-  checkUserCanPrintDuplicateTicket,
-); // Check user can print duplicate ticket by their designation
 export default router;

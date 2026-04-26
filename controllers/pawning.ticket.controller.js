@@ -5770,28 +5770,3 @@ export const checkTicketPrintOriginalOrDuplicate = async (req, res, next) => {
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
-
-// check user can print duplicate ticket by their designation
-export const checkUserCanPrintDuplicateTicket = async (req, res, next) => {
-  try {
-    // check this user designation id got 39 in designation_has_user_privilages
-    const [designationRow] = await pool.query(
-      "SELECT * FROM designation_has_user_privilages WHERE User_Privilages_idUser_Privilages = 39 AND Designation_idDesignation = ?",
-      [req.designationId],
-    );
-    if (!designationRow.length) {
-      return next(
-        errorHandler(403, "You are not authorized to print duplicate ticket"),
-      );
-    }
-
-    return res.status(200).json({
-      success: true,
-      message: "User can print duplicate ticket by their designation",
-      canPrintDuplicateTicket: true,
-    });
-  } catch (error) {
-    console.error("Error in checkUserCanPrintDuplicateTicket:", error);
-    return next(errorHandler(500, "Internal Server Error"));
-  }
-};

@@ -4850,6 +4850,7 @@ export const getApprovedTicketsForDisbursement = async (req, res, next) => {
     const dataQuery = `
       SELECT
         pt.idPawning_Ticket,
+        pt.Print_Status,
         pt.Ticket_No,
         pt.Date_Time,
         pt.Maturity_Date,

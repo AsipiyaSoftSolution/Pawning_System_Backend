@@ -880,6 +880,7 @@ export const createPawningTicket = async (req, res, next) => {
     res.status(201).json({
       success: true,
       message: "Pawning ticket created successfully.",
+      ticketId,
     });
   } catch (error) {
     if (connection) {
@@ -1633,16 +1634,11 @@ export const getTicketDataById = async (req, res, next) => {
       );
     }
 
-    console.log(
-      pawningCustomer[0].accountCenterCusId,
-      "pawning customer account center cus id",
-    );
     // Fetch full details from Account Center company_customer via subsystem API
     const accCustomers = await subsystemApi.customerDataForPawningTicketView(
       pawningCustomer[0].accountCenterCusId,
       req.accessToken,
     );
-    console.log(accCustomers, "acc customers");
     if (accCustomers.data) {
       const accCus = accCustomers.data;
 
@@ -2324,7 +2320,7 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
         limit,
       );
 
-      let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, 
+      let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date,pt.Print_Status,
                           pt.Pawning_Advance_Amount, pt.Status, pt.Branch_idBranch,
                           pt.Customer_idCustomer, pp.Name AS ProductName
                    FROM pawning_ticket pt
@@ -2335,11 +2331,11 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
       dataParams.push(limit, offset);
       const [tickets] = await pool.query(query, dataParams);
 
-      console.log(
+      /*console.log(
         "getPawningTicketsForApproval - Simple mode, tickets found:",
         tickets.length,
       );
-      console.log("baseWhereConditions:", baseWhereConditions);
+      console.log("baseWhereConditions:", baseWhereConditions); */
 
       // Enrich with customer NIC from account center
       await enrichTicketsWithCustomerData(tickets);
@@ -2372,7 +2368,7 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
     }
 
     // Multi-level approval mode
-    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date, 
+    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Date_Time, pt.Maturity_Date,pt.Print_Status,
                         pt.Pawning_Advance_Amount, pt.Status, pt.Branch_idBranch,
                         pt.Customer_idCustomer, pp.Name AS ProductName
                  FROM pawning_ticket pt
@@ -4854,6 +4850,7 @@ export const getApprovedTicketsForDisbursement = async (req, res, next) => {
     const dataQuery = `
       SELECT
         pt.idPawning_Ticket,
+        pt.Print_Status,
         pt.Ticket_No,
         pt.Date_Time,
         pt.Maturity_Date,
@@ -5721,6 +5718,56 @@ export const getPawningTicketDataByIdAndFields = async (req, res, next) => {
     });
   } catch (error) {
     console.error("Error in getPawningTicketDataByIdAndFields:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+export const getPawningTicketPrintAvailability = async (req, res, next) => {
+  try {
+    const { printLocation } = req.query;
+    const response = await subsystemApi.getPawningTicketPrintAvailablePage(
+      printLocation,
+      req.branchId,
+      req.accessToken,
+    );
+
+    if (!response.success) {
+      return next(errorHandler(400, response.message));
+    }
+
+    const printAvailability = response.pawningSettingsTicketPrintAvailability;
+
+    return res.status(200).json({
+      success: true,
+      message: "Pawning ticket print available page fetched successfully",
+      printAvailability,
+    });
+  } catch (error) {
+    console.error("Error in getPawningTicketPrintAvailablePage:", error);
+    return next(errorHandler(500, "Internal Server Error"));
+  }
+};
+
+// check ticket print original or duplicate
+export const checkTicketPrintOriginalOrDuplicate = async (req, res, next) => {
+  try {
+    const { ticketId } = req.params;
+    if (!ticketId) {
+      return next(errorHandler(400, "Ticket ID is required"));
+    }
+
+    const [ticketRow] = await pool.query(
+      "SELECT Print_Status FROM pawning_ticket WHERE idPawning_Ticket = ? ",
+      [ticketId],
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Ticket print original or duplicate checked successfully",
+      printStatus: parseInt(ticketRow[0]?.Print_Status ?? "0") || 0,
+    });
+  } catch (error) {
+    console.error("Error in checkTicketPrintOriginalOrDuplicate:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };

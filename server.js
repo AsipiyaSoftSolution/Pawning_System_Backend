@@ -81,7 +81,9 @@ app.listen(PORT, () => {
     verifyConnection();
 
     console.log("Database connected successfully");
-    console.log(`Server is running, you are good to go`);
+    console.log(
+      `Server is running, you are good to go, try to access pawning system`,
+    );
   } catch (error) {
     console.error("Database connection failed:", error);
     process.exit(1); // Exit the process if database connection fails

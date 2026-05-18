@@ -896,6 +896,33 @@ export const createPawningTicket = async (req, res, next) => {
       // call fails we throw, which triggers the outer catch's rollback and
       // reverts the ticket insert, articles, advance update, service-charge
       // log AND the DISBURSE-TICKET log together — leaving no orphan rows.
+      // create log entry for ticket approval if ticket is auto approved after creation
+
+      // Also auto approve the ticket and then create the log entry for ticket approval
+      await createPawningTicketLogOnApprovalandLoanDisbursement(
+        ticketId,
+        ticketId, // typeId is also the ticketId here
+        "APPROVE-TICKET",
+        "Ticket approved, according to company settings it is approved after creation.",
+        req.userId,
+      );
+
+      // create customer log for ticket approval on acc center
+      await subsystemApi.createCustomerLogOnCreateTicket(
+        req.branchId,
+        {
+          customerId: accountCenterCus[0]?.accountCenterCusId,
+          asipiyaSoftware: "pawning",
+          logType: "APPROVE PAWNING TICKET",
+          typeId: ticketId,
+          description: `Automatically approved ticket No: ${data.ticketData.ticketNo}`,
+          branchId: req.branchId,
+          userId: req.userId,
+        },
+        req.accessToken,
+      );
+
+      // then we comes to the auto disbursement part
       const isServiceChargeFromAdvance =
         data.ticketData.serviceChargePaidBy === "advance" &&
         parseFloat(serviceChargeRate) > 0;

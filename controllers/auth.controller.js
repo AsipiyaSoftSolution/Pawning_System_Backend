@@ -576,7 +576,7 @@ export const updateProfile = async (req, res, next) => {
           .split(".")[0];
 
         await deleteImage(
-          `pawning_system/user_profiles/user_${req.userId}/${publicId}`,
+          `${existingUser[0].Profile_Image}`,
         );
       }
     } else {
@@ -586,7 +586,7 @@ export const updateProfile = async (req, res, next) => {
           .slice(-1)[0]
           .split(".")[0];
         const success = await deleteImage(
-          `pawning_system/user_profiles/user_${req.userId}/${publicId}`,
+          `${existingUser[0].Profile_Image}`,
         );
 
         if (success.result === "ok") {

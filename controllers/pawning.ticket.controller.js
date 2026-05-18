@@ -539,7 +539,6 @@ export const createPawningTicket = async (req, res, next) => {
           ? "inactive"
           : productPlanData[0]?.Service_Charge_Value_type || "unknown";
     }
-    console.log(productPlanData, "productPlanData");
     // Fetch product plan stages data only if productPlanData exists
     let productPlanStagesData = [];
     if (
@@ -584,6 +583,13 @@ export const createPawningTicket = async (req, res, next) => {
       status = -1; // approved before loan disbursement
     }
 
+    if(
+      companySettings &&
+      companySettings.is_Ticket_Disburse_After_Create === 1 && companySettings.is_Ticket_Approve_After_Create === 1
+    ) {
+      status = 1; // approve and disburse the loan
+    }
+
     let lateChargeData = [];
     if (productData[0].Late_Charge_Create_As === "Charge For Product") {
       // fetch late charge stages from pawning_product
@@ -602,7 +608,6 @@ export const createPawningTicket = async (req, res, next) => {
       );
       lateChargeData = rows;
     }
-    console.log(productPlanStagesData, "productPlanStagesData");
 
     // Snapshot early settlement stage config onto the ticket (same columns as pawning_product / product_plan)
     const earlySettlementStageColumns = `early_settlement_effect_type,
@@ -849,6 +854,7 @@ export const createPawningTicket = async (req, res, next) => {
       throw error;
     }
 
+    // check it is only approve
     if (status === -1) {
       // create log entry for ticket approval if ticket is auto approved after creation
       await createPawningTicketLogOnApprovalandLoanDisbursement(
@@ -875,6 +881,118 @@ export const createPawningTicket = async (req, res, next) => {
       );
     }
 
+    // check if it is also disburse after approve
+    if (status === 1) {
+      // ─── Auto-disbursement: post double entries via Account Center ───
+      // Mirrors the manual flow in cashier.controller.js#disburseSubSystemLoan
+      // for pawning, but Account Center resolves the disbursement account from
+      // account_selection_settings instead of an interactive user selection.
+      //
+      // Rollback semantics: every pawning DB write below uses `connection`
+      // (the outer createPawningTicket transaction). If the Account Center
+      // call fails we throw, which triggers the outer catch's rollback and
+      // reverts the ticket insert, articles, advance update, service-charge
+      // log AND the DISBURSE-TICKET log together — leaving no orphan rows.
+      const isServiceChargeFromAdvance =
+        data.ticketData.serviceChargePaidBy === "advance" &&
+        parseFloat(serviceChargeRate) > 0;
+
+      // 1) If service charge is paid from pawning advance, deduct it locally
+      //    before posting AC entries — mirrors what `deductAdvanceFromPawningTicket`
+      //    does in the manual flow (called by AC via callback).
+      if (isServiceChargeFromAdvance) {
+        const updatedAdvance =
+          parseFloat(data.ticketData.pawningAdvance) -
+          parseFloat(serviceChargeRate);
+
+        await connection.query(
+          "UPDATE pawning_ticket SET Pawning_Advance_Amount = ? WHERE idPawning_Ticket = ?",
+          [updatedAdvance, ticketId],
+        );
+
+        await markServiceChargeInTicketLog(
+          ticketId,
+          "SERVICE CHARGE",
+          req.userId,
+          serviceChargeRate,
+          true,
+          connection,
+        );
+      }
+
+      // 2) Call Account Center to post the double entries. AC commits its own
+      //    transaction internally — if it fails we throw so the outer catch
+      //    rolls back the entire ticket creation (clean state).
+      try {
+        await subsystemApi.autoDisbursePawningTicket(
+          req.branchId,
+          {
+            idPawning_Ticket: ticketId,
+            refNo: data.ticketData.ticketNo,
+            disbursementAmount: data.ticketData.pawningAdvance,
+            Service_charge_Amount: serviceChargeRate,
+            service_charge_paid_by_customer:
+              data.ticketData.serviceChargePaidBy === "customer" ? 1 : null,
+            service_charge_paid_from_pawning_advance:
+              data.ticketData.serviceChargePaidBy === "advance" ? 1 : null,
+          },
+          req.accessToken,
+        );
+      } catch (acError) {
+        console.error(
+          "[Auto-Disburse] Account Center auto-disbursement failed:",
+          acError?.response || acError?.message || acError,
+        );
+        // Throw to trigger the outer catch block which rolls back the
+        // pawning ticket creation transaction. No AC entries persist either
+        // because AC rolls back its own transaction on failure.
+        const message =
+          acError?.response?.message ||
+          acError?.message ||
+          "Account Center auto-disbursement failed";
+        const wrapped = new Error(
+          `Auto-disbursement failed: ${message}. Ticket creation has been rolled back.`,
+        );
+        wrapped.statusCode = acError?.status === 400 ? 400 : 500;
+        throw wrapped;
+      }
+
+      // 3) AC succeeded — write the DISBURSE-TICKET ticket log inside the
+      //    same connection/transaction so it's rolled back atomically with
+      //    the rest of the ticket if anything later (e.g. the commit) fails.
+      await createPawningTicketLogOnApprovalandLoanDisbursement(
+        ticketId,
+        ticketId, // typeId is also the ticketId here
+        "DISBURSE-TICKET",
+        "Ticket disbursed, according to company settings it is disbursed after approval.",
+        req.userId,
+        connection,
+      );
+
+      // 4) Best-effort customer log for "DISBURSE PAWNING TICKET" — non-fatal
+      //    (entries already posted; this is just for the customer's history).
+      try {
+        await subsystemApi.createCustomerLogOnCreateTicket(
+          req.branchId,
+          {
+            customerId: accountCenterCus[0]?.accountCenterCusId,
+            asipiyaSoftware: "pawning",
+            logType: "DISBURSE PAWNING TICKET",
+            typeId: ticketId,
+            description: `Automatically disbursed ticket No: ${data.ticketData.ticketNo}`,
+            branchId: req.branchId,
+            userId: req.userId,
+          },
+          req.accessToken,
+        );
+      } catch (customerLogErr) {
+        console.warn(
+          "[Auto-Disburse] customer log creation failed (non-fatal):",
+          customerLogErr?.message || customerLogErr,
+        );
+      }
+    }
+
     await connection.commit();
 
     res.status(201).json({
@@ -897,6 +1015,13 @@ export const createPawningTicket = async (req, res, next) => {
 
     if (error.statusCode === 400) {
       return next(errorHandler(400, error.message));
+    }
+
+    // Surface auto-disburse failures with their original message so the
+    // frontend can show the user *why* the ticket couldn't be auto-disbursed
+    // (e.g. missing account_selection_settings, insufficient balance, etc.).
+    if (typeof error?.message === "string" && error.message.startsWith("Auto-disbursement failed:")) {
+      return next(errorHandler(error.statusCode || 500, error.message));
     }
 
     return next(errorHandler(500, "Internal Server Error"));

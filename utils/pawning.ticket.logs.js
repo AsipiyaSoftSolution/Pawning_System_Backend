@@ -229,16 +229,26 @@ export const createPawningTicketLogOnAdditionalCharge = async (
 };
 
 // create a log when a ticket is approved
+/**
+ * Create a ticket log entry for ticket approval / loan disbursement events.
+ *
+ * Pass an optional `connection` to run this inside an existing transaction
+ * (e.g. during auto-disburse on ticket creation). When omitted, the function
+ * falls back to `pool.query` (autocommit) for backward compatibility with
+ * existing callers like manual approval / activation.
+ */
 export const createPawningTicketLogOnApprovalandLoanDisbursement = async (
   ticketId,
   typeId,
   type,
   description,
   userId,
+  connection = null,
 ) => {
+  const queryRunner = connection || pool;
   try {
     // get the lastest ticket log
-    const [latestLogResult] = await pool.query(
+    const [latestLogResult] = await queryRunner.query(
       "SELECT * FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? ORDER BY idTicket_Log DESC LIMIT 1",
       [ticketId],
     );
@@ -257,7 +267,7 @@ export const createPawningTicketLogOnApprovalandLoanDisbursement = async (
     const latestTotalBalance =
       parseFloat(latestLogResult[0]?.Total_Balance) || 0;
 
-    const [result] = await pool.query(
+    const [result] = await queryRunner.query(
       "INSERT INTO ticket_log (Pawning_Ticket_idPawning_Ticket, Type, Type_Id, Description, Amount, Advance_Balance, Interest_Balance, Service_Charge_Balance, Late_Charges_Balance, Aditional_Charge_Balance, Total_Balance, User_idUser, Date_Time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())",
       [
         ticketId,

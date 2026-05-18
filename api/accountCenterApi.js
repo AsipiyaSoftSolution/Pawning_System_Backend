@@ -252,6 +252,22 @@ export const subsystemApi = {
       `/company/${branchId}/pawning-settings-ticket-print-available-pages?printLocation=${printLocation}`,
       accessToken,
     ),
+
+  /**
+   * Server-to-server call to Account Center: post auto-disbursement double
+   * entries for a freshly-created pawning ticket when the company has both
+   * auto-approve and auto-disburse settings enabled.
+   *
+   * The Pawning side passes the ticket data (including service charge fields
+   * and the disbursement amount) and Account Center resolves the disbursement
+   * account from `account_selection_settings` for the "disbursement" operation.
+   */
+   autoDisbursePawningTicket: (branchId, ticket, accessToken) =>
+    accCenterPost(
+      `/subsystem/${branchId}/auto-disburse-pawning-ticket`,
+      { ticket },
+      accessToken,
+    ),
 };
 
 // Pawning Payments

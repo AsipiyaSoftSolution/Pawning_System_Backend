@@ -351,13 +351,19 @@ export const createPawningTicket = async (req, res, next) => {
 
     // Validate that customerId exists
     const [customerExists] = await connection.query(
-      "SELECT idCustomer FROM customer WHERE idCustomer = ?",
+      "SELECT idCustomer,status FROM customer WHERE idCustomer = ?",
       [data.ticketData.customerId],
     );
 
     if (customerExists.length === 0) {
       connection.release();
       return next(errorHandler(404, "Customer not found"));
+    }
+
+    // check if customer is active
+    if (customerExists[0].status !== 1) {
+      connection.release();
+      return next(errorHandler(400, "Customer is not active"));
     }
 
     // check if pawning advance is less than or equal to all ticketArticles's declaredValue

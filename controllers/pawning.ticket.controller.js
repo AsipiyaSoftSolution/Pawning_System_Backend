@@ -436,10 +436,7 @@ export const createPawningTicket = async (req, res, next) => {
     }
 
     let productPlanData;
-    console.log(
-      productData[0].Service_Charge_Create_As,
-      "Service_Charge_Create_As",
-    );
+   
     // if service charge create as is "Charge For Product Item"
     if (
       productData[0].Service_Charge_Create_As === "Charge For Product Item" ||
@@ -490,7 +487,6 @@ export const createPawningTicket = async (req, res, next) => {
           "SELECT idProduct_Plan,Service_Charge_Value_type, Service_Charge_Value FROM product_plan WHERE Pawning_Product_idPawning_Product = ? AND ? BETWEEN CAST(Minimum_Amount AS UNSIGNED) AND CAST(Maximum_Amount AS UNSIGNED)",
           [data.ticketData.productId, data.ticketData.pawningAdvance],
         );
-        console.log(productPlanData, "productPlanData");
 
         if (productPlanData.length === 0) {
           await connection.rollback();
@@ -556,7 +552,6 @@ export const createPawningTicket = async (req, res, next) => {
         "SELECT stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,interestApplicableMethod,noOfStages FROM product_plan WHERE idProduct_Plan = ?",
         [productPlanData[0].idProduct_Plan],
       );
-      console.log(stagesData, "stagesData");
       // Defensive assignment and logging
       if (Array.isArray(stagesData) && stagesData.length > 0) {
         productPlanStagesData = stagesData;
@@ -848,6 +843,8 @@ export const createPawningTicket = async (req, res, next) => {
           typeId: ticketId,
           description: `Created ticket No: ${data.ticketData.ticketNo}`,
           branchId: req.branchId,
+
+          
           userId: req.userId,
         },
         req.accessToken,
@@ -4859,7 +4856,7 @@ export const getCustomerTickets = async (req, res, next) => {
 
     for (let ticket of tickets) {
       // for each ticket article type and article category we have to get values from acc center api
-      const values = subsystemApi.pawningArticleTypeAndDescription(
+      const values = await subsystemApi.pawningArticleTypeAndDescription(
         parseInt(ticket.Article_type),
         parseInt(ticket.Article_category),
         req.cookies?.accessToken,

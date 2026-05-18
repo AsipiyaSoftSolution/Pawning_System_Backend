@@ -61,7 +61,7 @@ export const updateCompanyDetails = async (req, res, next) => {
             .slice(-1)[0]
             .split(".")[0];
           await deleteImage(
-            `pawning_system/company_logos/company_${req.companyId}/${publicId}`,
+            `${existingCompany[0].Logo}`,
           );
         }
       }
@@ -73,7 +73,7 @@ export const updateCompanyDetails = async (req, res, next) => {
           .slice(-1)[0]
           .split(".")[0];
         await deleteImage(
-          `pawning_system/company_logos/company_${req.companyId}/${publicId}`,
+          `${existingCompany[0].Logo}`,
         );
       }
     }

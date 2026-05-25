@@ -649,6 +649,45 @@ const processLateChargeStages = async (
 };
 
 // ─────────────────────────────────────────────────────────────
+// INTEREST ON APPROVAL (same-day settle before daily job runs)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Apply interest ticket_log entries up to today for one ticket.
+ * Used on approval (and auto-approve on create) so interest is accrued
+ * when Interest_apply_on is the same day as creation — the daily job
+ * only processes tickets with Status = '1'.
+ */
+export const applyTicketInterestLogsOnApproval = async (ticketId) => {
+  const [rows] = await pool.query(
+    "SELECT * FROM pawning_ticket WHERE idPawning_Ticket = ?",
+    [ticketId],
+  );
+  if (rows.length === 0) {
+    throw new Error("Ticket not found for interest accrual");
+  }
+
+  const ticket = rows[0];
+  const today = toStartOfDay(new Date());
+  const noOfStages = parseFloat(ticket.noOfStages) || 0;
+  const hasStages = ticket.noOfStages > 1;
+
+  if (hasStages) {
+    const ticketStartDate = toStartOfDay(ticket.Date_Time);
+    const stages = buildStages(ticket, noOfStages, "stage");
+    await processStageInterest(
+      ticket,
+      ticketId,
+      today,
+      ticketStartDate,
+      stages,
+    );
+  } else {
+    await processOriginalInterest(ticket, ticketId, today);
+  }
+};
+
+// ─────────────────────────────────────────────────────────────
 // MAIN ENTRY POINT
 // ─────────────────────────────────────────────────────────────
 

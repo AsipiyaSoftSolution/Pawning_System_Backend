@@ -7,6 +7,7 @@ import {
   createPawningTicketLogOnCreate,
   markServiceChargeInTicketLog,
   createPawningTicketLogOnApprovalandLoanDisbursement,
+  applyTicketInterestLogsOnApproval,
 } from "../utils/pawning.ticket.logs.js";
 import { createCustomerLogOnCreateTicket } from "../utils/customer.logs.js";
 import { formatSearchPattern } from "../utils/helper.js";
@@ -868,6 +869,8 @@ export const createPawningTicket = async (req, res, next) => {
         req.userId,
       );
 
+      await applyTicketInterestLogsOnApproval(ticketId);
+
       // create customer log for ticket approval on acc center
       await subsystemApi.createCustomerLogOnCreateTicket(
         req.branchId,
@@ -906,6 +909,8 @@ export const createPawningTicket = async (req, res, next) => {
         "Ticket approved, according to company settings it is approved after creation.",
         req.userId,
       );
+
+      await applyTicketInterestLogsOnApproval(ticketId);
 
       // create customer log for ticket approval on acc center
       await subsystemApi.createCustomerLogOnCreateTicket(
@@ -1568,6 +1573,89 @@ export const sendAssessedValues = async (req, res, next) => {
   }
 };
 
+const INTEREST_STAGES_METHOD = "calculate for stages ";
+
+const isInterestStagesPlan = (plan) =>
+  String(plan?.interestApplicableMethod || "").trim() ===
+    INTEREST_STAGES_METHOD.trim() &&
+  (parseInt(plan?.noOfStages, 10) || 0) >= 2;
+
+const buildInterestStagesPayload = (plan) => {
+  const count = Math.min(parseInt(plan?.noOfStages, 10) || 0, 4);
+  const stages = [];
+  for (let i = 1; i <= count; i += 1) {
+    const startDay = plan[`stage${i}StartDate`];
+    const endDay = plan[`stage${i}EndDate`];
+    const rate = plan[`stage${i}Interest`];
+    if (
+      (startDay === undefined || startDay === null || startDay === "") &&
+      (endDay === undefined || endDay === null || endDay === "") &&
+      (rate === undefined || rate === null || rate === "")
+    ) {
+      continue;
+    }
+    stages.push({
+      stage: i,
+      startDay: startDay ?? null,
+      endDay: endDay ?? null,
+      rate: parseFloat(rate) || 0,
+    });
+  }
+  return stages;
+};
+
+const isLateChargeStagesSource = (source) => {
+  const fixedPct = parseFloat(source?.Late_Charge) || 0;
+  if (fixedPct > 0) return false;
+  return (parseInt(source?.numberOfLateChargeStages, 10) || 0) >= 2;
+};
+
+const buildLateChargeStagesPayload = (source) => {
+  const count = Math.min(
+    parseInt(source?.numberOfLateChargeStages, 10) || 0,
+    4,
+  );
+  const stages = [];
+  for (let i = 1; i <= count; i += 1) {
+    stages.push({
+      stage: i,
+      startDay: source[`lateChargeStage${i}StartDate`] ?? null,
+      endDay: source[`lateChargeStage${i}EndDate`] ?? null,
+      rate: parseFloat(source[`lateChargeStage${i}`]) || 0,
+    });
+  }
+  return stages;
+};
+
+const findMatchingProductPlan = (
+  productPlans,
+  interestMethodNum,
+  period,
+  pawningAdvance,
+) => {
+  if (!productPlans?.length) return null;
+
+  if (interestMethodNum === 1) {
+    const periodNum = Number(period);
+    return (
+      productPlans.find((plan) => {
+        const min = Number(plan.Minimum_Period);
+        const max = Number(plan.Maximum_Period);
+        return periodNum >= min && periodNum <= max;
+      }) || null
+    );
+  }
+
+  const advanceNum = Number(pawningAdvance);
+  return (
+    productPlans.find((plan) => {
+      const min = Number(plan.Minimum_Amount);
+      const max = Number(plan.Maximum_Amount);
+      return advanceNum >= min && advanceNum <= max;
+    }) || null
+  );
+};
+
 // send interest rate , service charge and late charge percentage for a specific ticket
 export const getTicketGrantSummaryData = async (req, res, next) => {
   try {
@@ -1583,124 +1671,127 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
       );
     }
 
-    let productPlans;
-    let interestRate = 0;
-    let serviceCharge = 0;
-    let lateChargePrecentage = 0;
-    let interestApplyOn = null;
-    let interestType;
-    let serviceChargeType;
-
-    // Convert interestMethod to number for comparison
     const interestMethodNum = Number(interestMethod);
-
-    if (interestMethodNum === 1) {
-      // interest method is Interest for Period
-      // get the matching product plans
-      [productPlans] = await pool.query(
-        "SELECT * FROM product_plan WHERE Pawning_Product_idPawning_Product = ? ",
-        [productId, periodType],
-      );
-
-      if (productPlans.length === 0) {
-        return next(
-          errorHandler(404, "No product plans found for the given criteria"),
-        );
-      }
-
-      // filter by period
-      const periodNum = Number(period);
-      const filteredPlan = productPlans.find((plan) => {
-        const min = Number(plan.Minimum_Period);
-        const max = Number(plan.Maximum_Period);
-        return periodNum >= min && periodNum <= max;
-      });
-
-      console.log(filteredPlan, "filteredPlan");
-
-      if (!filteredPlan) {
-        return next(errorHandler(404, "No matching product plan found"));
-      }
-
-      if (filteredPlan.interestApplicableMethod === "calculate for stages ") {
-        interestRate = parseFloat(filteredPlan.stage4Interest) || 0;
-      } else {
-        interestRate = parseFloat(filteredPlan.Interest) || 0;
-      }
-      serviceCharge = parseFloat(filteredPlan.Service_Charge_Value);
-      lateChargePrecentage = parseFloat(filteredPlan.Late_Charge);
-      interestType = filteredPlan.Interest_type || "N/A";
-      serviceChargeType = filteredPlan.Service_Charge_Value_type || "N/A";
-
-      console.log("Interest rate:", interestRate);
-
-      // Fixed date calculation - add days to current date
-      const currentDate = new Date();
-      const daysToAdd = Number(filteredPlan.Interest_Calculate_After);
-      interestApplyOn = new Date(
-        currentDate.getTime() + daysToAdd * 24 * 60 * 60 * 1000,
-      );
-    } else if (interestMethodNum === 0) {
-      [productPlans] = await pool.query(
-        "SELECT * FROM product_plan WHERE Pawning_Product_idPawning_Product = ? ",
-        [productId, periodType],
-      );
-
-      if (productPlans.length === 0) {
-        return next(
-          errorHandler(404, "No product plans found for the given criteria"),
-        );
-      }
-
-      // have to filter by Minimum_Amount and Maximum_Amount
-      const advanceNum = Number(pawningAdvance);
-      const filteredPlan = productPlans.find((plan) => {
-        const min = Number(plan.Minimum_Amount);
-        const max = Number(plan.Maximum_Amount);
-        return advanceNum >= min && advanceNum <= max;
-      });
-      // console.log(filteredPlan, "filteredPlan");
-
-      if (!filteredPlan) {
-        return next(errorHandler(404, "No matching product plan found"));
-      }
-      if (filteredPlan.interestApplicableMethod === "calculate for stages ") {
-        interestRate = Number(filteredPlan.stage4Interest) || 0;
-      } else {
-        interestRate = Number(filteredPlan.Interest) || 0;
-      }
-      serviceCharge = Number(filteredPlan.Service_Charge_Value);
-      lateChargePrecentage = Number(filteredPlan.Late_Charge);
-      interestType = filteredPlan.Interest_type || "N/A";
-      console.log("Interest rate:", interestRate);
-      serviceChargeType = filteredPlan.Service_Charge_Value_type || "N/A";
-
-      // Fixed date calculation - add days to current date
-      const currentDate = new Date();
-      const daysToAdd = Number(filteredPlan.Interest_Calculate_After);
-      interestApplyOn = new Date(
-        currentDate.getTime() + daysToAdd * 24 * 60 * 60 * 1000,
-      );
-    } else {
+    if (interestMethodNum !== 0 && interestMethodNum !== 1) {
       return next(errorHandler(400, "Invalid interestMethod. Must be 0 or 1"));
     }
 
-    // Only return the date part as a string (YYYY-MM-DD) for interestApplyOn
+    if (interestMethodNum === 1 && (period === undefined || period === "")) {
+      return next(
+        errorHandler(400, "period is required for Interest for Period method"),
+      );
+    }
+
+    const [productRows] = await pool.query(
+      "SELECT Late_Charge_Create_As, Late_Charge_Status, Late_Charge, lateChargeStage1, lateChargeStage2, lateChargeStage3, lateChargeStage4, lateChargeStage1StartDate, lateChargeStage2StartDate, lateChargeStage3StartDate, lateChargeStage4StartDate, lateChargeStage1EndDate, lateChargeStage2EndDate, lateChargeStage3EndDate, lateChargeStage4EndDate, numberOfLateChargeStages FROM pawning_product WHERE idPawning_Product = ?",
+      [productId],
+    );
+
+    if (productRows.length === 0) {
+      return next(errorHandler(404, "Product not found"));
+    }
+
+    const product = productRows[0];
+
+    const [productPlans] = await pool.query(
+      "SELECT * FROM product_plan WHERE Pawning_Product_idPawning_Product = ?",
+      [productId],
+    );
+
+    if (productPlans.length === 0) {
+      return next(
+        errorHandler(404, "No product plans found for the given criteria"),
+      );
+    }
+
+    const filteredPlan = findMatchingProductPlan(
+      productPlans,
+      interestMethodNum,
+      period,
+      pawningAdvance,
+    );
+
+    if (!filteredPlan) {
+      return next(errorHandler(404, "No matching product plan found"));
+    }
+
+    const interestIsStages = isInterestStagesPlan(filteredPlan);
+    const interestStages = interestIsStages
+      ? buildInterestStagesPayload(filteredPlan)
+      : null;
+
+    let interestRate = 0;
+    if (interestIsStages) {
+      interestRate = parseFloat(filteredPlan.stage4Interest) || 0;
+    } else {
+      interestRate = parseFloat(filteredPlan.Interest) || 0;
+    }
+
+    const serviceCharge = parseFloat(filteredPlan.Service_Charge_Value) || 0;
+    const interestType = filteredPlan.Interest_type || "N/A";
+    const serviceChargeType = filteredPlan.Service_Charge_Value_type || "N/A";
+
+    const currentDate = new Date();
+    const daysToAdd = Number(filteredPlan.Interest_Calculate_After) || 0;
+    const interestApplyOn = new Date(
+      currentDate.getTime() + daysToAdd * 24 * 60 * 60 * 1000,
+    );
+
     let interestApplyOnDate = null;
     if (interestApplyOn instanceof Date && !isNaN(interestApplyOn)) {
       interestApplyOnDate = interestApplyOn.toISOString().split("T")[0];
     }
+
+    let lateChargeIsStages = false;
+    let lateChargeStages = null;
+    let lateChargePrecentage = 0;
+    let numberOfLateChargeStages = 0;
+
+    const lateChargeActive = product.Late_Charge_Status === "1";
+
+    if (lateChargeActive) {
+      let lateChargeSource = filteredPlan;
+      if (product.Late_Charge_Create_As === "Charge For Product") {
+        lateChargeSource = product;
+      } else if (product.Late_Charge_Create_As === "Charge For Product Item") {
+        lateChargeSource = filteredPlan;
+      } else {
+        lateChargeSource = null;
+      }
+
+      if (lateChargeSource) {
+        lateChargeIsStages = isLateChargeStagesSource(lateChargeSource);
+        numberOfLateChargeStages =
+          parseInt(lateChargeSource.numberOfLateChargeStages, 10) || 0;
+
+        if (lateChargeIsStages) {
+          lateChargeStages = buildLateChargeStagesPayload(lateChargeSource);
+          lateChargePrecentage = 0;
+        } else {
+          lateChargePrecentage = parseFloat(lateChargeSource.Late_Charge) || 0;
+        }
+      }
+    }
+
     res.status(200).json({
       success: true,
       interestRate,
+      interestIsStages,
+      interestStages,
+      noOfStages: parseInt(filteredPlan.noOfStages, 10) || 0,
       serviceCharge,
       lateChargePrecentage,
+      lateChargeIsStages,
+      lateChargeStages,
+      numberOfLateChargeStages,
       interestApplyOn: interestApplyOnDate,
       interestType,
       serviceChargeType,
+      interestApplicableMethod: filteredPlan.interestApplicableMethod || null,
+      lateChargeCreateAs: product.Late_Charge_Create_As || null,
     });
   } catch (error) {
-    console.error("Error in getTicketFinancialDetails:", error);
+    console.error("Error in getTicketGrantSummaryData:", error);
     return next(errorHandler(500, "Internal Server Error"));
   }
 };
@@ -2702,6 +2793,8 @@ export const approvePawningTicket = async (req, res, next) => {
           req.userId,
         );
 
+        await applyTicketInterestLogsOnApproval(ticketId);
+
         await connection.commit();
         connection.release();
 
@@ -2865,6 +2958,8 @@ export const approvePawningTicket = async (req, res, next) => {
           "Ticket fully approved",
           req.userId,
         );
+
+        await applyTicketInterestLogsOnApproval(ticketId);
       }
 
       let message = `Approval recorded for level: ${nextPendingLevel.level_name}`;

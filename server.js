@@ -37,8 +37,8 @@ app.use(
       if (origin === CLIENT) return cb(null, true); // production frontend
       if (origin === "https://pawning.asipiya.com") return cb(null, true); // production frontend (asipiya.com)
       if (
-        origin === "http://localhost:5173" ||
-        origin === "http://127.0.0.1:5173"
+        origin === "http://localhost:5175" ||
+        origin === "http://127.0.0.1:5175"
       )
         return cb(null, true); // dev
       // Account Center server-to-server (create-from-approval)

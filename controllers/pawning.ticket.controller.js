@@ -869,7 +869,7 @@ export const createPawningTicket = async (req, res, next) => {
         req.userId,
       );
 
-      await applyTicketInterestLogsOnApproval(ticketId);
+      await applyTicketInterestLogsOnApproval(ticketId, connection);
 
       // create customer log for ticket approval on acc center
       await subsystemApi.createCustomerLogOnCreateTicket(
@@ -910,7 +910,7 @@ export const createPawningTicket = async (req, res, next) => {
         req.userId,
       );
 
-      await applyTicketInterestLogsOnApproval(ticketId);
+      await applyTicketInterestLogsOnApproval(ticketId, connection);
 
       // create customer log for ticket approval on acc center
       await subsystemApi.createCustomerLogOnCreateTicket(
@@ -2793,7 +2793,7 @@ export const approvePawningTicket = async (req, res, next) => {
           req.userId,
         );
 
-        await applyTicketInterestLogsOnApproval(ticketId);
+        await applyTicketInterestLogsOnApproval(ticketId, connection);
 
         await connection.commit();
         connection.release();
@@ -2959,7 +2959,7 @@ export const approvePawningTicket = async (req, res, next) => {
           req.userId,
         );
 
-        await applyTicketInterestLogsOnApproval(ticketId);
+        await applyTicketInterestLogsOnApproval(ticketId, connection);
       }
 
       let message = `Approval recorded for level: ${nextPendingLevel.level_name}`;

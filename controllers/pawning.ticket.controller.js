@@ -756,7 +756,10 @@ export const createPawningTicket = async (req, res, next) => {
     // insert images into ticket_artical_images table
     if (data.images && data.images.length > 0) {
       for (const image of data.images) {
-        const secure_url = await uploadImage(image);
+        const secure_url = await uploadImage(image, "pawning/ticket-images", {
+          companyId: req.companyId,
+          userId: req.userId,
+        });
 
         const imageUrl = secure_url || null;
 
@@ -782,7 +785,10 @@ export const createPawningTicket = async (req, res, next) => {
 
       // upload article image if exists
       if (article.image) {
-        const secure_url = await uploadImage(article.image);
+        const secure_url = await uploadImage(article.image, "pawning/article-images", {
+          companyId: req.companyId,
+          userId: req.userId,
+        });
         article.image = secure_url || null;
       }
 

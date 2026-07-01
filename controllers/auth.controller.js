@@ -562,7 +562,8 @@ export const updateProfile = async (req, res, next) => {
         // upload new image to cloudinary
         secureUrl = await uploadImage(
           profileImage,
-          `pawning_system/user_profiles/user_${req.userId}`,
+          `pawning/user_profiles/user_${req.userId}`,
+          { companyId: req.companyId, userId: req.userId },
         );
       }
 

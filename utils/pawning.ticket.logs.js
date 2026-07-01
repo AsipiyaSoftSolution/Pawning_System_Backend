@@ -309,8 +309,8 @@ const getDailyInterestDivisor = (duration) => {
   return map[duration] || 30;
 };
 
-const getLatestLog = async (ticketId) => {
-  const [rows] = await pool.query(
+const getLatestLog = async (ticketId, queryRunner = pool) => {
+  const [rows] = await queryRunner.query(
     "SELECT * FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? ORDER BY idTicket_Log DESC LIMIT 1",
     [ticketId],
   );
@@ -333,6 +333,7 @@ const insertTicketLog = async (
   balances,
   interestDelta = 0,
   lateDelta = 0,
+  queryRunner = pool,
 ) => {
   const newInterest = balances.interest + interestDelta;
   const newLate = balances.late + lateDelta;
@@ -343,7 +344,7 @@ const insertTicketLog = async (
     newLate +
     balances.additional;
 
-  await pool.query(
+  await queryRunner.query(
     `INSERT INTO ticket_log
       (Pawning_Ticket_idPawning_Ticket, Type, Description, Amount,
        Advance_Balance, Interest_Balance, Service_Charge_Balance,
@@ -393,6 +394,7 @@ const processStageInterest = async (
   today,
   ticketStartDate,
   stages,
+  queryRunner = pool,
 ) => {
   const daysSinceCreation = daysBetween(today, ticketStartDate);
   const oneTimeStages = stages.slice(0, -1);
@@ -402,7 +404,7 @@ const processStageInterest = async (
   for (const stage of oneTimeStages) {
     if (daysSinceCreation < stage.startDay) continue;
 
-    const [existing] = await pool.query(
+    const [existing] = await queryRunner.query(
       "SELECT 1 FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? AND Type = 'INTEREST' AND Description LIKE ?",
       [ticketId, `%Stage ${stage.num}%`],
     );
@@ -412,7 +414,7 @@ const processStageInterest = async (
     stageDate.setDate(stageDate.getDate() + stage.startDay);
     const stageDateStr = stageDate.toISOString().split("T")[0];
 
-    const log = await getLatestLog(ticketId);
+    const log = await getLatestLog(ticketId, queryRunner);
     const balances = buildBalancesFromLog(log);
     const interestAmount = (balances.advance * stage.rate) / 100;
     const description = `${stageDateStr} - Stage ${stage.num}`;
@@ -424,6 +426,8 @@ const processStageInterest = async (
       interestAmount,
       balances,
       interestAmount,
+      0,
+      queryRunner,
     );
     await recordInterestAccountingEntries(
       ticket,
@@ -439,7 +443,7 @@ const processStageInterest = async (
   lastStageStartDate.setDate(lastStageStartDate.getDate() + lastStage.startDay);
 
   // Find where to resume from
-  const [lastDailyLog] = await pool.query(
+  const [lastDailyLog] = await queryRunner.query(
     "SELECT Description FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? AND Type = 'INTEREST' AND Description LIKE ? ORDER BY idTicket_Log DESC LIMIT 1",
     [ticketId, `%Stage ${lastStage.num}%`],
   );
@@ -456,7 +460,7 @@ const processStageInterest = async (
 
   for (let d = new Date(startDate); d <= today; d.setDate(d.getDate() + 1)) {
     const dateStr = d.toISOString().split("T")[0];
-    const log = await getLatestLog(ticketId);
+    const log = await getLatestLog(ticketId, queryRunner);
     const balances = buildBalancesFromLog(log);
     const interestAmount = (balances.advance * dailyRate) / 100;
     const description = `${dateStr} - Stage ${lastStage.num}`;
@@ -468,6 +472,8 @@ const processStageInterest = async (
       interestAmount,
       balances,
       interestAmount,
+      0,
+      queryRunner,
     );
     await recordInterestAccountingEntries(
       ticket,
@@ -481,13 +487,18 @@ const processStageInterest = async (
 // INTEREST — ORIGINAL (NO STAGES)
 // ─────────────────────────────────────────────────────────────
 
-const processOriginalInterest = async (ticket, ticketId, today) => {
+const processOriginalInterest = async (
+  ticket,
+  ticketId,
+  today,
+  queryRunner = pool,
+) => {
   const interestApplyOn = toStartOfDay(ticket.Interest_apply_on);
   const divisor = getDailyInterestDivisor(ticket.Interest_Rate_Duration);
   const dailyRate = (parseFloat(ticket.Interest_Rate) || 0) / divisor;
 
   // Find where to resume from
-  const [lastLog] = await pool.query(
+  const [lastLog] = await queryRunner.query(
     "SELECT Description FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? AND (Type = 'INTEREST' OR Type = 'PENALTY') ORDER BY idTicket_Log DESC LIMIT 1",
     [ticketId],
   );
@@ -504,13 +515,13 @@ const processOriginalInterest = async (ticket, ticketId, today) => {
 
     const dateStr = d.toISOString().split("T")[0];
 
-    const [existing] = await pool.query(
+    const [existing] = await queryRunner.query(
       "SELECT 1 FROM ticket_log WHERE Description = ? AND Type = 'INTEREST' AND Pawning_Ticket_idPawning_Ticket = ?",
       [dateStr, ticketId],
     );
     if (existing.length > 0) continue;
 
-    const log = await getLatestLog(ticketId);
+    const log = await getLatestLog(ticketId, queryRunner);
     const balances = buildBalancesFromLog(log);
     const interestAmount = (balances.advance * dailyRate) / 100;
 
@@ -521,6 +532,8 @@ const processOriginalInterest = async (ticket, ticketId, today) => {
       interestAmount,
       balances,
       interestAmount,
+      0,
+      queryRunner,
     );
     await recordInterestAccountingEntries(
       ticket,
@@ -658,8 +671,12 @@ const processLateChargeStages = async (
  * when Interest_apply_on is the same day as creation — the daily job
  * only processes tickets with Status = '1'.
  */
-export const applyTicketInterestLogsOnApproval = async (ticketId) => {
-  const [rows] = await pool.query(
+export const applyTicketInterestLogsOnApproval = async (
+  ticketId,
+  connection = null,
+) => {
+  const queryRunner = connection || pool;
+  const [rows] = await queryRunner.query(
     "SELECT * FROM pawning_ticket WHERE idPawning_Ticket = ?",
     [ticketId],
   );
@@ -681,9 +698,10 @@ export const applyTicketInterestLogsOnApproval = async (ticketId) => {
       today,
       ticketStartDate,
       stages,
+      queryRunner,
     );
   } else {
-    await processOriginalInterest(ticket, ticketId, today);
+    await processOriginalInterest(ticket, ticketId, today, queryRunner);
   }
 };
 

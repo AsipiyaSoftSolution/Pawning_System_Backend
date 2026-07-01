@@ -51,7 +51,8 @@ export const updateCompanyDetails = async (req, res, next) => {
         // uplaod with company id to organize images better
         secureUrl = await uploadImage(
           image,
-          `pawning_system/company_logos/company_${req.companyId}`,
+          `company/logos/company_${req.companyId}`,
+          { companyId: req.companyId, userId: req.userId },
         );
 
         // delete the previous image from cloudinary if exists

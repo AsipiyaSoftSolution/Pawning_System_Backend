@@ -26,6 +26,7 @@ route.get(
   "/:branchId/search",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserSelectedHeadBranch,
   searchByTickerNumberCustomerNICOrName,
 ); // Search by ticket number, customer NIC, or name
 
@@ -33,6 +34,7 @@ route.get(
   "/:branchId/ticket/:ticketId",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserSelectedHeadBranch,
   getTicketDataById,
 ); // Get ticket data by ID
 

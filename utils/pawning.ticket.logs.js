@@ -7,6 +7,7 @@ const recordInterestAccountingEntries = async (
   ticket,
   interestAmount,
   note,
+  accessToken = null,
 ) => {
   if (!interestAmount || interestAmount <= 0) return;
 
@@ -26,7 +27,7 @@ const recordInterestAccountingEntries = async (
       description: descriptionText,
     };
     try {
-      await pawningPaymentsApi.ticketInterestDoubleEntries(data, null);
+      await pawningPaymentsApi.ticketInterestDoubleEntries(data, accessToken);
     } catch (error) {
       console.error("Failed to record interest accounting entries:", error);
       throw error;
@@ -395,6 +396,7 @@ const processStageInterest = async (
   ticketStartDate,
   stages,
   queryRunner = pool,
+  accessToken = null,
 ) => {
   const daysSinceCreation = daysBetween(today, ticketStartDate);
   const oneTimeStages = stages.slice(0, -1);
@@ -433,6 +435,7 @@ const processStageInterest = async (
       ticket,
       interestAmount,
       `${description} interest accrual`,
+      accessToken,
     );
   }
 
@@ -479,6 +482,7 @@ const processStageInterest = async (
       ticket,
       interestAmount,
       `${description} interest accrual`,
+      accessToken,
     );
   }
 };
@@ -492,6 +496,7 @@ const processOriginalInterest = async (
   ticketId,
   today,
   queryRunner = pool,
+  accessToken = null,
 ) => {
   const interestApplyOn = toStartOfDay(ticket.Interest_apply_on);
   const divisor = getDailyInterestDivisor(ticket.Interest_Rate_Duration);
@@ -539,6 +544,7 @@ const processOriginalInterest = async (
       ticket,
       interestAmount,
       `${dateStr} interest accrual`,
+      accessToken,
     );
   }
 };
@@ -674,6 +680,7 @@ const processLateChargeStages = async (
 export const applyTicketInterestLogsOnApproval = async (
   ticketId,
   connection = null,
+  accessToken = null,
 ) => {
   const queryRunner = connection || pool;
   const [rows] = await queryRunner.query(
@@ -699,9 +706,16 @@ export const applyTicketInterestLogsOnApproval = async (
       ticketStartDate,
       stages,
       queryRunner,
+      accessToken,
     );
   } else {
-    await processOriginalInterest(ticket, ticketId, today, queryRunner);
+    await processOriginalInterest(
+      ticket,
+      ticketId,
+      today,
+      queryRunner,
+      accessToken,
+    );
   }
 };
 

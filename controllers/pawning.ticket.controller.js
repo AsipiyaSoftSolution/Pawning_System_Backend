@@ -20,6 +20,7 @@ import {
   normalizePawningTemplateFieldToken,
   fullTemplateKey,
 } from "../utils/pawningLetterTemplateFields.js";
+import { getRequestAccessToken } from "../utils/requestAuth.js";
 
 /** Fetch company_customer data by Pawning customer ids via Account Center subsystem API */
 async function fetchCustomersByPawningIds(
@@ -875,7 +876,11 @@ export const createPawningTicket = async (req, res, next) => {
         req.userId,
       );
 
-      await applyTicketInterestLogsOnApproval(ticketId, connection);
+      await applyTicketInterestLogsOnApproval(
+        ticketId,
+        connection,
+        getRequestAccessToken(req),
+      );
 
       // create customer log for ticket approval on acc center
       await subsystemApi.createCustomerLogOnCreateTicket(
@@ -916,7 +921,11 @@ export const createPawningTicket = async (req, res, next) => {
         req.userId,
       );
 
-      await applyTicketInterestLogsOnApproval(ticketId, connection);
+      await applyTicketInterestLogsOnApproval(
+        ticketId,
+        connection,
+        getRequestAccessToken(req),
+      );
 
       // create customer log for ticket approval on acc center
       await subsystemApi.createCustomerLogOnCreateTicket(
@@ -1216,7 +1225,7 @@ export const searchCustomerByNIC = async (req, res, next) => {
     const accCenterResponse = await customerApi.searchByNic(
       NIC,
       Object.fromEntries(queryParams),
-      req.cookies.accessToken,
+      getRequestAccessToken(req),
     );
 
     const accountCenterCustomers = accCenterResponse.customers || [];
@@ -2070,7 +2079,7 @@ export const getTicketComments = async (req, res, next) => {
     ];
     const commentUsers = await fetchUserNamesByIds(
       commentUserIds,
-      req.cookies?.accessToken,
+      getRequestAccessToken(req),
     );
     const commentUserMap = new Map(
       commentUsers.map((u) => [u.idUser, u.full_name]),
@@ -2124,7 +2133,7 @@ export const createTicketComment = async (req, res, next) => {
     if (createdComment.length > 0 && createdComment[0].User_idUser) {
       const users = await fetchUserNamesByIds(
         [createdComment[0].User_idUser],
-        req.cookies?.accessToken,
+        getRequestAccessToken(req),
       );
       createdComment[0].Full_name = users[0]?.full_name || null;
     }
@@ -2440,7 +2449,7 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
         // No branchId filter, show all branches in the company via Account Center subsystem API
         const companyBranches = await fetchBranchesByCompany(
           req.companyId,
-          req.cookies?.accessToken,
+          getRequestAccessToken(req),
         );
 
         if (companyBranches.length === 0) {
@@ -2502,7 +2511,7 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
         formattedNIC,
         req.companyId,
         null,
-        req.cookies?.accessToken,
+        getRequestAccessToken(req),
       );
 
       if (matchingAccCustomers.length === 0) {
@@ -2546,7 +2555,7 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
       const accCustomers = await fetchCustomersByPawningIds(
         customerIds,
         req.companyId,
-        req.cookies?.accessToken,
+        getRequestAccessToken(req),
       );
       const customerMap = new Map(
         accCustomers.map((c) => [c.isPawningUserId, c]),
@@ -2601,7 +2610,7 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
         if (branchIds.length > 0) {
           const branches = await fetchBranchNamesByIds(
             branchIds,
-            req.cookies?.accessToken,
+            getRequestAccessToken(req),
           );
           const branchMap = new Map(branches.map((b) => [b.idBranch, b.Name]));
 
@@ -2642,7 +2651,7 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
       if (branchIds.length > 0) {
         const branches = await fetchBranchNamesByIds(
           branchIds,
-          req.cookies?.accessToken,
+          getRequestAccessToken(req),
         );
 
         // Create a map for quick lookup
@@ -2677,7 +2686,7 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
             ticket.idPawning_Ticket,
             ticket.Pawning_Advance_Amount,
             req.companyId,
-            req.cookies?.accessToken,
+            getRequestAccessToken(req),
           );
 
           filteredTickets.push({
@@ -2799,7 +2808,11 @@ export const approvePawningTicket = async (req, res, next) => {
           req.userId,
         );
 
-        await applyTicketInterestLogsOnApproval(ticketId, connection);
+        await applyTicketInterestLogsOnApproval(
+        ticketId,
+        connection,
+        getRequestAccessToken(req),
+      );
 
         await connection.commit();
         connection.release();
@@ -2965,7 +2978,11 @@ export const approvePawningTicket = async (req, res, next) => {
           req.userId,
         );
 
-        await applyTicketInterestLogsOnApproval(ticketId, connection);
+        await applyTicketInterestLogsOnApproval(
+        ticketId,
+        connection,
+        getRequestAccessToken(req),
+      );
       }
 
       let message = `Approval recorded for level: ${nextPendingLevel.level_name}`;
@@ -3327,7 +3344,7 @@ export const getApprovedPawningTickets = async (req, res, next) => {
         formattedNIC,
         req.companyId,
         req.branchId,
-        req.cookies?.accessToken,
+        getRequestAccessToken(req),
       );
 
       if (matchingAccCustomers.length === 0) {
@@ -3377,7 +3394,7 @@ export const getApprovedPawningTickets = async (req, res, next) => {
       const accCustomers =
         await subsystemApi.customerDataForPawningSideTicketPages(
           pawningCusIds,
-          req.cookies?.accessToken,
+          getRequestAccessToken(req),
         );
 
       const customerMap = new Map(
@@ -4256,10 +4273,10 @@ export const sendSettledTickets = async (req, res, next) => {
         subsystemApi
           .customerDataForPawningSideTicketPages(
             pawningCusIds,
-            req.cookies?.accessToken,
+            getRequestAccessToken(req),
           )
           .then((res) => res.data), // Extract data from response
-        fetchBranchNamesByIds(branchIds, req.cookies?.accessToken),
+        fetchBranchNamesByIds(branchIds, getRequestAccessToken(req)),
       ]);
 
       const customerMap = new Map(
@@ -4322,7 +4339,7 @@ export const sendOverdueTickets = async (req, res, next) => {
     } else if (req.isHeadBranch === true) {
       const companyBranches = await fetchBranchesByCompany(
         req.companyId,
-        req.cookies?.accessToken,
+        getRequestAccessToken(req),
       );
 
       if (companyBranches.length === 0) {
@@ -4405,7 +4422,7 @@ export const sendOverdueTickets = async (req, res, next) => {
         formattedNIC,
         req.companyId,
         null,
-        req.cookies?.accessToken,
+        getRequestAccessToken(req),
       );
 
       if (matchingAccCustomers.length === 0) {
@@ -4456,7 +4473,7 @@ export const sendOverdueTickets = async (req, res, next) => {
       const accCustomers =
         await subsystemApi.customerDataForPawningSideTicketPages(
           pawningCusIds,
-          req.cookies?.accessToken,
+          getRequestAccessToken(req),
         );
 
       const customerMap = new Map(
@@ -4513,7 +4530,7 @@ export const sendTicketsForPrinting = async (req, res, next) => {
     if (req.isHeadBranch === true && branchId) {
       const companyBranches = await fetchBranchesByCompany(
         req.companyId,
-        req.cookies?.accessToken,
+        getRequestAccessToken(req),
       );
       const companyBranchIds = companyBranches.map((b) => b.idBranch);
 
@@ -4532,7 +4549,7 @@ export const sendTicketsForPrinting = async (req, res, next) => {
     } else if (req.isHeadBranch === true) {
       const companyBranches = await fetchBranchesByCompany(
         req.companyId,
-        req.cookies?.accessToken,
+        getRequestAccessToken(req),
       );
 
       if (companyBranches.length === 0) {
@@ -4627,7 +4644,7 @@ export const sendTicketsForPrinting = async (req, res, next) => {
         formattedNIC,
         req.companyId,
         req.branchId,
-        req.cookies?.accessToken,
+        getRequestAccessToken(req),
       );
 
       if (matchingAccCustomers.length === 0) {
@@ -4691,7 +4708,7 @@ export const sendTicketsForPrinting = async (req, res, next) => {
         const accCustomers = await fetchCustomersByCompanyCustomerIds(
           accountCenterCusIds,
           req.companyId,
-          req.cookies?.accessToken,
+          getRequestAccessToken(req),
         );
         for (const cus of accCustomers) {
           customerMap.set(cus.idCompany_Customer, cus);
@@ -4703,7 +4720,7 @@ export const sendTicketsForPrinting = async (req, res, next) => {
       ];
       const branches = await fetchBranchNamesByIds(
         branchIds,
-        req.cookies?.accessToken,
+        getRequestAccessToken(req),
       );
       const branchMap = new Map(branches.map((b) => [b.idBranch, b.Name]));
 
@@ -4788,9 +4805,7 @@ export const generatePawningTicketNumber = async (req, res, next) => {
     ];
     let ticketNo = "";
 
-    // Use req.accessToken (set by auth middleware from cookie OR Authorization header)
-    // req.cookies?.accessToken is undefined on the server behind a proxy
-    const accessToken = req.accessToken || req.cookies?.accessToken;
+    const accessToken = getRequestAccessToken(req);
 
     const ticketFormatRow = await fetchTicketFormatFromAccCenter(
       req.companyId,
@@ -4956,7 +4971,7 @@ export const getCompanyBranchesForTicketFilters = async (req, res, next) => {
   try {
     const branches = await fetchBranchesForTicketFilters(
       req.companyId,
-      req.cookies?.accessToken,
+      getRequestAccessToken(req),
     );
 
     return res.status(200).json({
@@ -4987,7 +5002,7 @@ export const getCustomerTickets = async (req, res, next) => {
       const values = await subsystemApi.pawningArticleTypeAndDescription(
         parseInt(ticket.Article_type),
         parseInt(ticket.Article_category),
-        req.cookies?.accessToken,
+        getRequestAccessToken(req),
       );
 
       ticket.Article_type = values.data.TypeDescription || "";
@@ -5054,7 +5069,7 @@ export const getApprovedTicketsForDisbursement = async (req, res, next) => {
         const accRes = await subsystemApi.searchCustomerByTerm(
           trimmedSearch,
           req.companyId,
-          req.cookies?.accessToken,
+          getRequestAccessToken(req),
         );
         const customers = accRes?.customers || [];
         if (customers.length === 0) {
@@ -5134,7 +5149,7 @@ export const getApprovedTicketsForDisbursement = async (req, res, next) => {
       const customers = await fetchCustomersByPawningIds(
         uniquePawningIds,
         req.companyId,
-        req.cookies?.accessToken,
+        getRequestAccessToken(req),
       );
       const customerMap = new Map(customers.map((c) => [c.isPawningUserId, c]));
 
@@ -5147,7 +5162,7 @@ export const getApprovedTicketsForDisbursement = async (req, res, next) => {
         try {
           const branchRes = await subsystemApi.branchNames(
             uniqueBranchIds,
-            req.cookies?.accessToken,
+            getRequestAccessToken(req),
           );
           const branchList = branchRes?.branches || branchRes?.data || [];
           // branchNames returns list with idBranch and Name fields
@@ -5400,7 +5415,7 @@ export const findTicketBySearchInput = async (req, res, next) => {
     const { searchInput } = req.query;
     if (!searchInput) return next(errorHandler(400, "Search input is missing"));
 
-    const accessToken = req.accessToken || req.cookies?.accessToken;
+    const accessToken = getRequestAccessToken(req);
     const companyId = req.companyId.toString();
     const branchId = req.branchId;
 
@@ -5762,7 +5777,7 @@ export const getPawningTicketDataByIdAndFields = async (req, res, next) => {
       articles = Array.isArray(articleRows) ? articleRows : [];
     }
 
-    const accessToken = req.accessToken;
+    const accessToken = getRequestAccessToken(req);
     const needsUserName = uniqueSuffixes.includes("User_idUser");
     const needsBranchName = uniqueSuffixes.includes("Branch_idBranch");
     const userMap = new Map();

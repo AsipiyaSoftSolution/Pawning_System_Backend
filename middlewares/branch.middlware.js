@@ -15,9 +15,12 @@ export const checkUserBranchAccess = async (req, res, next) => {
       return next(errorHandler(400, "Branch ID is required"));
     }
 
-    const branchIdNum = parseInt(branchId);
+    const branchIdNum = parseInt(branchId, 10);
+    const normalizedBranches = (branches || [])
+      .map((id) => Number(id))
+      .filter((id) => Number.isFinite(id));
 
-    if (branches.includes(branchIdNum)) {
+    if (normalizedBranches.includes(branchIdNum)) {
       req.branchId = branchIdNum; // Attach branchId to request
       next(); // Proceed to the next middleware
     } else {

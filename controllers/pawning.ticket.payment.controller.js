@@ -11,6 +11,7 @@ import {
   pawningPaymentsApi,
   subsystemApi,
 } from "../api/accountCenterApi.js";
+import { buildPawningPaymentPrintRow } from "../utils/pawningPaymentPrint.js";
 
 async function abortPawningPaymentPrepare(prepareToken, accessToken) {
   if (!prepareToken) return;
@@ -696,7 +697,7 @@ export const createPaymentForTicket = async (req, res, next) => {
     connection = await pool.getConnection();
 
     const [existingTicket] = await connection.query(
-      "SELECT Interest_apply_on,Maturity_date,Date_Time,Ticket_No,Customer_idCustomer FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+      "SELECT Interest_apply_on,Maturity_date,Date_Time,Ticket_No,Customer_idCustomer,Net_Weight,SEQ_No FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
       [ticketId, req.branchId],
     );
     if (existingTicket.length === 0) {
@@ -815,6 +816,7 @@ export const createPaymentForTicket = async (req, res, next) => {
 
     await connection.beginTransaction();
 
+    let createdTicketPaymentId;
     try {
       const [ticketPaymentResult] = await connection.query(
         "INSERT INTO payment(Date_time,Description,Ticket_no,Amount,User,Ticket_Date,Maturity_Date,Day_Count,Type,Pawning_Ticket_idPawning_Ticket) VALUES(NOW(),?,?,?,?,?,?,?,?,?)",
@@ -835,7 +837,7 @@ export const createPaymentForTicket = async (req, res, next) => {
         throw errorHandler(500, "Failed to create part payment");
       }
 
-      const createdTicketPaymentId = ticketPaymentResult.insertId;
+      createdTicketPaymentId = ticketPaymentResult.insertId;
 
       const [logResult] = await connection.query(
         "INSERT INTO ticket_log(Pawning_Ticket_idPawning_Ticket,Date_Time,Type,Description,Amount,Interest_Balance,Service_Charge_Balance,Late_Charges_Balance,Aditional_Charge_Balance,Advance_Balance,Total_Balance,User_idUser,Type_Id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -916,9 +918,29 @@ export const createPaymentForTicket = async (req, res, next) => {
       smsDescription: "customer pawning ticket part payment",
     });
 
+    const printData = await buildPawningPaymentPrintRow({
+      paymentId: createdTicketPaymentId,
+      paymentAmount,
+      paidInterest,
+      paidServiceCharge,
+      paidLateCharges,
+      paidAdditionalCharges,
+      paidAdvance,
+      paymentType: "PART PAYMENT",
+      description: `Customer Payment(Ticket No:${existingTicket[0].Ticket_No})`,
+      ticketNo: existingTicket[0].Ticket_No,
+      netWeight: existingTicket[0].Net_Weight,
+      seqNo: existingTicket[0].SEQ_No,
+      customerId: existingTicket[0].Customer_idCustomer,
+      userId: req.userId,
+      companyId: req.companyId,
+      accessToken: req.accessToken,
+    });
+
     res.status(201).json({
       success: true,
       message: "Part payment created successfully.",
+      printData,
     });
   } catch (error) {
     console.error("Error creating part payment for ticket:", error);
@@ -954,11 +976,12 @@ export const createTicketRenewalPayment = async (req, res, next) => {
     // Start transactions on both connections
     await connection.beginTransaction();
     let pawningCommitted = false;
+    let createdTicketPaymentId;
 
     try {
       // check if the ticket exists and belongs to the branch
       const [existingTicket] = await connection.query(
-        "SELECT Interest_apply_on,Maturity_date,Date_Time,Ticket_No,Period_Type,Period FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+        "SELECT Interest_apply_on,Maturity_date,Date_Time,Ticket_No,Period_Type,Period,Customer_idCustomer,Net_Weight,SEQ_No FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
         [ticketId, req.branchId],
       );
       if (existingTicket.length === 0) {
@@ -1157,7 +1180,7 @@ export const createTicketRenewalPayment = async (req, res, next) => {
         throw errorHandler(500, "Failed to create renewal payment");
       }
 
-      const createdTicketPaymentId = ticketPaymentResult.insertId;
+      createdTicketPaymentId = ticketPaymentResult.insertId;
 
       // Insert ticket log record
       const [logResult] = await connection.query(
@@ -1239,9 +1262,29 @@ export const createTicketRenewalPayment = async (req, res, next) => {
         smsDescription: "customer pawning ticket renewal payment",
       });
 
+      const printData = await buildPawningPaymentPrintRow({
+        paymentId: createdTicketPaymentId,
+        paymentAmount,
+        paidInterest,
+        paidServiceCharge,
+        paidLateCharges,
+        paidAdditionalCharges,
+        paidAdvance,
+        paymentType: "RENEWAL PAYMENT",
+        description: `Customer Payment(Ticket No:${existingTicket[0].Ticket_No})`,
+        ticketNo: existingTicket[0].Ticket_No,
+        netWeight: existingTicket[0].Net_Weight,
+        seqNo: existingTicket[0].SEQ_No,
+        customerId: existingTicket[0].Customer_idCustomer,
+        userId: req.userId,
+        companyId: req.companyId,
+        accessToken: req.accessToken,
+      });
+
       res.status(201).json({
         success: true,
         message: "Renewal payment created successfully.",
+        printData,
       });
     } catch (innerError) {
       if (!pawningCommitted) {
@@ -1301,11 +1344,12 @@ export const createTicketSettlementPayment = async (req, res, next) => {
     // Start transactions on both connections
     await connection.beginTransaction();
     let pawningCommitted = false;
+    let createdTicketPaymentId;
 
     try {
       // check if the ticket exists and belongs to the branch
       const [existingTicket] = await connection.query(
-        "SELECT Interest_apply_on,Maturity_date,Date_Time,Ticket_No,Status,Pawning_Product_idPawning_Product,Customer_idCustomer,Period,Period_Type,Pawning_Advance_Amount,early_settlement_effect_type,early_settlement_stage1_start_day, early_settlement_stage1_end_day,early_settlement_stage1_value, early_settlement_stage1_value_type,early_settlement_stage2_start_day, early_settlement_stage2_end_day,early_settlement_stage2_value, early_settlement_stage2_value_type,early_settlement_stage3_start_day, early_settlement_stage3_end_day,early_settlement_stage3_value, early_settlement_stage3_value_type,early_settlement_stage4_start_day, early_settlement_stage4_end_day,early_settlement_stage4_value, early_settlement_stage4_value_type FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+        "SELECT Interest_apply_on,Maturity_date,Date_Time,Ticket_No,Status,Pawning_Product_idPawning_Product,Customer_idCustomer,Period,Period_Type,Pawning_Advance_Amount,Net_Weight,SEQ_No,early_settlement_effect_type,early_settlement_stage1_start_day, early_settlement_stage1_end_day,early_settlement_stage1_value, early_settlement_stage1_value_type,early_settlement_stage2_start_day, early_settlement_stage2_end_day,early_settlement_stage2_value, early_settlement_stage2_value_type,early_settlement_stage3_start_day, early_settlement_stage3_end_day,early_settlement_stage3_value, early_settlement_stage3_value_type,early_settlement_stage4_start_day, early_settlement_stage4_end_day,early_settlement_stage4_value, early_settlement_stage4_value_type FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
         [ticketId, req.branchId],
       );
 
@@ -1497,7 +1541,7 @@ export const createTicketSettlementPayment = async (req, res, next) => {
         throw errorHandler(500, "Failed to create settlement payment");
       }
 
-      const createdTicketPaymentId = ticketPaymentResult.insertId;
+      createdTicketPaymentId = ticketPaymentResult.insertId;
 
       // Calculate Total Balance logic for Settlement
       const Total_Balance =
@@ -1613,6 +1657,26 @@ export const createTicketSettlementPayment = async (req, res, next) => {
         smsDescription: "customer pawning ticket settlement payment",
       });
 
+      const printData = await buildPawningPaymentPrintRow({
+        paymentId: createdTicketPaymentId,
+        paymentAmount,
+        paidInterest,
+        paidServiceCharge,
+        paidLateCharges,
+        paidAdditionalCharges,
+        paidAdvance,
+        paidEarlySettlement,
+        paymentType: "SETTLEMENT PAYMENT",
+        description: `Customer Settlement Payment(Ticket No:${existingTicket[0].Ticket_No})`,
+        ticketNo: existingTicket[0].Ticket_No,
+        netWeight: existingTicket[0].Net_Weight,
+        seqNo: existingTicket[0].SEQ_No,
+        customerId: existingTicket[0].Customer_idCustomer,
+        userId: req.userId,
+        companyId: req.companyId,
+        accessToken: req.accessToken,
+      });
+
       res.status(201).json({
         success: true,
         message:
@@ -1627,6 +1691,7 @@ export const createTicketSettlementPayment = async (req, res, next) => {
           paidEarlySettlement,
           excessAmount: remainingPayment,
         },
+        printData,
       });
     } catch (innerError) {
       if (!pawningCommitted) {

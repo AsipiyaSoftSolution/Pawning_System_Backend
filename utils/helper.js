@@ -8,29 +8,32 @@ export const jwtToken = (
   designation_id,
   branches,
   company_documents,
+  sessionId = null,
 ) => {
-  const accessToken = jwt.sign(
-    {
-      id: userId,
-      email,
-      company_id,
-      designation_id,
-      branches: branches || [],
-      company_documents: company_documents || [],
-    },
-    process.env.JWT_ACCESS_SECRET,
-    {
-      expiresIn: "24h",
-    },
-  );
+  const accessPayload = {
+    id: userId,
+    email,
+    company_id,
+    designation_id,
+    branches: branches || [],
+    company_documents: company_documents || [],
+  };
+  if (sessionId) {
+    accessPayload.sid = sessionId;
+  }
 
-  const refreshToken = jwt.sign(
-    { id: userId },
-    process.env.JWT_REFRESH_SECRET,
-    {
-      expiresIn: "7d",
-    },
-  );
+  const accessToken = jwt.sign(accessPayload, process.env.JWT_ACCESS_SECRET, {
+    expiresIn: "24h",
+  });
+
+  const refreshPayload = { id: userId };
+  if (sessionId) {
+    refreshPayload.sid = sessionId;
+  }
+
+  const refreshToken = jwt.sign(refreshPayload, process.env.JWT_REFRESH_SECRET, {
+    expiresIn: "7d",
+  });
 
   return { accessToken, refreshToken };
 };

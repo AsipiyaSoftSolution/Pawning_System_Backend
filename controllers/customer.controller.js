@@ -7,6 +7,7 @@ import {
   approvalApi,
   subsystemApi,
 } from "../api/accountCenterApi.js";
+import { getRequestAccessToken } from "../utils/requestAuth.js";
 import { parse } from "path";
 
 const customerLog = async (idCustomer, date, type, Description, userId) => {
@@ -78,7 +79,7 @@ export const createCustomer = async (req, res, next) => {
     const { documents, ...customerFields } = data;
 
     // Step 0: Check if an approval process exists for "CUSTOMER CREATE"
-    const accessToken = req.accessToken || req.cookies?.accessToken;
+    const accessToken = getRequestAccessToken(req);
     if (!accessToken) {
       connection.release();
       return next(
@@ -271,7 +272,7 @@ export const linkExistingCustomer = async (req, res, next) => {
 
     const { documents: _documents, ...customerFields } = data;
 
-    const accessToken = req.accessToken || req.cookies?.accessToken;
+    const accessToken = getRequestAccessToken(req);
     if (!accessToken) {
       connection.release();
       return next(
@@ -548,7 +549,7 @@ export const checkCustomerByNICWhenCreating = async (req, res, next) => {
 
     const accCenterResponse = await customerApi.checkNicExists(
       queryParams,
-      req.accessToken || req.cookies?.accessToken,
+      req.accessToken || getRequestAccessToken(req),
     );
 
     if (accCenterResponse.exists) {
@@ -575,7 +576,7 @@ export const checkCustomerExistsForCreation = async (req, res, next) => {
     if (!nic) {
       return next(errorHandler(400, "NIC is required"));
     }
-    const accessToken = req.accessToken || req.cookies?.accessToken;
+    const accessToken = getRequestAccessToken(req);
     if (!accessToken) {
       return next(errorHandler(401, "Authentication required"));
     }
@@ -608,7 +609,7 @@ export const getCustomerDataByNIC = async (req, res, next) => {
     const findResponse = await customerApi.findCustomerByNic(
       NIC,
       { companyId: req.companyId.toString() },
-      req.accessToken || req.cookies?.accessToken,
+      req.accessToken || getRequestAccessToken(req),
     );
 
     if (!findResponse.idCompany_Customer) {
@@ -622,7 +623,7 @@ export const getCustomerDataByNIC = async (req, res, next) => {
     const accCenterResponse = await customerApi.getCustomer(
       idCompany_Customer,
       { asipiyaSoftware: "pawning", companyId: req.companyId.toString() },
-      req.accessToken || req.cookies?.accessToken,
+      req.accessToken || getRequestAccessToken(req),
     );
 
     const customer = accCenterResponse.customer || {};
@@ -689,7 +690,7 @@ export const getCustomersForTheBranch = async (req, res, next) => {
     // Call ACC Center API to get customers
     const accCenterResponse = await customerApi.getAllCustomers(
       Object.fromEntries(queryParams),
-      req.accessToken || req.cookies?.accessToken,
+      req.accessToken || getRequestAccessToken(req),
     );
     console.log(accCenterResponse);
 
@@ -795,7 +796,7 @@ export const getCustomerById = async (req, res, next) => {
         const accCenterResponse = await customerApi.getCustomer(
           pawningCustomer.accountCenterCusId,
           queryParams,
-          req.accessToken || req.cookies?.accessToken,
+          req.accessToken || getRequestAccessToken(req),
         );
 
         // Extract customer data from ACC Center response
@@ -906,7 +907,7 @@ export const editCustomer = async (req, res, next) => {
     const { documents, ...customerFields } = data;
 
     // Step 0: Check if an approval process exists for "CUSTOMER DETAILS UPDATE"
-    const accessToken = req.accessToken || req.cookies?.accessToken;
+    const accessToken = getRequestAccessToken(req);
     if (!accessToken) {
       connection.release();
       return next(
@@ -1689,7 +1690,7 @@ export const linkCustomerCallback = async (req, res, next) => {
       return next(errorHandler(400, "customerData is required"));
     }
 
-    const accessToken = req.accessToken || req.cookies?.accessToken;
+    const accessToken = getRequestAccessToken(req);
     if (!accessToken) {
       connection.release();
       return next(errorHandler(401, "Authentication token is required"));

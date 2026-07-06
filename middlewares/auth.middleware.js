@@ -1,14 +1,18 @@
 import jwt from "jsonwebtoken";
 import { pool2 } from "../utils/db.js";
 import { errorHandler } from "../utils/errorHandler.js";
+import { getRequestAccessToken } from "../utils/requestAuth.js";
+import {
+  isSessionValid,
+  sessionSupersededError,
+} from "../utils/userSession.js";
 import dotenv from "dotenv";
 
 dotenv.config();
 
 export const protectedRoute = async (req, res, next) => {
   try {
-    const accessToken =
-      req.cookies?.accessToken || req.headers?.authorization?.split(" ")[1];
+    const accessToken = getRequestAccessToken(req);
     if (!accessToken) return next(errorHandler(401, "Unauthorized access"));
 
     // Attach token for downstream use (e.g. ACC Center API calls when token is in header)
@@ -23,7 +27,7 @@ export const protectedRoute = async (req, res, next) => {
       // console.log(`[protectedRoute] Decoded Token:`, decoded);
 
       const [user] = await pool2.query(
-        "SELECT idUser FROM user WHERE idUser = ? and Email = ? and Company_idCompany = ? and Designation_idDesignation = ?",
+        "SELECT idUser, auth_session_id FROM user WHERE idUser = ? and Email = ? and Company_idCompany = ? and Designation_idDesignation = ?",
         [decoded.id, decoded.email, decoded.company_id, decoded.designation_id],
       );
       if (!user[0]) {
@@ -32,6 +36,11 @@ export const protectedRoute = async (req, res, next) => {
         );
         return next(errorHandler(401, "Unauthorized access"));
       }
+
+      if (!isSessionValid(user[0].auth_session_id, decoded.sid)) {
+        return next(sessionSupersededError());
+      }
+
       // Attach user information to the request object
       req.userId = user[0].idUser;
       req.email = decoded.email;

@@ -98,17 +98,65 @@ function isInvalidOrExpiredPrepareTokenError(error) {
   );
 }
 
+async function userCanAccessTicketBranch(req, ticketBranchId) {
+  const branchId = Number(ticketBranchId);
+  if (!Number.isFinite(branchId)) return false;
+
+  if (req.isHeadBranch) {
+    const companyBranches = await getCompanyBranches(req.companyId);
+    return companyBranches.includes(branchId);
+  }
+
+  if (Array.isArray(req.branches) && req.branches.length > 0) {
+    return req.branches.includes(branchId);
+  }
+
+  return Number(req.branchId) === branchId;
+}
+
 // Search tickets by ticket number, customer NIC, or customer name with pagination
+async function resolveTicketSearchBranchIds(req) {
+  const queryBranchId = req.query.branchId;
+  if (queryBranchId != null && queryBranchId !== "") {
+    const parsed = parseInt(queryBranchId, 10);
+    if (
+      Number.isFinite(parsed) &&
+      Array.isArray(req.branches) &&
+      req.branches.includes(parsed)
+    ) {
+      return [parsed];
+    }
+  }
+
+  if (req.isHeadBranch) {
+    return getCompanyBranches(req.companyId);
+  }
+
+  if (Array.isArray(req.branches) && req.branches.length > 0) {
+    return req.branches;
+  }
+
+  return [req.branchId];
+}
+
 export const searchByTickerNumberCustomerNICOrName = async (req, res, next) => {
   try {
-    const { searchTerm } = req.query;
+    const { searchTerm: rawSearchTerm } = req.query;
+    const searchTerm =
+      typeof rawSearchTerm === "string" ? rawSearchTerm.trim() : "";
     if (!searchTerm) {
       return next(errorHandler(400, "Search term is required"));
     }
 
     const searchPattern = formatSearchPattern(searchTerm); // Format the search term for SQL LIKE query
-    const sanitizedSearch = searchTerm.replace(/[^a-zA-Z0-9]/g, ""); // For NIC search clean up
-    const formattedNIC = formatSearchPattern(sanitizedSearch);
+
+    const branchIds = await resolveTicketSearchBranchIds(req);
+    if (!branchIds?.length) {
+      return res.status(200).json({
+        success: true,
+        ticketSearchResults: [],
+      });
+    }
 
     // Step 1: Search for matching customers in Account Center api
     const matchingCustomers = await subsystemApi.searchCustomerByTerm(
@@ -118,16 +166,17 @@ export const searchByTickerNumberCustomerNICOrName = async (req, res, next) => {
       req.accessToken,
     );
 
-    const pawningCustomerIds = matchingCustomers.data.map(
+    const pawningCustomerIds = (matchingCustomers?.data || []).map(
       (c) => c.isPawningUserId,
     );
 
-    // Step 2: Search for tickets in Pawning DB
-    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Customer_idCustomer, pt.Status 
+    // Step 2: Search for tickets in Pawning DB (all accessible branches, not URL branch only)
+    const branchPlaceholders = branchIds.map(() => "?").join(",");
+    let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Customer_idCustomer, pt.Status, pt.Branch_idBranch
                  FROM pawning_ticket pt 
-                 WHERE pt.Branch_idBranch = ? AND pt.Status != '-1' AND pt.Status IS NOT NULL`;
+                 WHERE pt.Branch_idBranch IN (${branchPlaceholders}) AND pt.Status != '-1' AND pt.Status IS NOT NULL`;
 
-    let queryParams = [req.branchId];
+    let queryParams = [...branchIds];
     let whereConditions = [];
 
     // Condition 1: Match Ticket Number
@@ -217,6 +266,7 @@ export const searchByTickerNumberCustomerNICOrName = async (req, res, next) => {
       return {
         idPawning_Ticket: t.idPawning_Ticket,
         Ticket_No: t.Ticket_No,
+        Branch_idBranch: t.Branch_idBranch,
         Full_name: cus.Full_Name || "Unknown",
         NIC: cus.Nic || "",
       };
@@ -248,12 +298,16 @@ export const getTicketDataById = async (req, res, next) => {
 
     //fetch ticket initial data
     [ticketData] = await pool.query(
-      "SELECT idPawning_Ticket, Ticket_No,Pawning_Product_idPawning_Product,Period,Date_Time,Status,Maturity_date,Pawning_Advance_Amount,Customer_idCustomer,Gross_Weight,Net_Weight,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,User_idUser,Note,Interest_apply_on,Period_Type,SEQ_No,renewReqStatus,early_settlement_effect_type, early_settlement_stage1_start_day, early_settlement_stage1_end_day, early_settlement_stage1_value, early_settlement_stage1_value_type, early_settlement_stage2_start_day, early_settlement_stage2_end_day, early_settlement_stage2_value, early_settlement_stage2_value_type, early_settlement_stage3_start_day, early_settlement_stage3_end_day, early_settlement_stage3_value, early_settlement_stage3_value_type, early_settlement_stage4_start_day, early_settlement_stage4_end_day, early_settlement_stage4_value, early_settlement_stage4_value_type FROM pawning_ticket WHERE idPawning_Ticket = ? AND  Branch_idBranch = ?",
-      [ticketId, req.branchId],
+      "SELECT idPawning_Ticket, Branch_idBranch, Ticket_No,Pawning_Product_idPawning_Product,Period,Date_Time,Status,Maturity_date,Pawning_Advance_Amount,Customer_idCustomer,Gross_Weight,Net_Weight,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,User_idUser,Note,Interest_apply_on,Period_Type,SEQ_No,renewReqStatus,early_settlement_effect_type, early_settlement_stage1_start_day, early_settlement_stage1_end_day, early_settlement_stage1_value, early_settlement_stage1_value_type, early_settlement_stage2_start_day, early_settlement_stage2_end_day, early_settlement_stage2_value, early_settlement_stage2_value_type, early_settlement_stage3_start_day, early_settlement_stage3_end_day, early_settlement_stage3_value, early_settlement_stage3_value_type, early_settlement_stage4_start_day, early_settlement_stage4_end_day, early_settlement_stage4_value, early_settlement_stage4_value_type FROM pawning_ticket WHERE idPawning_Ticket = ?",
+      [ticketId],
     );
 
     if (ticketData.length === 0) {
       return next(errorHandler(404, "No ticket found for the given ID"));
+    }
+
+    if (!(await userCanAccessTicketBranch(req, ticketData[0].Branch_idBranch))) {
+      return next(errorHandler(403, "Access denied to this ticket's branch"));
     }
 
     // fetch ticket images

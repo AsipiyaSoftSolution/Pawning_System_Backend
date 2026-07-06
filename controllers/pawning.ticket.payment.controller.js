@@ -107,11 +107,23 @@ async function userCanAccessTicketBranch(req, ticketBranchId) {
     return companyBranches.includes(branchId);
   }
 
-  if (Array.isArray(req.branches) && req.branches.length > 0) {
-    return req.branches.includes(branchId);
+  const accessibleBranches = normalizeBranchIds(req.branches);
+  if (accessibleBranches.length > 0) {
+    return accessibleBranches.includes(branchId);
   }
 
   return Number(req.branchId) === branchId;
+}
+
+function normalizeBranchIds(branchIds) {
+  if (!Array.isArray(branchIds)) return [];
+  return [
+    ...new Set(
+      branchIds
+        .map((id) => Number(id))
+        .filter((id) => Number.isFinite(id)),
+    ),
+  ];
 }
 
 // Search tickets by ticket number, customer NIC, or customer name with pagination
@@ -119,10 +131,11 @@ async function resolveTicketSearchBranchIds(req) {
   const queryBranchId = req.query.branchId;
   if (queryBranchId != null && queryBranchId !== "") {
     const parsed = parseInt(queryBranchId, 10);
+    const accessibleBranches = normalizeBranchIds(req.branches);
     if (
       Number.isFinite(parsed) &&
-      Array.isArray(req.branches) &&
-      req.branches.includes(parsed)
+      accessibleBranches.length > 0 &&
+      accessibleBranches.includes(parsed)
     ) {
       return [parsed];
     }
@@ -132,11 +145,12 @@ async function resolveTicketSearchBranchIds(req) {
     return getCompanyBranches(req.companyId);
   }
 
-  if (Array.isArray(req.branches) && req.branches.length > 0) {
-    return req.branches;
+  const accessibleBranches = normalizeBranchIds(req.branches);
+  if (accessibleBranches.length > 0) {
+    return accessibleBranches;
   }
 
-  return [req.branchId];
+  return [Number(req.branchId)].filter((id) => Number.isFinite(id));
 }
 
 export const searchByTickerNumberCustomerNICOrName = async (req, res, next) => {

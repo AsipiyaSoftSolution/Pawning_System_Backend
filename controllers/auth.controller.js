@@ -2,6 +2,7 @@ import { errorHandler } from "../utils/errorHandler.js";
 import { pool, pool2 } from "../utils/db.js";
 import bcrypt from "bcryptjs";
 import { jwtToken, generatePasswordResetToken } from "../utils/helper.js";
+import { rotateUserSession } from "../utils/userSession.js";
 import {
   sendPasswordResetEmail,
   sendPasswordResetSuccessEmail,
@@ -136,7 +137,8 @@ export const login = async (req, res, next) => {
       return next(errorHandler(404, "User not found"));
     }
 
-    // Generate tokens
+    // Issue Account-Center-compatible session-bound JWT (shared user table + secret).
+    const sessionId = await rotateUserSession(pool2, user.idUser);
     const { accessToken, refreshToken } = jwtToken(
       user.idUser,
       user.Email,
@@ -144,26 +146,33 @@ export const login = async (req, res, next) => {
       user.Designation_idDesignation,
       user.branchIds,
       user.companyDocuments,
+      sessionId,
     );
 
-    // Set cookies and send response
+    const isProduction = process.env.NODE_ENV === "production";
+
+    // Set cookies and send response (include tokens in body for SPA Authorization header).
     res
       .cookie("accessToken", accessToken, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "strict",
+        secure: isProduction,
+        sameSite: isProduction ? "none" : "lax",
         maxAge: 24 * 60 * 60 * 1000, // 1 day
+        path: "/",
       })
       .cookie("refreshToken", refreshToken, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "strict",
+        secure: isProduction,
+        sameSite: isProduction ? "none" : "lax",
         maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+        path: "/",
       })
       .status(200)
       .json({
         message: "User logged in successfully",
         user,
+        accessToken,
+        refreshToken,
       });
   } catch (error) {
     console.error("Login error:", error);

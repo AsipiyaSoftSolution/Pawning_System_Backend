@@ -129,6 +129,22 @@ export const createCustomer = async (req, res, next) => {
       );
     }
 
+    // get the customerFields.cus_number and check if it has NIC
+    if (customerFields.cus_number?.includes("NIC")) {
+      // if it does, replace the string "NIC" with the actual New_NIC or Old_NIC
+      if (customerFields.New_NIC) {
+        customerFields.cus_number = customerFields.cus_number.replace(
+          "NIC",
+          customerFields.New_NIC,
+        );
+      } else if (customerFields.Old_NIC) {
+        customerFields.cus_number = customerFields.cus_number.replace(
+          "NIC",
+          customerFields.Old_NIC,
+        );
+      }
+    }
+
     // Step 1: Prepare Common Data
     const apiCustomerData = {
       ...customerFields,
@@ -146,43 +162,45 @@ export const createCustomer = async (req, res, next) => {
       Customer_Photo: data.Customer_Photo || null,
     };
 
-    // get the customerFields.cus_number and check if it has NIC
-    if (customerFields.cus_number.includes("NIC")) {
-      // if it does, replace the string "NIC" with the actual New_NIC or Old_NIC
-      if (customerFields.New_NIC) {
-        customerFields.cus_number = customerFields.cus_number.replace(
-          "NIC",
-          customerFields.New_NIC,
-        );
-      } else if (customerFields.Old_NIC) {
-        customerFields.cus_number = customerFields.cus_number.replace(
-          "NIC",
-          customerFields.Old_NIC,
-        );
-      }
-    }
-
-    // FLOW A: CUSTOMER CREATE approval -> No Local Creation Yet
+    // FLOW A: CUSTOMER CREATE approval map exists → queue approval (no create yet)
     if (hasCustomerCreateApproval) {
       apiCustomerData.isPawningUserId = null;
 
-      const accCenterPayload = { data: apiCustomerData };
+      const customerName =
+        customerFields.Full_Name ||
+        [customerFields.First_Name, customerFields.Last_Name]
+          .filter(Boolean)
+          .join(" ") ||
+        "-";
 
-      const accCenterResponse = await customerApi.createCustomer(
-        accCenterPayload,
+      const approvalResponse = await approvalApi.submitApprovalRequest(
+        {
+          companyId: req.companyId,
+          branchId: req.branchId,
+          userId: req.userId,
+          asipiyaSoftware: "pawning",
+          approvalName: "CUSTOMER CREATE",
+          description: `Customer Creation Request for: ${customerName}`,
+          data: apiCustomerData,
+        },
         accessToken,
       );
 
-      if (!accCenterResponse.success) {
+      if (!approvalResponse.success) {
         connection.release();
-        throw new Error(
-          accCenterResponse.message || "Failed to submit customer for approval",
+        return next(
+          errorHandler(
+            400,
+            approvalResponse.message ||
+              "Failed to submit customer for approval",
+          ),
         );
       }
 
       connection.release();
       return res.status(201).json({
         success: true,
+        requiresApproval: true,
         message: "Customer creation pending approval",
         customerId: null,
         accountCenterCusId: null,

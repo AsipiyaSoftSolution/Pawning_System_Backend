@@ -9,7 +9,12 @@ import {
   deletePawningProductById,
   updatePawningProductById,
 } from "../controllers/pawning.product.controller.js";
-import { checkUserSelectedHeadBranch, requireHeadBranch } from "../middlewares/headBranch.middleware.js";
+import {
+  checkUserSelectedHeadBranch,
+  requireHeadBranch,
+} from "../middlewares/headBranch.middleware.js";
+import { checkUserHasPrivileges } from "../middlewares/privilages.middleware.js";
+import { PAWNING_PRIVILEGES as P } from "../constants/pawningPrivileges.js";
 
 const route = express.Router();
 
@@ -17,8 +22,9 @@ route.post(
   "/:branchId/create",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserHasPrivileges([P.PRODUCT_CREATE]),
   createPawningProduct,
-); // Create a new product for a specific branch */
+);
 
 route.post(
   "/:branchId/create-for-branches",
@@ -26,36 +32,41 @@ route.post(
   checkUserBranchAccess,
   checkUserSelectedHeadBranch,
   requireHeadBranch,
+  checkUserHasPrivileges([P.PRODUCT_CREATE]),
   createPawningProductForBranches,
-); // Head office: create same product for multiple branches (body: { data, branchIds }) */
+);
 
 route.get(
   "/:branchId/:productId",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserHasPrivileges([P.PRODUCT_VIEW, P.PRODUCT_UPDATE, P.PRODUCT_CREATE]),
   getPawningProductById,
-); // Get a specific product by ID for a specific branch
+);
 
 route.get(
   "/:branchId",
   protectedRoute,
   checkUserBranchAccess,
   checkUserSelectedHeadBranch,
+  checkUserHasPrivileges([P.PRODUCT_VIEW, P.PRODUCT_UPDATE, P.PRODUCT_CREATE]),
   getPawningProducts,
-); // Get all products for a specific branch
+);
 
 route.delete(
   "/:branchId/:productId",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserHasPrivileges([P.PRODUCT_UPDATE]),
   deletePawningProductById,
-); // Delete a specific product by ID for a specific branch
+);
 
 route.patch(
   "/:branchId/:productId",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserHasPrivileges([P.PRODUCT_UPDATE]),
   updatePawningProductById,
-); // Update/Edit a specific product by ID for a specific branch
+);
 
 export default route;

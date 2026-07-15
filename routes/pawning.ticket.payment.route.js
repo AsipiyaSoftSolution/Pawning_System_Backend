@@ -19,6 +19,8 @@ import {
   checkUserHasReceiptBook,
 } from "../controllers/pawning.ticket.payment.controller.js";
 import { checkUserSelectedHeadBranch } from "../middlewares/headBranch.middleware.js";
+import { checkUserHasPrivileges } from "../middlewares/privilages.middleware.js";
+import { PAWNING_PRIVILEGES as P } from "../constants/pawningPrivileges.js";
 
 const route = express.Router();
 
@@ -27,113 +29,144 @@ route.get(
   protectedRoute,
   checkUserBranchAccess,
   checkUserSelectedHeadBranch,
+  checkUserHasPrivileges([
+    P.TICKET_PAYMENT,
+    P.TICKET_SETTLEMENT,
+    P.TICKET_RENEWAL,
+    P.PAYMENTS_HISTORY_VIEW,
+  ]),
   searchByTickerNumberCustomerNICOrName,
-); // Search by ticket number, customer NIC, or name
+);
 
 route.get(
   "/:branchId/ticket/:ticketId",
   protectedRoute,
   checkUserBranchAccess,
   checkUserSelectedHeadBranch,
+  checkUserHasPrivileges([
+    P.TICKET_PAYMENT,
+    P.TICKET_SETTLEMENT,
+    P.TICKET_RENEWAL,
+    P.TICKET_VIEW,
+    P.PAYMENTS_HISTORY_VIEW,
+  ]),
   getTicketDataById,
-); // Get ticket data by ID
+);
 
 route.get(
   "/:branchId/ticket/:ticketId/logs",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserHasPrivileges([P.TICKET_LOG_VIEW, P.TICKET_VIEW, P.TICKET_PAYMENT]),
   getTicketLogDataById,
-); // Get ticket log data by ID
+);
 
 route.get(
   "/:branchId/ticket/:ticketId/additional-charges",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserHasPrivileges([P.TICKET_PAYMENT, P.TICKET_SETTLEMENT]),
   getTicketAdditionalChargesById,
-); // Get ticket additional charges by ID
+);
 
 route.post(
   "/:branchId/ticket/:ticketId/additional-charges",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserHasPrivileges([P.TICKET_PAYMENT]),
   createTicketAdditionalCharge,
-); // Create ticket additional charge
+);
 
 route.post(
   "/:branchId/ticket/:ticketId/part-payment",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserHasPrivileges([P.TICKET_PAYMENT]),
   createPaymentForTicket,
-); // Create payment for ticket  (Part Payment)
+);
 
 route.post(
   "/:branchId/ticket/:ticketId/settlement-payment",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserHasPrivileges([P.TICKET_SETTLEMENT]),
   createTicketSettlementPayment,
-); // Create settlement payment for ticket
+);
 
 route.post(
   "/:branchId/ticket/:ticketId/renewal-payment",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserHasPrivileges([P.TICKET_RENEWAL, P.TICKET_PAYMENT]),
   createTicketRenewalPayment,
-); // Create renewal payment for ticket
+);
 
 route.patch(
   "/:branchId/ticket/:ticketId/note-update",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserHasPrivileges([P.TICKET_PAYMENT, P.TICKET_VIEW]),
   updatePawningTicketNote,
-); // Update ticket note
+);
 
-// get all tickets payment histories data for the branch
 route.get(
   "/:branchId/tickets-payments-history",
   protectedRoute,
   checkUserBranchAccess,
   checkUserSelectedHeadBranch,
+  checkUserHasPrivileges([
+    P.PAYMENTS_HISTORY_VIEW,
+    P.TICKET_PAYMENT_HISTORY_VIEW,
+  ]),
   getTicketsPaymentsHistory,
 );
 
-// req access for pawning ticket renewal
 route.patch(
   "/:branchId/ticket/:ticketId/renewal-request",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserHasPrivileges([P.TICKET_RENEWAL, P.TICKET_PAYMENT]),
   reqAccessForTicketRenew,
-); // Request access for ticket renewal
+);
 
-// send req of ticket renewal for approval
 route.get(
   "/:branchId/tickets-renewal-requests",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserHasPrivileges([P.TICKET_RENEWAL, P.TICKET_APPROVE]),
   sendReqsOfTicketRenewalForApproval,
-); // Send req of ticket renewal for approval
+);
 
-// approve or reject req for ticket renewal
 route.patch(
   "/:branchId/ticket/:ticketId/renewal-request-approval",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserHasPrivileges([P.TICKET_RENEWAL, P.TICKET_APPROVE]),
   approveOrRejectReqForTicketRenewal,
-); // Approve or reject req for ticket renewal
+);
 
-// get current receipt book with current voucher no
 route.get(
   "/:branchId/current-receipt-book-with-current-voucher-no",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserHasPrivileges([
+    P.TICKET_PAYMENT,
+    P.TICKET_SETTLEMENT,
+    P.TICKET_RENEWAL,
+  ]),
   getCurrentReceiptBookWithCurrentVoucherNo,
 );
 
-// check if user has receipt book
 route.get(
   "/:branchId/check-user-has-receipt-book",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserHasPrivileges([
+    P.TICKET_PAYMENT,
+    P.TICKET_SETTLEMENT,
+    P.TICKET_RENEWAL,
+  ]),
   checkUserHasReceiptBook,
-); // Check if user has receipt book
+);
 
 export default route;

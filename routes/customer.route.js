@@ -16,7 +16,6 @@ import {
   getCustomerPaymentHistory,
   getCustomerTickets,
   getKycDataForAccountCenter,
-  // getCustomerCompleteDataById,
   generateCustomerNumber,
   updateCustomerNumberFormat,
   batchUpdateCustomerNumbers,
@@ -26,25 +25,34 @@ import {
 } from "../controllers/customer.controller.js";
 import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
 import { checkUserSelectedHeadBranch } from "../middlewares/headBranch.middleware.js";
+import { checkUserHasPrivileges } from "../middlewares/privilages.middleware.js";
+import { PAWNING_PRIVILEGES as P } from "../constants/pawningPrivileges.js";
 
 const router = express.Router();
 
 // KYC data for Account Center
-router.get("/kyc/:customerId", protectedRoute, getKycDataForAccountCenter);
+router.get(
+  "/kyc/:customerId",
+  protectedRoute,
+  checkUserHasPrivileges([P.KYC_ACCESS, P.CUSTOMER_VIEW]),
+  getKycDataForAccountCenter,
+);
 
 router.post(
   "/:branchId/create",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserHasPrivileges([P.CUSTOMER_CREATE]),
   createCustomer,
-); // Create a new customer (not link-to-existing; use link-existing for that)
+);
 
 router.post(
   "/:branchId/link-existing",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserHasPrivileges([P.CUSTOMER_CREATE]),
   linkExistingCustomer,
-); // Link Pawning customer to existing Account Center company_customer
+);
 
 // Called by Account Center when CUSTOMER CREATE approval is fully approved (server-to-server)
 router.post("/:branchId/create-from-approval", createFromApproval);
@@ -60,119 +68,118 @@ router.get(
   protectedRoute,
   checkUserBranchAccess,
   checkUserSelectedHeadBranch,
+  checkUserHasPrivileges([P.CUSTOMER_VIEW, P.CUSTOMER_CREATE, P.CUSTOMER_UPDATE]),
   getCustomersForTheBranch,
-); // Get customers for a specific branch | or search customers by NIC,Mobile NO, Customer Id or Name
+);
 
 router.get(
   "/:branchId/customer/:id",
   protectedRoute,
   checkUserBranchAccess,
   checkUserSelectedHeadBranch,
+  checkUserHasPrivileges([P.CUSTOMER_VIEW, P.CUSTOMER_CREATE, P.CUSTOMER_UPDATE]),
   getCustomerById,
 );
-// Get a customer by ID for a specific branch
 
 router.patch(
   "/:branchId/customer/:id/edit",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserHasPrivileges([P.CUSTOMER_UPDATE]),
   editCustomer,
-); // Edit a customer by ID for a specific branch
+);
 
 router.post(
   "/:branchId/check-customer-nic",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserHasPrivileges([P.CUSTOMER_CREATE]),
   checkCustomerByNICWhenCreating,
-); // Check if a customer with the given NIC exists in the system when creating a new customer
+);
 
 router.get(
   "/:branchId/check-exists-for-creation",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserHasPrivileges([P.CUSTOMER_CREATE]),
   checkCustomerExistsForCreation,
-); // Check if customer exists (same company/branch) - blocks creation if exists
+);
 
 router.get(
   "/:branchId/customer-data-by-nic/:nic",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserHasPrivileges([P.CUSTOMER_VIEW, P.CUSTOMER_CREATE, P.TICKET_CREATE]),
   getCustomerDataByNIC,
-); // Get customer data by NIC if there is a user in the system
+);
 
 router.delete(
   "/:branchId/customer/:customerId/delete-documents/:documentId",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserHasPrivileges([P.CUSTOMER_UPDATE]),
   deleteDocuments,
 );
 
-// get customer logs data by id
 router.get(
   "/:branchId/customer-logs/:customerId",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserHasPrivileges([P.CUSTOMER_VIEW, P.CUSTOMER_UPDATE]),
   getCustomerLogsDataById,
 );
 
-// get customer payment history
 router.get(
   "/:branchId/customer-payment-history/:customerId",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserHasPrivileges([
+    P.CUSTOMER_VIEW,
+    P.PAYMENTS_HISTORY_VIEW,
+    P.TICKET_PAYMENT_HISTORY_VIEW,
+  ]),
   getCustomerPaymentHistory,
 );
 
-// get customer tickets
 router.get(
   "/:branchId/customer-tickets/:customerId",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserHasPrivileges([P.CUSTOMER_VIEW, P.TICKET_VIEW]),
   getCustomerTickets,
 );
 
-/*
-// get customer all KYC data by ID
-router.get(
-  "/:branchId/customer-kyc/:customerId",
-  protectedRoute,
-  checkUserBranchAccess,
-  getCustomerCompleteDataById,
-);
-*/
-// blacklist a customer
 router.patch(
   "/:branchId/blacklist-customer/:customerId",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserHasPrivileges([P.CUSTOMER_UPDATE]),
   blacklistCustomer,
 );
 
-// generate customer number
 router.get(
   "/:branchId/generate-customer-number",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserHasPrivileges([P.CUSTOMER_CREATE]),
   generateCustomerNumber,
 );
 
-// update customer number format
+// Admin / AC sync helpers — auth only (format/migration tools)
 router.patch(
   "/update-customer-number-format",
   protectedRoute,
   updateCustomerNumberFormat,
 );
 
-// batch update customer numbers
 router.patch(
   "/batch-update-customer-numbers",
   protectedRoute,
   batchUpdateCustomerNumbers,
 );
 
-// customer blacklist callback (from acc center)
+// Callbacks from Account Center
 router.patch("/blacklist", protectedRoute, blacklistCustomerCallback);
-
-// customer link callback (from acc center) || after link approval is fully approved we call this endpoint to link the customer in pawning system (create customer and link pawning user id to account center)
 router.post("/:branchId/link-customer", protectedRoute, linkCustomerCallback);
+
 export default router;

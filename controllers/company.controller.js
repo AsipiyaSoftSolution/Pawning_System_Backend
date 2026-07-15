@@ -2355,7 +2355,7 @@ export const createTESTUser = async (req, res, next) => {
 // create designation with privilages
 export const creteDesignationWithPrivilages = async (req, res, next) => {
   try {
-    const { description, privilageIds, maxTicketApproveAmount } = req.body;
+    const { description, privilageIds } = req.body;
     console.log(privilageIds, "this is the privilage ids");
     if (!description) {
       return next(errorHandler(400, "Designation description is required"));
@@ -2372,21 +2372,6 @@ export const creteDesignationWithPrivilages = async (req, res, next) => {
           "At least one privilage must be assigned to the designation",
         ),
       );
-    }
-
-    if (privilageIds.includes(29)) {
-      if (
-        !maxTicketApproveAmount ||
-        isNaN(maxTicketApproveAmount) ||
-        maxTicketApproveAmount <= 0
-      ) {
-        return next(
-          errorHandler(
-            400,
-            "Max Ticket Approve Amount must be a positive number when 'Approve Ticket' privilage is assigned",
-          ),
-        );
-      }
     }
 
     // Check if designation already exists for this company
@@ -2413,8 +2398,8 @@ export const creteDesignationWithPrivilages = async (req, res, next) => {
 
     // create the designation
     const [createdDesignation] = await pool.query(
-      "INSERT INTO designation (Description, Company_idCompany,pawning_ticket_max_approve_amount) VALUES (?, ?,?)",
-      [description, req.companyId, maxTicketApproveAmount || null],
+      "INSERT INTO designation (Description, Company_idCompany) VALUES (?, ?)",
+      [description, req.companyId],
     );
 
     if (createdDesignation.affectedRows === 0) {
@@ -2438,8 +2423,8 @@ export const creteDesignationWithPrivilages = async (req, res, next) => {
 
     // Fetch the complete designation data
     const [designationDetails] = await pool.query(
-      "SELECT idDesignation, Description, pawning_ticket_max_approve_amount FROM designation WHERE idDesignation = ?",
-      [createdDesignation.insertId],
+      "SELECT idDesignation, Description FROM designation WHERE idDesignation = ?",
+      [createdDesignation.insertId],  
     );
 
     // Fetch privileges for the designation (same pattern as getDesignationsWithPrivilages)
@@ -2454,8 +2439,6 @@ export const creteDesignationWithPrivilages = async (req, res, next) => {
     const designationData = {
       idDesignation: designationDetails[0].idDesignation,
       Description: designationDetails[0].Description,
-      pawning_ticket_max_approve_amount:
-        designationDetails[0].pawning_ticket_max_approve_amount,
       privilages: privilages,
     };
 
@@ -2475,8 +2458,8 @@ export const getDesignationsWithPrivilages = async (req, res, next) => {
   try {
     // get all designations for the company
     const [designations] = await pool.query(
-      "SELECT idDesignation, Description,pawning_ticket_max_approve_amount FROM designation WHERE Company_idCompany = ?",
-      [req.companyId],
+      "SELECT idDesignation, Description FROM designation WHERE Company_idCompany = ?",
+      [req.companyId],  
     );
 
     // get privilages for each designation
@@ -2505,7 +2488,7 @@ export const getDesignationsWithPrivilages = async (req, res, next) => {
 export const updateDesignationWithPrivilages = async (req, res, next) => {
   try {
     const desginationId = req.params.id || req.params.designationId;
-    const { description, privilageIds, maxTicketApproveAmount } = req.body;
+    const { description, privilageIds } = req.body;
 
     if (!desginationId) {
       return next(errorHandler(400, "Designation ID is required"));
@@ -2526,21 +2509,6 @@ export const updateDesignationWithPrivilages = async (req, res, next) => {
           "At least one privilage must be assigned to the designation",
         ),
       );
-    }
-
-    if (privilageIds.includes(29)) {
-      if (
-        !maxTicketApproveAmount ||
-        isNaN(maxTicketApproveAmount) ||
-        maxTicketApproveAmount <= 0
-      ) {
-        return next(
-          errorHandler(
-            400,
-            "Max Ticket Approve Amount must be a positive number when 'Approve Ticket' privilage is assigned",
-          ),
-        );
-      }
     }
 
     // Check if designation exists for this company
@@ -2565,8 +2533,8 @@ export const updateDesignationWithPrivilages = async (req, res, next) => {
 
     // update the designation description
     const [updatedDesignation] = await pool.query(
-      "UPDATE designation SET Description = ?, pawning_ticket_max_approve_amount = ? WHERE idDesignation = ?",
-      [description, maxTicketApproveAmount || null, desginationId],
+      "UPDATE designation SET Description = ? WHERE idDesignation = ?",
+      [description, desginationId],
     );
 
     if (updatedDesignation.affectedRows === 0) {
@@ -2651,7 +2619,7 @@ export const updateDesignationWithPrivilages = async (req, res, next) => {
 
     // Fetch the updated designation data
     const [designationDetails] = await pool.query(
-      "SELECT idDesignation, Description, pawning_ticket_max_approve_amount FROM designation WHERE idDesignation = ?",
+      "SELECT idDesignation, Description FROM designation WHERE idDesignation = ?",
       [desginationId],
     );
 
@@ -2667,8 +2635,6 @@ export const updateDesignationWithPrivilages = async (req, res, next) => {
     const designationData = {
       idDesignation: designationDetails[0].idDesignation,
       Description: designationDetails[0].Description,
-      pawning_ticket_max_approve_amount:
-        designationDetails[0].pawning_ticket_max_approve_amount,
       privilages: privilages,
     };
 

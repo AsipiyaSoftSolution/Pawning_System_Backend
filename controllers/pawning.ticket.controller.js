@@ -2563,6 +2563,12 @@ export const getPawningTicketsForApproval = async (req, res, next) => {
       tickets.forEach((ticket) => {
         const cusData = customerMap.get(ticket.Customer_idCustomer);
         ticket.NIC = cusData?.Nic || null;
+        ticket.customerId =
+          cusData?.idCompany_Customer ?? cusData?.idCustomer ?? null;
+        ticket.customerName =
+          cusData?.Full_Name ||
+          [cusData?.First_Name, cusData?.Last_Name].filter(Boolean).join(" ") ||
+          null;
         delete ticket.Customer_idCustomer;
       });
     };
@@ -4084,6 +4090,8 @@ export const sendActiveTickets = async (req, res, next) => {
           ticket.Full_name = cusData.Full_Name;
           ticket.NIC = cusData.New_NIC || cusData.Old_NIC;
           ticket.Mobile_No = cusData.Contact_No_01 || cusData.Contact_No_02;
+          ticket.customerId =
+            cusData.idCompany_Customer ?? cusData.idCustomer ?? null;
         } else {
           console.warn(
             `Warning: Customer data not found for ticket ${ticket.idPawning_Ticket}, Customer_idCustomer: ${ticket.Customer_idCustomer}`,
@@ -4091,6 +4099,7 @@ export const sendActiveTickets = async (req, res, next) => {
           ticket.Full_name = "Unknown Customer";
           ticket.NIC = "N/A";
           ticket.Mobile_No = "N/A";
+          ticket.customerId = null;
         }
         ticket.BranchName = branchMap.get(ticket.Branch_idBranch) || null;
         delete ticket.Branch_idBranch;

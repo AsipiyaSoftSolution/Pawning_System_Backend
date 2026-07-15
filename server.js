@@ -29,18 +29,14 @@ const app = express();
 const CLIENT = (
   process.env.CLIENT_URL || "https://pawning.asipbook.com"
 ).replace(/\/$/, "");
+const CLIENT_ALT = CLIENT.replace("localhost", "127.0.0.1");
 
 app.use(
   cors({
     origin(origin, cb) {
       if (!origin) return cb(null, true); // same-origin / server-to-server
-      if (origin === CLIENT) return cb(null, true); // production frontend
-      if (origin === "https://pawning.asipiya.com") return cb(null, true); // production frontend (asipiya.com)
-      if (
-        origin === "http://localhost:5175" ||
-        origin === "http://127.0.0.1:5175"
-      )
-        return cb(null, true); // dev
+      if (origin === CLIENT || origin === CLIENT_ALT) return cb(null, true);
+      if (origin === "https://pawning.asipiya.com") return cb(null, true); // production frontend
       // Account Center server-to-server (create-from-approval)
       if (
         origin === "http://localhost:8000" ||

@@ -29,6 +29,8 @@
     "jsonwebtoken": "^9.0.2",
     "mysql2": "^3.14.3",
     "node-cron": "^4.2.1",
-    "nodemailer": "^7.0.6"
+    "nodemailer": "^7.0.6",
+    "winston": "^3.19.0",
+    "winston-daily-rotate-file": "^5.0.0"
   }
 }

@@ -1,3 +1,6 @@
+import { setupLogger } from "./utils/logger.js";
+setupLogger(); // must be first so console.* writes to logs/ from here on
+
 import dotenv from "dotenv";
 import express from "express";
 import cron from "node-cron";
@@ -56,6 +59,19 @@ app.use(express.json({ limit: "100mb" }));
 app.use(express.urlencoded({ extended: true, limit: "100mb" }));
 app.use(cookieParser());
 
+// Health / root — browsing the API port in Chrome should not look "broken"
+app.get("/", (_req, res) => {
+  res.json({
+    success: true,
+    service: "Pawning System Backend",
+    status: "ok",
+    docs: "Use /api/* endpoints. Frontend talks to this API via VITE_API_URL.",
+  });
+});
+app.get("/api/health", (_req, res) => {
+  res.json({ success: true, status: "ok" });
+});
+
 // routes
 app.use("/api/auth", authRoutes);
 app.use("/api/company", companyRoutes);
@@ -78,7 +94,7 @@ app.listen(PORT, () => {
 
     console.log("Database connected successfully");
     console.log(
-      `Server is running, you are good to go, try to access pawning system`,
+      `Server is running, you are good to go, try to access pawning system on port ${PORT}`,
     );
   } catch (error) {
     console.error("Database connection failed:", error);

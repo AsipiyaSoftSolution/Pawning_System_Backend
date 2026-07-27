@@ -9,54 +9,58 @@ import {
   fetchAndSendAllProductsForSelectedBranch,
   fetchAndSendAllTicketsForSelectedPawningProduct,
 } from "../controllers/report.controller.js";
+import { checkUserHasPrivileges } from "../middlewares/privilages.middleware.js";
+import { PAWNING_PRIVILEGES as P } from "../constants/pawningPrivileges.js";
 
 const route = express.Router();
 
-// Route to get Full Ticket Details Report
+const requireReports = checkUserHasPrivileges([P.REPORTS]);
+
 route.get(
   "/:branchId/full-ticket-details",
   protectedRoute,
   checkUserBranchAccess,
+  requireReports,
   fullTicketDetailsReport,
 );
 
-// Route to get Articles In Hand Report
 route.get(
   "/:branchId/articles-in-hand",
   protectedRoute,
   checkUserBranchAccess,
+  requireReports,
   articlesInHandReport,
 );
 
-// Route to get Payments Report
 route.get(
   "/:branchId/payments",
   protectedRoute,
   checkUserBranchAccess,
+  requireReports,
   paymentsReport,
 );
 
-// Route to get Daily Ticket Income Report
 route.get(
   "/:branchId/daily-ticket-income",
   protectedRoute,
   checkUserBranchAccess,
+  requireReports,
   dailyTicketIncomeReport,
 );
 
-// Route to fetch and send all products for the selected branch
 route.get(
   "/:branchId/fetch-and-send-all-products",
   protectedRoute,
   checkUserBranchAccess,
+  requireReports,
   fetchAndSendAllProductsForSelectedBranch,
 );
 
-// Route to fetch and send all tickets for the selected pawning product
 route.get(
   "/:branchId/fetch-and-send-all-tickets",
   protectedRoute,
   checkUserBranchAccess,
+  requireReports,
   fetchAndSendAllTicketsForSelectedPawningProduct,
 );
 

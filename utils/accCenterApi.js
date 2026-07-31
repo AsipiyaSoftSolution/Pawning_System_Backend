@@ -20,9 +20,13 @@ export const createAccCenterApiClient = (accessToken) => {
 
   if (accessToken) {
     headers.Authorization = `Bearer ${accessToken}`;
-  } else if (process.env.CRON_JOB_API_KEY) {
-    // If no access token is provided, fallback to cron job API key if configured
-    headers["x-api-key"] = process.env.CRON_JOB_API_KEY;
+  } else if (process.env.PAWNING_DAILY_JOB_API_KEY) {
+    // Daily interest/penalty cron — dedicated key (must match Account Center)
+    headers["x-api-key"] = process.env.PAWNING_DAILY_JOB_API_KEY;
+  } else {
+    console.warn(
+      "[createAccCenterApiClient] No accessToken and PAWNING_DAILY_JOB_API_KEY is empty — Account Center will reject the call",
+    );
   }
 
   return axios.create({

@@ -54,16 +54,53 @@ const userWithoutPassword = async (userId) => {
       [user[0].idUser],
     );
 
+    const [userHasAccessSoftwares] = await pool2.query(
+      `SELECT cs.softwareName, uas.Branch_idBranch
+       FROM userhasaccesssoftwares uas
+       JOIN companysoftwares cs ON uas.CompanySoftware_IdCompanySoftware = cs.idCompanySoftware
+       WHERE uas.User_IdUser = ?`,
+      [user[0].idUser],
+    );
+
     let userBranches = [];
     for (const branch of branchIds) {
       const [branchRows] = await pool2.query(
-        "SELECT idBranch, Name,Branch_Code FROM branch WHERE idBranch = ?",
+        "SELECT idBranch, Name, Branch_Code, isPawning, Branch_Type, Status FROM branch WHERE idBranch = ?",
         [branch.Branch_idBranch],
       );
       if (branchRows.length > 0) {
-        userBranches.push(branchRows[0]);
+        const branchData = branchRows[0];
+
+        const [branchHasSoftwareAccess] = await pool2.query(
+          `SELECT bsa.*, cs.softwareName
+           FROM branchhassoftwareaccess bsa
+           JOIN companysoftwares cs ON bsa.CompanySoftware_IdCompanySoftware = cs.idCompanySoftware
+           JOIN branch b ON bsa.Branch_idBranch = b.idBranch
+           JOIN companypurchasedsoftwares cps ON bsa.CompanySoftware_IdCompanySoftware = cps.CompanySoftware_IdCompanySoftware
+             AND cps.Company_IdCompany = b.Company_idCompany
+           WHERE bsa.Branch_idBranch = ?`,
+          [branch.Branch_idBranch],
+        );
+
+        branchData.softwareAccess = branchHasSoftwareAccess;
+        branchData.userSoftwareAccess = userHasAccessSoftwares
+          .filter(
+            (software) =>
+              Number(software.Branch_idBranch) ===
+              Number(branch.Branch_idBranch),
+          )
+          .map((software) => software.softwareName);
+
+        userBranches.push(branchData);
       }
     }
+
+    const [headBranch] = await pool2.query(
+      "SELECT idBranch FROM branch WHERE Company_idCompany = ? AND Branch_Type = 1",
+      [user[0].Company_idCompany],
+    );
+    const headBranchId =
+      headBranch.length > 0 ? headBranch[0].idBranch : null;
 
     const [documetTypes] = await pool2.query(
       "SELECT * FROM company_documents WHERE Company_idCompany = ?",
@@ -90,6 +127,7 @@ const userWithoutPassword = async (userId) => {
       branches: userBranches,
       companyDocuments: companyDocuments,
       branchIds: branchIds.map((branch) => branch.Branch_idBranch),
+      headBranchId,
       isCashier: cashierAccount.length > 0,
       cashierAccountId:
         cashierAccount.length > 0

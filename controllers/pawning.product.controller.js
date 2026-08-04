@@ -624,19 +624,19 @@ async function createOnePawningProductForBranch(
       data.interestMethod || null,
       userId,
       new Date(),
-      data.lateCharge.lateChargeStage1 || 0,
-      data.lateCharge.lateChargeStage2 || 0,
-      data.lateCharge.lateChargeStage3 || 0,
-      data.lateCharge.lateChargeStage4 || 0,
-      data.lateCharge.lateChargeStage1StartDate ?? null,
-      data.lateCharge.lateChargeStage1EndDate || null,
-      data.lateCharge.lateChargeStage2StartDate || null,
-      data.lateCharge.lateChargeStage2EndDate || null,
-      data.lateCharge.lateChargeStage3StartDate || null,
-      data.lateCharge.lateChargeStage3EndDate || null,
-      data.lateCharge.lateChargeStage4StartDate || null,
-      data.lateCharge.lateChargeStage4EndDate || null,
-      data.lateCharge.numberOfLateChargeStages || 0,
+      data.lateCharge?.lateChargeStage1 || 0,
+      data.lateCharge?.lateChargeStage2 || 0,
+      data.lateCharge?.lateChargeStage3 || 0,
+      data.lateCharge?.lateChargeStage4 || 0,
+      data.lateCharge?.lateChargeStage1StartDate ?? null,
+      data.lateCharge?.lateChargeStage1EndDate || null,
+      data.lateCharge?.lateChargeStage2StartDate || null,
+      data.lateCharge?.lateChargeStage2EndDate || null,
+      data.lateCharge?.lateChargeStage3StartDate || null,
+      data.lateCharge?.lateChargeStage3EndDate || null,
+      data.lateCharge?.lateChargeStage4StartDate || null,
+      data.lateCharge?.lateChargeStage4EndDate || null,
+      data.lateCharge?.numberOfLateChargeStages || 0,
     ],
   );
 
@@ -991,7 +991,6 @@ export const createPawningProduct = async (req, res, next) => {
  *
  */
 export const createPawningProductForBranches = async (req, res, next) => {
-  let connection;
   try {
     const { data, branchIds } = req.body;
     if (!data) {
@@ -1005,21 +1004,50 @@ export const createPawningProductForBranches = async (req, res, next) => {
         ),
       );
     }
-    const userBranchIds = (req.branches || []).map((id) =>
-      typeof id === "string" ? parseInt(id, 10) : id,
+
+    const toBranchId = (value) => {
+      const num = Number(value);
+      return Number.isFinite(num) ? num : NaN;
+    };
+
+    const userBranchIds = new Set(
+      (req.branches || []).map(toBranchId).filter(Number.isFinite),
     );
-    const headBranchId =
-      typeof req.branchId === "string"
-        ? parseInt(req.branchId, 10)
-        : req.branchId;
-    const validBranchIds = branchIds.filter((id) => {
-      const num = typeof id === "string" ? parseInt(id, 10) : id;
-      return (
-        !Number.isNaN(num) &&
-        userBranchIds.includes(num) &&
-        num !== headBranchId
+    const headBranchId = toBranchId(req.branchId);
+
+    // Prefer Branch_Type = 1 when available; fall back to selected head branch id
+    let resolvedHeadBranchId = headBranchId;
+    try {
+      const [headRows] = await pool2.query(
+        "SELECT idBranch FROM branch WHERE Company_idCompany = ? AND Branch_Type = 1 LIMIT 1",
+        [req.companyId],
       );
-    });
+      if (headRows.length > 0) {
+        resolvedHeadBranchId = toBranchId(headRows[0].idBranch);
+      }
+    } catch (e) {
+      // non-fatal — still exclude req.branchId
+    }
+
+    const companyBranchIds = new Set(
+      (await getCompanyBranches(req.companyId)).map(toBranchId).filter(Number.isFinite),
+    );
+
+    const validBranchIds = [
+      ...new Set(
+        branchIds
+          .map(toBranchId)
+          .filter(
+            (num) =>
+              Number.isFinite(num) &&
+              userBranchIds.has(num) &&
+              companyBranchIds.has(num) &&
+              num !== resolvedHeadBranchId &&
+              num !== headBranchId,
+          ),
+      ),
+    ];
+
     if (validBranchIds.length === 0) {
       return next(
         errorHandler(
@@ -1031,26 +1059,37 @@ export const createPawningProductForBranches = async (req, res, next) => {
 
     const created = [];
     const errors = [];
-    connection = await pool.getConnection();
-    await connection.beginTransaction();
 
+    // One transaction per branch so a single failure does not abort the rest
     for (const branchId of validBranchIds) {
+      let connection;
       try {
+        connection = await pool.getConnection();
+        await connection.beginTransaction();
         const productId = await createOnePawningProductForBranch(
           branchId,
           data,
           req.userId,
           connection,
         );
+        await connection.commit();
         created.push({ branchId, productId });
       } catch (err) {
+        if (connection) {
+          try {
+            await connection.rollback();
+          } catch (_) {
+            /* ignore */
+          }
+        }
         console.error(`Error creating product for branch ${branchId}:`, err);
         errors.push({ branchId, message: err.message || "Failed to create" });
+      } finally {
+        if (connection) connection.release();
       }
     }
 
     if (created.length === 0) {
-      await connection.rollback();
       return next(
         errorHandler(
           500,
@@ -1060,17 +1099,21 @@ export const createPawningProductForBranches = async (req, res, next) => {
       );
     }
 
-    await connection.commit();
+    const message =
+      errors.length > 0
+        ? `Pawning product created for ${created.length} of ${validBranchIds.length} branch(es). ${errors.length} failed.`
+        : `Pawning product created for ${created.length} branch(es).`;
+
     res.status(201).json({
       success: true,
-      message: `Pawning product created for ${created.length} branch(es).`,
+      message,
+      createdCount: created.length,
+      created,
+      errors: errors.length > 0 ? errors : undefined,
     });
   } catch (err) {
-    if (connection) await connection.rollback();
     console.error("Error in createPawningProductForBranches:", err);
     return next(errorHandler(500, err.message || "Internal Server Error"));
-  } finally {
-    if (connection) connection.release();
   }
 };
 

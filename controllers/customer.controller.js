@@ -714,11 +714,30 @@ export const getCustomersForTheBranch = async (req, res, next) => {
 
     // Extract customers and pagination from ACC Center response
     const accountCenterCustomers = accCenterResponse.customers || [];
-    const paginationData = accCenterResponse.pagination || {
-      total: 0,
-      page,
-      limit,
-      totalPages: 0,
+    // Acc Center returns { total, page, limit, totalPages }; pawning UI expects
+    // { totalCount, currentPage, hasNextPage, hasPreviousPage, totalPages }.
+    const rawPagination = accCenterResponse.pagination || {};
+    const currentPage = Number(rawPagination.currentPage ?? rawPagination.page ?? page) || 1;
+    const pageLimit = Number(rawPagination.limit ?? limit) || 10;
+    const totalCount = Number(
+      rawPagination.totalCount ?? rawPagination.total ?? 0,
+    );
+    const totalPages =
+      Number(rawPagination.totalPages) ||
+      Math.ceil(totalCount / pageLimit) ||
+      0;
+    const paginationData = {
+      totalCount,
+      currentPage,
+      totalPages,
+      hasNextPage:
+        rawPagination.hasNextPage != null
+          ? Boolean(rawPagination.hasNextPage)
+          : currentPage < totalPages,
+      hasPreviousPage:
+        rawPagination.hasPreviousPage != null
+          ? Boolean(rawPagination.hasPreviousPage)
+          : currentPage > 1,
     };
 
     // Get pawning customer IDs to fetch Customer_Number from pawning DB

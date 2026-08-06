@@ -408,6 +408,13 @@ const processStageInterest = async (
   queryRunner = pool,
   accessToken = null,
 ) => {
+  // Interest_Calculate_After grace: no interest before Interest_apply_on.
+  // When that field is 0 / missing, interest may start on the grant date.
+  const interestApplyOn = ticket.Interest_apply_on
+    ? toStartOfDay(ticket.Interest_apply_on)
+    : ticketStartDate;
+  if (today < interestApplyOn) return;
+
   const daysSinceCreation = daysBetween(today, ticketStartDate);
   const oneTimeStages = stages.slice(0, -1);
   const lastStage = stages[stages.length - 1];
@@ -416,14 +423,17 @@ const processStageInterest = async (
   for (const stage of oneTimeStages) {
     if (daysSinceCreation < stage.startDay) continue;
 
+    const stageDate = new Date(ticketStartDate);
+    stageDate.setDate(stageDate.getDate() + stage.startDay);
+    // Skip stage charges that fall inside the grace period.
+    if (toStartOfDay(stageDate) < interestApplyOn) continue;
+
     const [existing] = await queryRunner.query(
       "SELECT 1 FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? AND Type = 'INTEREST' AND Description LIKE ?",
       [ticketId, `%Stage ${stage.num}%`],
     );
     if (existing.length > 0) continue;
 
-    const stageDate = new Date(ticketStartDate);
-    stageDate.setDate(stageDate.getDate() + stage.startDay);
     const stageDateStr = toDateStr(stageDate);
 
     const log = await getLatestLog(ticketId, queryRunner);
@@ -467,11 +477,16 @@ const processStageInterest = async (
     startDate = new Date(lastDate);
     startDate.setDate(startDate.getDate() + 1);
   }
+  if (startDate < interestApplyOn) {
+    startDate = new Date(interestApplyOn);
+  }
 
   const divisor = getDailyInterestDivisor(ticket.Interest_Rate_Duration);
   const dailyRate = lastStage.rate / divisor;
 
   for (let d = new Date(startDate); d <= today; d.setDate(d.getDate() + 1)) {
+    if (d < interestApplyOn) continue;
+
     const dateStr = toDateStr(d);
     const description = `${dateStr} - Stage ${lastStage.num}`;
 
@@ -515,7 +530,12 @@ const processOriginalInterest = async (
   queryRunner = pool,
   accessToken = null,
 ) => {
-  const interestApplyOn = toStartOfDay(ticket.Interest_apply_on);
+  const interestApplyOn = toStartOfDay(
+    ticket.Interest_apply_on || ticket.Date_Time || new Date(),
+  );
+  if (Number.isNaN(interestApplyOn.getTime())) return;
+  if (today < interestApplyOn) return;
+
   const divisor = getDailyInterestDivisor(ticket.Interest_Rate_Duration);
   const dailyRate = (parseFloat(ticket.Interest_Rate) || 0) / divisor;
 
@@ -528,8 +548,13 @@ const processOriginalInterest = async (
   let startDate = new Date(interestApplyOn);
   if (lastLog.length > 0) {
     const lastDate = toStartOfDay(lastLog[0].Description);
-    startDate = new Date(lastDate);
-    startDate.setDate(startDate.getDate() + 1);
+    if (!Number.isNaN(lastDate.getTime())) {
+      startDate = new Date(lastDate);
+      startDate.setDate(startDate.getDate() + 1);
+    }
+  }
+  if (startDate < interestApplyOn) {
+    startDate = new Date(interestApplyOn);
   }
 
   for (let d = new Date(startDate); d <= today; d.setDate(d.getDate() + 1)) {

@@ -22,6 +22,7 @@ import {
 } from "../utils/pawningLetterTemplateFields.js";
 import { getRequestAccessToken } from "../utils/requestAuth.js";
 import { isStageInterestMethod } from "../utils/pawningProductConstants.js";
+import { computeInterestApplyOnDate } from "../utils/pawningInterestSchedule.js";
 
 /** Fetch company_customer data by Pawning customer ids via Account Center subsystem API */
 async function fetchCustomersByPawningIds(
@@ -694,6 +695,26 @@ export const createPawningTicket = async (req, res, next) => {
 
     const es = earlySettlementRow || {};
 
+    // Resolve Interest_apply_on from the product plan so "Interest Calculate After"
+    // = 0 starts interest on the grant date, and N > 0 delays by N days.
+    // Do not trust the client date alone (timezone / stale UI values).
+    let interestApplyOnDate = data.ticketData.interestApplyOn || null;
+    if (matchedProductPlanId) {
+      const [interestPlanRows] = await connection.query(
+        "SELECT Interest_Calculate_After FROM product_plan WHERE idProduct_Plan = ?",
+        [matchedProductPlanId],
+      );
+      interestApplyOnDate = computeInterestApplyOnDate(
+        data.ticketData.grantDate || new Date(),
+        interestPlanRows[0]?.Interest_Calculate_After,
+      );
+    } else if (!interestApplyOnDate) {
+      interestApplyOnDate = computeInterestApplyOnDate(
+        data.ticketData.grantDate || new Date(),
+        0,
+      );
+    }
+
     // Insert into pawning_ticket table
     const [result] = await connection.query(
       "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount,Service_Charge_Type,Service_Charge_Rate,Early_Settlement_Charge_Balance,Additiona_Charges_Balance,Service_Charge_Balance,Late_Charge_Balance,Interest_Amount_Balance,Balance_Amount,Interest_Rate_Duration,stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,Status,service_charge_paid_by_customer,service_charge_paid_from_pawning_advance,noOfStages,lateChargeStage1,lateChargeStage2,lateChargeStage3,lateChargeStage4,lateChargeStage1StartDate,lateChargeStage2StartDate,lateChargeStage3StartDate,lateChargeStage4StartDate,lateChargeStage1EndDate,lateChargeStage2EndDate,lateChargeStage3EndDate,lateChargeStage4EndDate,numberOfLateChargeStages,early_settlement_effect_type,early_settlement_stage1_start_day,early_settlement_stage1_end_day,early_settlement_stage1_value,early_settlement_stage1_value_type,early_settlement_stage2_start_day,early_settlement_stage2_end_day,early_settlement_stage2_value,early_settlement_stage2_value_type,early_settlement_stage3_start_day,early_settlement_stage3_end_day,early_settlement_stage3_value,early_settlement_stage3_value_type,early_settlement_stage4_start_day,early_settlement_stage4_end_day,early_settlement_stage4_value,early_settlement_stage4_value_type) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -713,7 +734,7 @@ export const createPawningTicket = async (req, res, next) => {
         data.ticketData.interestRate,
         serviceChargeRate, // service charge rate
         lateChargePercent,
-        data.ticketData.interestApplyOn,
+        interestApplyOnDate,
         req.userId,
         req.branchId, // Fixed: removed extra comma
         data.ticketData.productId,
@@ -1767,16 +1788,10 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
     const interestType = filteredPlan.Interest_type || "N/A";
     const serviceChargeType = filteredPlan.Service_Charge_Value_type || "N/A";
 
-    const currentDate = new Date();
-    const daysToAdd = Number(filteredPlan.Interest_Calculate_After) || 0;
-    const interestApplyOn = new Date(
-      currentDate.getTime() + daysToAdd * 24 * 60 * 60 * 1000,
+    const interestApplyOnDate = computeInterestApplyOnDate(
+      new Date(),
+      filteredPlan.Interest_Calculate_After,
     );
-
-    let interestApplyOnDate = null;
-    if (interestApplyOn instanceof Date && !isNaN(interestApplyOn)) {
-      interestApplyOnDate = interestApplyOn.toISOString().split("T")[0];
-    }
 
     let lateChargeIsStages = false;
     let lateChargeStages = null;

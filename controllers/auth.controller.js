@@ -191,6 +191,15 @@ export const login = async (req, res, next) => {
 
     const isProduction = process.env.NODE_ENV === "production";
 
+    // Enable activity-log middleware to record this login
+    req.userId = user.idUser;
+    req.companyId = user.Company_idCompany;
+    req.activityLogAction = "Log In";
+    req.activityLogMetadata = {
+      email: user.Email,
+      companyId: user.Company_idCompany,
+    };
+
     // Set cookies and send response (include tokens in body for SPA Authorization header).
     res
       .cookie("accessToken", accessToken, {

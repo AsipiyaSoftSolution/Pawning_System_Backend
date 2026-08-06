@@ -70,6 +70,28 @@ const extractEarlySettlementStagePayload = (source = {}) => {
   };
 };
 
+/**
+ * Head office can access products across company branches; other branches
+ * are limited to products owned by the selected branch.
+ */
+const resolveProductAccessScope = async (req, productId) => {
+  if (req.isHeadBranch) {
+    const branches = await getCompanyBranches(req.companyId);
+    if (!branches?.length) {
+      return { whereSql: null, whereParams: null };
+    }
+    return {
+      whereSql: "idPawning_Product = ? AND Branch_idBranch IN (?)",
+      whereParams: [productId, branches],
+    };
+  }
+
+  return {
+    whereSql: "idPawning_Product = ? AND Branch_idBranch = ?",
+    whereParams: [productId, req.branchId],
+  };
+};
+
 // Get a specific pawning product's all data by ID
 export const getPawningProductById = async (req, res, next) => {
   try {
@@ -82,6 +104,14 @@ export const getPawningProductById = async (req, res, next) => {
 
     if (!req.branchId) {
       return next(errorHandler(400, "Branch ID is required"));
+    }
+
+    const { whereSql, whereParams } = await resolveProductAccessScope(
+      req,
+      idPawning_Product,
+    );
+    if (!whereSql) {
+      return next(errorHandler(404, "Pawning product not found"));
     }
 
     // Get main pawning product data
@@ -131,8 +161,8 @@ export const getPawningProductById = async (req, res, next) => {
         early_settlement_stage4_value_type,
         early_settlement_effect_type
       FROM pawning_product 
-      WHERE idPawning_Product = ? AND Branch_idBranch = ?`,
-      [idPawning_Product, req.branchId],
+      WHERE ${whereSql}`,
+      whereParams,
     );
 
     if (productRows.length === 0) {
@@ -543,14 +573,24 @@ export const deletePawningProductById = async (req, res, next) => {
       return next(errorHandler(400, "Branch ID is required"));
     }
 
+    const { whereSql, whereParams } = await resolveProductAccessScope(
+      req,
+      productId,
+    );
+    if (!whereSql) {
+      return next(errorHandler(404, "Pawning product not found"));
+    }
+
     const [existingProduct] = await pool.query(
-      `SELECT idPawning_Product FROM pawning_product WHERE idPawning_Product = ? AND Branch_idBranch = ?`,
-      [productId, req.branchId],
+      `SELECT idPawning_Product, Branch_idBranch FROM pawning_product WHERE ${whereSql}`,
+      whereParams,
     );
 
     if (existingProduct.length === 0) {
       return next(errorHandler(404, "Pawning product not found"));
     }
+
+    const productBranchId = existingProduct[0].Branch_idBranch;
 
     // Tickets snapshot their rates, but they still reference the product row.
     const [linkedTickets] = await pool.query(
@@ -580,7 +620,7 @@ export const deletePawningProductById = async (req, res, next) => {
     );
     const [result] = await connection.query(
       `DELETE FROM pawning_product WHERE idPawning_Product = ? AND Branch_idBranch = ?`,
-      [productId, req.branchId],
+      [productId, productBranchId],
     );
 
     if (result.affectedRows === 0) {
@@ -808,7 +848,10 @@ async function createOnePawningProductForBranch(
         plan.maxAmount,
         plan.interestType,
         plan.interest || 0,
-        plan.interestAfter,
+        Number.isFinite(Number(plan.interestAfter)) &&
+          Number(plan.interestAfter) >= 0
+          ? Math.floor(Number(plan.interestAfter))
+          : 0,
         plan.serviceChargeValueType || serviceChargeValueType || "inactive",
         plan.serviceChargeValue || serviceChargeValue || 0,
         plan.earlySettlementChargeValueType ||
@@ -1191,10 +1234,20 @@ export const updatePawningProductById = async (req, res, next) => {
       return next(errorHandler(400, validationErrors.join(" ")));
     }
 
-    // Check if product exists and belongs to the branch
+    // Check if product exists and is accessible (branch or head-office scope)
+    const { whereSql, whereParams } = await resolveProductAccessScope(
+      req,
+      idPawning_Product,
+    );
+    if (!whereSql) {
+      return next(
+        errorHandler(404, "Pawning product not found or access denied"),
+      );
+    }
+
     const [existingProduct] = await pool.query(
-      "SELECT * FROM pawning_product WHERE idPawning_Product = ? AND Branch_idBranch = ?",
-      [idPawning_Product, req.branchId],
+      `SELECT * FROM pawning_product WHERE ${whereSql}`,
+      whereParams,
     );
 
     if (existingProduct.length === 0) {
@@ -1539,7 +1592,10 @@ export const updatePawningProductById = async (req, res, next) => {
           parseFloat(plan.maxAmount) || 0,
           plan.interestType || null,
           parseFloat(plan.interest) || 0,
-          parseInt(plan.interestAfter) || 0,
+          Number.isFinite(Number(plan.interestAfter)) &&
+            Number(plan.interestAfter) >= 0
+            ? Math.floor(Number(plan.interestAfter))
+            : 0,
           plan.serviceChargeValueType || null,
           parseFloat(plan.serviceChargeValue) || 0,
           earlySettlementChargeCreateAs === "Charge For Product Item"

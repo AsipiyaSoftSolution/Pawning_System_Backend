@@ -95,6 +95,40 @@ async function enrichUserNames(rows) {
   }
 }
 
+const TABLE_PREVIEW_LIMIT = 8;
+
+/**
+ * Dashboard table cards return a short preview + total count for "Showing X of Y".
+ */
+async function tablePreview({
+  countSql,
+  countParams = [],
+  dataSql,
+  dataParams = [],
+  mapRows,
+}) {
+  const [countRows] = await pool.query(countSql, countParams);
+  const total = num(
+    countRows[0]?.total ?? countRows[0]?.count ?? countRows[0]?.["COUNT(*)"],
+  );
+  const [rows] = await pool.query(`${dataSql} LIMIT ?`, [
+    ...dataParams,
+    TABLE_PREVIEW_LIMIT,
+  ]);
+  const mapped = mapRows ? await mapRows(rows) : rows;
+  return {
+    rows: Array.isArray(mapped) ? mapped : [],
+    total,
+    previewLimit: TABLE_PREVIEW_LIMIT,
+  };
+}
+
+const emptyTablePreview = () => ({
+  rows: [],
+  total: 0,
+  previewLimit: TABLE_PREVIEW_LIMIT,
+});
+
 const handlers = {
   // ─── SUMMARIES ───────────────────────────────────────────────────────────
   new_loans: async (branchId) => {
@@ -315,10 +349,15 @@ const handlers = {
     return { newCustomersToday: num(rows[0]?.newCustomersToday) };
   },
 
-  // ─── TABLES ──────────────────────────────────────────────────────────────
+  // ─── TABLES (preview + total for dashboard cards) ────────────────────────
   expiring_articles: async (branchId) => {
-    const [rows] = await pool.query(
-      `SELECT
+    const where = `pt.Branch_idBranch = ?
+         AND IFNULL(pt.Status, '0') = '1'
+         AND ${maturityDateExpr} BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)`;
+    return tablePreview({
+      countSql: `SELECT COUNT(*) AS total FROM pawning_ticket pt WHERE ${where}`,
+      countParams: [branchId],
+      dataSql: `SELECT
          pt.Ticket_No AS articleId,
          c.Customer_Number AS customerNumber,
          c.accountCenterCusId,
@@ -326,19 +365,20 @@ const handlers = {
          CAST(pt.Balance_Amount AS DECIMAL(18,2)) AS amountDue
        FROM pawning_ticket pt
        LEFT JOIN customer c ON c.idCustomer = pt.Customer_idCustomer
-       WHERE pt.Branch_idBranch = ?
-         AND IFNULL(pt.Status, '0') = '1'
-         AND ${maturityDateExpr} BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)
-       ORDER BY ${maturityDateExpr} ASC
-       LIMIT 50`,
-      [branchId],
-    );
-    return enrichCustomerNames(rows);
+       WHERE ${where}
+       ORDER BY ${maturityDateExpr} ASC`,
+      dataParams: [branchId],
+      mapRows: enrichCustomerNames,
+    });
   },
 
   overdue_articles: async (branchId) => {
-    const [rows] = await pool.query(
-      `SELECT
+    const where = `pt.Branch_idBranch = ?
+         AND IFNULL(pt.Status, '0') = '3'`;
+    return tablePreview({
+      countSql: `SELECT COUNT(*) AS total FROM pawning_ticket pt WHERE ${where}`,
+      countParams: [branchId],
+      dataSql: `SELECT
          pt.Ticket_No AS articleId,
          c.Customer_Number AS customerNumber,
          c.accountCenterCusId,
@@ -347,18 +387,23 @@ const handlers = {
          CAST(IFNULL(pt.Interest_Amount_Balance, 0) AS DECIMAL(18,2)) AS interestAccrued
        FROM pawning_ticket pt
        LEFT JOIN customer c ON c.idCustomer = pt.Customer_idCustomer
-       WHERE pt.Branch_idBranch = ?
-         AND IFNULL(pt.Status, '0') = '3'
-       ORDER BY daysOverdue DESC
-       LIMIT 50`,
-      [branchId],
-    );
-    return enrichCustomerNames(rows);
+       WHERE ${where}
+       ORDER BY daysOverdue DESC`,
+      dataParams: [branchId],
+      mapRows: enrichCustomerNames,
+    });
   },
 
   transaction_log: async (branchId) => {
-    const [rows] = await pool.query(
-      `SELECT
+    const where = `pt.Branch_idBranch = ?
+         AND ${paymentDateExpr} = CURDATE()`;
+    return tablePreview({
+      countSql: `SELECT COUNT(*) AS total
+       FROM payment p
+       INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = p.Pawning_Ticket_idPawning_Ticket
+       WHERE ${where}`,
+      countParams: [branchId],
+      dataSql: `SELECT
          p.Date_time AS time,
          p.Type AS type,
          p.Ticket_no AS articleId,
@@ -369,22 +414,26 @@ const handlers = {
        FROM payment p
        INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = p.Pawning_Ticket_idPawning_Ticket
        LEFT JOIN customer c ON c.idCustomer = pt.Customer_idCustomer
-       WHERE pt.Branch_idBranch = ?
-         AND ${paymentDateExpr} = CURDATE()
-       ORDER BY STR_TO_DATE(REPLACE(SUBSTRING(p.Date_time, 1, 19), 'T', ' '), '%Y-%m-%d %H:%i:%s') DESC
-       LIMIT 100`,
-      [branchId],
-    );
-    const enriched = await enrichCustomerNames(rows);
-    return enriched.map((r) => ({
-      ...r,
-      customer: r.customerName,
-    }));
+       WHERE ${where}
+       ORDER BY STR_TO_DATE(REPLACE(SUBSTRING(p.Date_time, 1, 19), 'T', ' '), '%Y-%m-%d %H:%i:%s') DESC`,
+      dataParams: [branchId],
+      mapRows: async (rows) => {
+        const enriched = await enrichCustomerNames(rows);
+        return enriched.map((r) => ({ ...r, customer: r.customerName }));
+      },
+    });
   },
 
   high_value_transactions: async (branchId) => {
-    const [rows] = await pool.query(
-      `SELECT
+    const where = `pt.Branch_idBranch = ?
+         AND CAST(p.Amount AS DECIMAL(18,2)) >= 200000`;
+    return tablePreview({
+      countSql: `SELECT COUNT(*) AS total
+       FROM payment p
+       INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = p.Pawning_Ticket_idPawning_Ticket
+       WHERE ${where}`,
+      countParams: [branchId],
+      dataSql: `SELECT
          p.Date_time AS time,
          p.id AS transactionId,
          c.Customer_Number AS customerNumber,
@@ -394,22 +443,26 @@ const handlers = {
        FROM payment p
        INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = p.Pawning_Ticket_idPawning_Ticket
        LEFT JOIN customer c ON c.idCustomer = pt.Customer_idCustomer
-       WHERE pt.Branch_idBranch = ?
-         AND CAST(p.Amount AS DECIMAL(18,2)) >= 200000
-       ORDER BY CAST(p.Amount AS DECIMAL(18,2)) DESC
-       LIMIT 50`,
-      [branchId],
-    );
-    const enriched = await enrichCustomerNames(rows);
-    return enriched.map((r) => ({
-      ...r,
-      customer: r.customerName,
-    }));
+       WHERE ${where}
+       ORDER BY CAST(p.Amount AS DECIMAL(18,2)) DESC`,
+      dataParams: [branchId],
+      mapRows: async (rows) => {
+        const enriched = await enrichCustomerNames(rows);
+        return enriched.map((r) => ({ ...r, customer: r.customerName }));
+      },
+    });
   },
 
   active_articles: async (branchId) => {
-    const [rows] = await pool.query(
-      `SELECT
+    const where = `pt.Branch_idBranch = ?
+         AND IFNULL(pt.Status, '0') IN ${ACTIVE_STATUSES}`;
+    return tablePreview({
+      countSql: `SELECT COUNT(*) AS total
+       FROM ticket_articles ta
+       INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = ta.Pawning_Ticket_idPawning_Ticket
+       WHERE ${where}`,
+      countParams: [branchId],
+      dataSql: `SELECT
          ta.idTicket_Articles AS articleId,
          pt.Ticket_No AS pledgeId,
          c.Customer_Number AS customerNumber,
@@ -424,19 +477,26 @@ const handlers = {
        FROM ticket_articles ta
        INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = ta.Pawning_Ticket_idPawning_Ticket
        LEFT JOIN customer c ON c.idCustomer = pt.Customer_idCustomer
-       WHERE pt.Branch_idBranch = ?
-         AND IFNULL(pt.Status, '0') IN ${ACTIVE_STATUSES}
-       ORDER BY pt.idPawning_Ticket DESC
-       LIMIT 100`,
-      [branchId],
-    );
-    const enriched = await enrichCustomerNames(rows);
-    return enriched.map((r) => ({ ...r, customer: r.customerName }));
+       WHERE ${where}
+       ORDER BY pt.idPawning_Ticket DESC`,
+      dataParams: [branchId],
+      mapRows: async (rows) => {
+        const enriched = await enrichCustomerNames(rows);
+        return enriched.map((r) => ({ ...r, customer: r.customerName }));
+      },
+    });
   },
 
   vault_inventory: async (branchId) => {
-    const [rows] = await pool.query(
-      `SELECT
+    const where = `pt.Branch_idBranch = ?
+         AND IFNULL(pt.Status, '0') IN ${ACTIVE_STATUSES}`;
+    return tablePreview({
+      countSql: `SELECT COUNT(*) AS total
+       FROM ticket_articles ta
+       INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = ta.Pawning_Ticket_idPawning_Ticket
+       WHERE ${where}`,
+      countParams: [branchId],
+      dataSql: `SELECT
          ta.idTicket_Articles AS articleId,
          pt.Ticket_No AS pledgeId,
          CONCAT(IFNULL(ta.Article_category, 'Item'), ' (', IFNULL(ta.Article_Condition, '-'), ')') AS description,
@@ -445,18 +505,17 @@ const handlers = {
          CONCAT('Branch ', pt.Branch_idBranch) AS location
        FROM ticket_articles ta
        INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = ta.Pawning_Ticket_idPawning_Ticket
-       WHERE pt.Branch_idBranch = ?
-         AND IFNULL(pt.Status, '0') IN ${ACTIVE_STATUSES}
-       ORDER BY ta.idTicket_Articles DESC
-       LIMIT 100`,
-      [branchId],
-    );
-    return rows;
+       WHERE ${where}
+       ORDER BY ta.idTicket_Articles DESC`,
+      dataParams: [branchId],
+    });
   },
 
   customer_list: async (branchId) => {
-    const [rows] = await pool.query(
-      `SELECT
+    return tablePreview({
+      countSql: `SELECT COUNT(*) AS total FROM customer c WHERE c.Branch_idBranch = ?`,
+      countParams: [branchId],
+      dataSql: `SELECT
          c.idCustomer AS customerId,
          c.Customer_Number AS customerNumber,
          c.accountCenterCusId,
@@ -466,16 +525,21 @@ const handlers = {
        LEFT JOIN pawning_ticket pt ON pt.Customer_idCustomer = c.idCustomer
        WHERE c.Branch_idBranch = ?
        GROUP BY c.idCustomer, c.Customer_Number, c.accountCenterCusId, c.status
-       ORDER BY totalLoanVolume DESC
-       LIMIT 50`,
-      [branchId],
-    );
-    return enrichCustomerNames(rows);
+       ORDER BY totalLoanVolume DESC`,
+      dataParams: [branchId],
+      mapRows: enrichCustomerNames,
+    });
   },
 
   settled_last_month: async (branchId) => {
-    const [rows] = await pool.query(
-      `SELECT
+    const where = `pt.Branch_idBranch = ?
+         AND IFNULL(pt.Status, '0') = '2'
+         AND DATE(COALESCE(pt.updated_at, pt.created_at)) >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 1 MONTH), '%Y-%m-01')
+         AND DATE(COALESCE(pt.updated_at, pt.created_at)) < DATE_FORMAT(CURDATE(), '%Y-%m-01')`;
+    return tablePreview({
+      countSql: `SELECT COUNT(*) AS total FROM pawning_ticket pt WHERE ${where}`,
+      countParams: [branchId],
+      dataSql: `SELECT
          pt.Ticket_No AS articleId,
          pt.Ticket_No AS pledgeId,
          c.Customer_Number AS customerNumber,
@@ -484,21 +548,28 @@ const handlers = {
          CAST(pt.Pawning_Advance_Amount AS DECIMAL(18,2)) AS amount
        FROM pawning_ticket pt
        LEFT JOIN customer c ON c.idCustomer = pt.Customer_idCustomer
-       WHERE pt.Branch_idBranch = ?
-         AND IFNULL(pt.Status, '0') = '2'
-         AND DATE(COALESCE(pt.updated_at, pt.created_at)) >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 1 MONTH), '%Y-%m-01')
-         AND DATE(COALESCE(pt.updated_at, pt.created_at)) < DATE_FORMAT(CURDATE(), '%Y-%m-01')
-       ORDER BY COALESCE(pt.updated_at, pt.created_at) DESC
-       LIMIT 50`,
-      [branchId],
-    );
-    const enriched = await enrichCustomerNames(rows);
-    return enriched.map((r) => ({ ...r, customer: r.customerName }));
+       WHERE ${where}
+       ORDER BY COALESCE(pt.updated_at, pt.created_at) DESC`,
+      dataParams: [branchId],
+      mapRows: async (rows) => {
+        const enriched = await enrichCustomerNames(rows);
+        return enriched.map((r) => ({ ...r, customer: r.customerName }));
+      },
+    });
   },
 
   renewals_last_month: async (branchId) => {
-    const [rows] = await pool.query(
-      `SELECT
+    const where = `pt.Branch_idBranch = ?
+         AND UPPER(p.Type) LIKE '%RENEWAL%'
+         AND ${paymentDateExpr} >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 1 MONTH), '%Y-%m-01')
+         AND ${paymentDateExpr} < DATE_FORMAT(CURDATE(), '%Y-%m-01')`;
+    return tablePreview({
+      countSql: `SELECT COUNT(*) AS total
+       FROM payment p
+       INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = p.Pawning_Ticket_idPawning_Ticket
+       WHERE ${where}`,
+      countParams: [branchId],
+      dataSql: `SELECT
          p.Ticket_no AS articleId,
          p.Ticket_no AS pledgeId,
          c.Customer_Number AS customerNumber,
@@ -508,16 +579,14 @@ const handlers = {
        FROM payment p
        INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = p.Pawning_Ticket_idPawning_Ticket
        LEFT JOIN customer c ON c.idCustomer = pt.Customer_idCustomer
-       WHERE pt.Branch_idBranch = ?
-         AND UPPER(p.Type) LIKE '%RENEWAL%'
-         AND ${paymentDateExpr} >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 1 MONTH), '%Y-%m-01')
-         AND ${paymentDateExpr} < DATE_FORMAT(CURDATE(), '%Y-%m-01')
-       ORDER BY STR_TO_DATE(REPLACE(SUBSTRING(p.Date_time, 1, 19), 'T', ' '), '%Y-%m-%d %H:%i:%s') DESC
-       LIMIT 50`,
-      [branchId],
-    );
-    const enriched = await enrichCustomerNames(rows);
-    return enriched.map((r) => ({ ...r, customer: r.customerName }));
+       WHERE ${where}
+       ORDER BY STR_TO_DATE(REPLACE(SUBSTRING(p.Date_time, 1, 19), 'T', ' '), '%Y-%m-%d %H:%i:%s') DESC`,
+      dataParams: [branchId],
+      mapRows: async (rows) => {
+        const enriched = await enrichCustomerNames(rows);
+        return enriched.map((r) => ({ ...r, customer: r.customerName }));
+      },
+    });
   },
 
   activity_log: async (branchId, companyId) => {
@@ -531,10 +600,15 @@ const handlers = {
     } catch {
       userIds = [];
     }
-    if (!userIds.length) return [];
+    if (!userIds.length) return emptyTablePreview();
 
-    const [rows] = await pool.query(
-      `SELECT
+    return tablePreview({
+      countSql: `SELECT COUNT(*) AS total
+       FROM activity_logs al
+       WHERE al.user_id IN (?)
+         AND al.action NOT LIKE '%Log In%'`,
+      countParams: [userIds],
+      dataSql: `SELECT
          al.id,
          al.created_at AS time,
          al.action,
@@ -543,24 +617,30 @@ const handlers = {
        FROM activity_logs al
        WHERE al.user_id IN (?)
          AND al.action NOT LIKE '%Log In%'
-       ORDER BY al.created_at DESC
-       LIMIT 50`,
-      [userIds],
-    );
-    const enriched = await enrichUserNames(
-      rows.map((r) => ({ ...r, userId: r.user_id })),
-    );
-    return enriched.map((r) => ({
-      time: r.time,
-      user: r.username,
-      action: r.action,
-      details: r.status,
-    }));
+       ORDER BY al.created_at DESC`,
+      dataParams: [userIds],
+      mapRows: async (rows) => {
+        const enriched = await enrichUserNames(
+          rows.map((r) => ({ ...r, userId: r.user_id })),
+        );
+        return enriched.map((r) => ({
+          time: r.time,
+          user: r.username,
+          action: r.action,
+          details: r.status,
+        }));
+      },
+    });
   },
 
   top_customers: async (branchId) => {
-    const [rows] = await pool.query(
-      `SELECT
+    return tablePreview({
+      countSql: `SELECT COUNT(DISTINCT c.idCustomer) AS total
+       FROM customer c
+       INNER JOIN pawning_ticket pt ON pt.Customer_idCustomer = c.idCustomer
+       WHERE c.Branch_idBranch = ?`,
+      countParams: [branchId],
+      dataSql: `SELECT
          c.idCustomer AS customerId,
          c.Customer_Number AS customerNumber,
          c.accountCenterCusId,
@@ -570,11 +650,10 @@ const handlers = {
        INNER JOIN pawning_ticket pt ON pt.Customer_idCustomer = c.idCustomer
        WHERE c.Branch_idBranch = ?
        GROUP BY c.idCustomer, c.Customer_Number, c.accountCenterCusId
-       ORDER BY totalLoanVolume DESC
-       LIMIT 20`,
-      [branchId],
-    );
-    return enrichCustomerNames(rows);
+       ORDER BY totalLoanVolume DESC`,
+      dataParams: [branchId],
+      mapRows: enrichCustomerNames,
+    });
   },
 
   // ─── CHARTS ──────────────────────────────────────────────────────────────

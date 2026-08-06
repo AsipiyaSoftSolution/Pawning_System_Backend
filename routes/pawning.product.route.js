@@ -40,6 +40,7 @@ route.get(
   "/:branchId/:productId",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserSelectedHeadBranch,
   checkUserHasPrivileges([P.PRODUCT_VIEW, P.PRODUCT_UPDATE, P.PRODUCT_CREATE]),
   getPawningProductById,
 );
@@ -57,6 +58,7 @@ route.delete(
   "/:branchId/:productId",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserSelectedHeadBranch,
   checkUserHasPrivileges([P.PRODUCT_UPDATE]),
   deletePawningProductById,
 );
@@ -65,6 +67,7 @@ route.patch(
   "/:branchId/:productId",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserSelectedHeadBranch,
   checkUserHasPrivileges([P.PRODUCT_UPDATE]),
   updatePawningProductById,
 );

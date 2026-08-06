@@ -305,6 +305,16 @@ const toStartOfDay = (date) => {
 const daysBetween = (dateA, dateB) =>
   Math.floor((dateA - dateB) / (1000 * 60 * 60 * 24));
 
+// Log descriptions must use the local calendar day. toISOString() converts to
+// UTC, which rolls back to the previous day for UTC+ offsets (e.g. Asia/Colombo)
+// and makes the resume-from-last-log cursor re-accrue the same day on every run.
+const toDateStr = (date) => {
+  const d = new Date(date);
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${month}-${day}`;
+};
+
 const getDailyInterestDivisor = (duration) => {
   const map = { perDay: 1, perWeek: 7, perMonth: 30, perYear: 365 };
   return map[duration] || 30;
@@ -398,6 +408,13 @@ const processStageInterest = async (
   queryRunner = pool,
   accessToken = null,
 ) => {
+  // Interest_Calculate_After grace: no interest before Interest_apply_on.
+  // When that field is 0 / missing, interest may start on the grant date.
+  const interestApplyOn = ticket.Interest_apply_on
+    ? toStartOfDay(ticket.Interest_apply_on)
+    : ticketStartDate;
+  if (today < interestApplyOn) return;
+
   const daysSinceCreation = daysBetween(today, ticketStartDate);
   const oneTimeStages = stages.slice(0, -1);
   const lastStage = stages[stages.length - 1];
@@ -406,15 +423,18 @@ const processStageInterest = async (
   for (const stage of oneTimeStages) {
     if (daysSinceCreation < stage.startDay) continue;
 
+    const stageDate = new Date(ticketStartDate);
+    stageDate.setDate(stageDate.getDate() + stage.startDay);
+    // Skip stage charges that fall inside the grace period.
+    if (toStartOfDay(stageDate) < interestApplyOn) continue;
+
     const [existing] = await queryRunner.query(
       "SELECT 1 FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? AND Type = 'INTEREST' AND Description LIKE ?",
       [ticketId, `%Stage ${stage.num}%`],
     );
     if (existing.length > 0) continue;
 
-    const stageDate = new Date(ticketStartDate);
-    stageDate.setDate(stageDate.getDate() + stage.startDay);
-    const stageDateStr = stageDate.toISOString().split("T")[0];
+    const stageDateStr = toDateStr(stageDate);
 
     const log = await getLatestLog(ticketId, queryRunner);
     const balances = buildBalancesFromLog(log);
@@ -457,16 +477,28 @@ const processStageInterest = async (
     startDate = new Date(lastDate);
     startDate.setDate(startDate.getDate() + 1);
   }
+  if (startDate < interestApplyOn) {
+    startDate = new Date(interestApplyOn);
+  }
 
   const divisor = getDailyInterestDivisor(ticket.Interest_Rate_Duration);
   const dailyRate = lastStage.rate / divisor;
 
   for (let d = new Date(startDate); d <= today; d.setDate(d.getDate() + 1)) {
-    const dateStr = d.toISOString().split("T")[0];
+    if (d < interestApplyOn) continue;
+
+    const dateStr = toDateStr(d);
+    const description = `${dateStr} - Stage ${lastStage.num}`;
+
+    const [existing] = await queryRunner.query(
+      "SELECT 1 FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? AND Type = 'INTEREST' AND Description = ?",
+      [ticketId, description],
+    );
+    if (existing.length > 0) continue;
+
     const log = await getLatestLog(ticketId, queryRunner);
     const balances = buildBalancesFromLog(log);
     const interestAmount = (balances.advance * dailyRate) / 100;
-    const description = `${dateStr} - Stage ${lastStage.num}`;
 
     await insertTicketLog(
       ticketId,
@@ -498,7 +530,12 @@ const processOriginalInterest = async (
   queryRunner = pool,
   accessToken = null,
 ) => {
-  const interestApplyOn = toStartOfDay(ticket.Interest_apply_on);
+  const interestApplyOn = toStartOfDay(
+    ticket.Interest_apply_on || ticket.Date_Time || new Date(),
+  );
+  if (Number.isNaN(interestApplyOn.getTime())) return;
+  if (today < interestApplyOn) return;
+
   const divisor = getDailyInterestDivisor(ticket.Interest_Rate_Duration);
   const dailyRate = (parseFloat(ticket.Interest_Rate) || 0) / divisor;
 
@@ -511,14 +548,19 @@ const processOriginalInterest = async (
   let startDate = new Date(interestApplyOn);
   if (lastLog.length > 0) {
     const lastDate = toStartOfDay(lastLog[0].Description);
-    startDate = new Date(lastDate);
-    startDate.setDate(startDate.getDate() + 1);
+    if (!Number.isNaN(lastDate.getTime())) {
+      startDate = new Date(lastDate);
+      startDate.setDate(startDate.getDate() + 1);
+    }
+  }
+  if (startDate < interestApplyOn) {
+    startDate = new Date(interestApplyOn);
   }
 
   for (let d = new Date(startDate); d <= today; d.setDate(d.getDate() + 1)) {
     if (d < interestApplyOn) continue;
 
-    const dateStr = d.toISOString().split("T")[0];
+    const dateStr = toDateStr(d);
 
     const [existing] = await queryRunner.query(
       "SELECT 1 FROM ticket_log WHERE Description = ? AND Type = 'INTEREST' AND Pawning_Ticket_idPawning_Ticket = ?",
@@ -553,16 +595,31 @@ const processOriginalInterest = async (
 // PENALTY — STAGE-BASED (shared by both interest paths)
 // ─────────────────────────────────────────────────────────────
 
+/**
+ * Resolve the late charge stages to accrue for a ticket.
+ * A single configured stage, or a product with a flat (non-staged) late charge
+ * percentage, both become one stage that accrues daily from the maturity date.
+ */
+const resolveLateChargeStages = (ticket) => {
+  const numberOfStages = parseFloat(ticket.numberOfLateChargeStages) || 0;
+  if (numberOfStages >= 1) {
+    return buildStages(ticket, numberOfStages, "lateChargeStage");
+  }
+
+  const flatRate = parseFloat(ticket.Late_charge_Presentage) || 0;
+  if (flatRate <= 0) return [];
+  return [{ num: 1, startDay: 0, endDay: 0, rate: flatRate }];
+};
+
 const processLateChargeStages = async (
   ticket,
   ticketId,
   today,
   maturityDate,
 ) => {
-  const numberOfStages = parseFloat(ticket.numberOfLateChargeStages) || 0;
-  if (numberOfStages < 2) return false; // not enough stages configured
+  const stages = resolveLateChargeStages(ticket);
+  if (stages.length === 0) return false; // no late charge configured
 
-  const stages = buildStages(ticket, numberOfStages, "lateChargeStage");
   const oneTimeStages = stages.slice(0, -1);
   const lastStage = stages[stages.length - 1];
   const daysSinceMaturity = daysBetween(today, maturityDate);
@@ -573,6 +630,7 @@ const processLateChargeStages = async (
   // Stage 1 startDay is always 0 → fires on first day after maturity
   for (const stage of oneTimeStages) {
     if (daysSinceMaturity < stage.startDay) continue;
+    if (!(stage.rate > 0)) continue;
 
     const [existing] = await pool.query(
       "SELECT 1 FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? AND Type = 'PENALTY' AND Description LIKE ?",
@@ -582,7 +640,7 @@ const processLateChargeStages = async (
 
     const stageDate = new Date(maturityDate);
     stageDate.setDate(stageDate.getDate() + stage.startDay);
-    const stageDateStr = stageDate.toISOString().split("T")[0];
+    const stageDateStr = toDateStr(stageDate);
 
     const log = await getLatestLog(ticketId);
     const balances = buildBalancesFromLog(log);
@@ -594,6 +652,10 @@ const processLateChargeStages = async (
       `Penalty of ${penaltyAmount} added to ticket ID ${ticketId} on ${stageDateStr} (Late Charge Stage ${stage.num})`,
       ticket.Customer_idCustomer,
       null,
+      {
+        ticketId,
+        branchId: ticket.Branch_idBranch,
+      },
     );
     await insertTicketLog(
       ticketId,
@@ -615,6 +677,7 @@ const processLateChargeStages = async (
 
   // ── Daily penalty for last stage ──────────────────────────
   if (daysSinceMaturity < lastStage.startDay) return penaltyInserted;
+  if (!(lastStage.rate > 0)) return penaltyInserted;
 
   const lastStageStartDate = new Date(maturityDate);
   lastStageStartDate.setDate(lastStageStartDate.getDate() + lastStage.startDay);
@@ -634,17 +697,28 @@ const processLateChargeStages = async (
 
   // ✅ lastStage.rate is already a daily rate — no division needed
   for (let d = new Date(startDate); d <= today; d.setDate(d.getDate() + 1)) {
-    const dateStr = d.toISOString().split("T")[0];
+    const dateStr = toDateStr(d);
+    const description = `${dateStr} - Late Charge Stage ${lastStage.num}`;
+
+    const [existing] = await pool.query(
+      "SELECT 1 FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? AND Type = 'PENALTY' AND Description = ?",
+      [ticketId, description],
+    );
+    if (existing.length > 0) continue;
+
     const log = await getLatestLog(ticketId);
     const balances = buildBalancesFromLog(log);
     const penaltyAmount = (balances.advance * lastStage.rate) / 100;
-    const description = `${dateStr} - Late Charge Stage ${lastStage.num}`;
 
     await createCustomerLogOnTicketPenality(
       "TICKET PENALTY",
       `Penalty of ${penaltyAmount} added to ticket ID ${ticketId} on ${dateStr}`,
       ticket.Customer_idCustomer,
       null,
+      {
+        ticketId,
+        branchId: ticket.Branch_idBranch,
+      },
     );
     await insertTicketLog(
       ticketId,
@@ -694,7 +768,7 @@ export const applyTicketInterestLogsOnApproval = async (
   const ticket = rows[0];
   const today = toStartOfDay(new Date());
   const noOfStages = parseFloat(ticket.noOfStages) || 0;
-  const hasStages = ticket.noOfStages > 1;
+  const hasStages = noOfStages >= 2;
 
   if (hasStages) {
     const ticketStartDate = toStartOfDay(ticket.Date_Time);

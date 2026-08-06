@@ -37,4 +37,7 @@ export const PAWNING_PRIVILEGES = {
   REPORTS: "REPORTS",
 
   ASSESSED_VALUE_UPDATE: "PAWNING ASSESSED VALUE UPDATE",
+
+  /** Same Description as Account Center privilege id 309 — view activity logs. */
+  ACTIVITY_LOG_VIEW: "ACTIVITY LOG VIEW",
 };

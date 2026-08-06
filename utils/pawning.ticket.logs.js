@@ -652,6 +652,10 @@ const processLateChargeStages = async (
       `Penalty of ${penaltyAmount} added to ticket ID ${ticketId} on ${stageDateStr} (Late Charge Stage ${stage.num})`,
       ticket.Customer_idCustomer,
       null,
+      {
+        ticketId,
+        branchId: ticket.Branch_idBranch,
+      },
     );
     await insertTicketLog(
       ticketId,
@@ -711,6 +715,10 @@ const processLateChargeStages = async (
       `Penalty of ${penaltyAmount} added to ticket ID ${ticketId} on ${dateStr}`,
       ticket.Customer_idCustomer,
       null,
+      {
+        ticketId,
+        branchId: ticket.Branch_idBranch,
+      },
     );
     await insertTicketLog(
       ticketId,

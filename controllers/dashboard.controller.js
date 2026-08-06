@@ -699,9 +699,12 @@ const handlers = {
   },
 
   monthly_income: async (branchId) => {
+    const monthKeyExpr = `DATE_FORMAT(${paymentDateExpr}, '%Y-%m')`;
+    const monthLabelExpr = `DATE_FORMAT(${paymentDateExpr}, '%b')`;
     const [rows] = await pool.query(
       `SELECT
-         DATE_FORMAT(${paymentDateExpr}, '%b') AS month,
+         ${monthLabelExpr} AS month,
+         ${monthKeyExpr} AS monthKey,
          COALESCE(SUM(CAST(p.Interest_Payment AS DECIMAL(18,2))), 0) AS interest,
          COALESCE(SUM(
            CAST(IFNULL(p.Service_Charge_Payment,0) AS DECIMAL(18,2)) +
@@ -713,8 +716,8 @@ const handlers = {
        INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = p.Pawning_Ticket_idPawning_Ticket
        WHERE pt.Branch_idBranch = ?
          AND ${paymentDateExpr} >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
-       GROUP BY YEAR(${paymentDateExpr}), MONTH(${paymentDateExpr})
-       ORDER BY YEAR(${paymentDateExpr}) ASC, MONTH(${paymentDateExpr}) ASC`,
+       GROUP BY ${monthKeyExpr}, ${monthLabelExpr}
+       ORDER BY ${monthKeyExpr} ASC`,
       [branchId],
     );
     return rows.map((r) => ({
@@ -787,12 +790,13 @@ const handlers = {
   customer_acquisition: async (branchId) => {
     const [rows] = await pool.query(
       `SELECT DATE_FORMAT(c.created_at, '%b') AS month,
+              DATE_FORMAT(c.created_at, '%Y-%m') AS monthKey,
               COUNT(*) AS newCustomers
        FROM customer c
        WHERE c.Branch_idBranch = ?
          AND c.created_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
-       GROUP BY YEAR(c.created_at), MONTH(c.created_at)
-       ORDER BY YEAR(c.created_at) ASC, MONTH(c.created_at) ASC`,
+       GROUP BY DATE_FORMAT(c.created_at, '%Y-%m'), DATE_FORMAT(c.created_at, '%b')
+       ORDER BY DATE_FORMAT(c.created_at, '%Y-%m') ASC`,
       [branchId],
     );
     return rows.map((r) => ({
@@ -822,15 +826,17 @@ const handlers = {
   },
 
   karat_distribution: async (branchId) => {
+    // Avoid '?' inside SQL strings — mysql2 treats it as a bind placeholder.
     const [rows] = await pool.query(
-      `SELECT CONCAT(IFNULL(ta.Caratage, '?'), 'K') AS name,
-              COUNT(*) AS value
+      `SELECT
+         CONCAT(COALESCE(NULLIF(TRIM(ta.Caratage), ''), 'N/A'), 'K') AS name,
+         COUNT(*) AS value
        FROM ticket_articles ta
        INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = ta.Pawning_Ticket_idPawning_Ticket
        WHERE pt.Branch_idBranch = ?
          AND IFNULL(pt.Status, '0') IN ${ACTIVE_STATUSES}
-       GROUP BY ta.Caratage
-       ORDER BY CAST(ta.Caratage AS UNSIGNED) ASC`,
+       GROUP BY CONCAT(COALESCE(NULLIF(TRIM(ta.Caratage), ''), 'N/A'), 'K')
+       ORDER BY MIN(CAST(NULLIF(TRIM(ta.Caratage), '') AS UNSIGNED)) ASC`,
       [branchId],
     );
     return rows.map((r) => ({ name: r.name, value: num(r.value) }));
@@ -838,19 +844,21 @@ const handlers = {
 
   articles_by_status: async (branchId) => {
     const [rows] = await pool.query(
-      `SELECT
-         CASE IFNULL(pt.Status, '0')
-           WHEN '0' THEN 'Pending'
-           WHEN '-1' THEN 'Rejected'
-           WHEN '1' THEN 'Active'
-           WHEN '2' THEN 'Settled'
-           WHEN '3' THEN 'Overdue'
-           ELSE CONCAT('Status ', IFNULL(pt.Status, '0'))
-         END AS name,
-         COUNT(*) AS value
-       FROM pawning_ticket pt
-       WHERE pt.Branch_idBranch = ?
-       GROUP BY IFNULL(pt.Status, '0')`,
+      `SELECT name, COUNT(*) AS value
+       FROM (
+         SELECT
+           CASE IFNULL(pt.Status, '0')
+             WHEN '0' THEN 'Pending'
+             WHEN '-1' THEN 'Rejected'
+             WHEN '1' THEN 'Active'
+             WHEN '2' THEN 'Settled'
+             WHEN '3' THEN 'Overdue'
+             ELSE CONCAT('Status ', IFNULL(pt.Status, '0'))
+           END AS name
+         FROM pawning_ticket pt
+         WHERE pt.Branch_idBranch = ?
+       ) t
+       GROUP BY name`,
       [branchId],
     );
     return rows.map((r) => ({ name: r.name, value: num(r.value) }));
@@ -946,15 +954,17 @@ const handlers = {
   },
 
   weekly_performance: async (branchId) => {
+    const dayLabelExpr = `DATE_FORMAT(${ticketDateExpr}, '%a')`;
     const [rows] = await pool.query(
       `SELECT
-         DATE_FORMAT(${ticketDateExpr}, '%a') AS day,
+         ${dayLabelExpr} AS day,
+         ${ticketDateExpr} AS dayKey,
          COALESCE(SUM(CAST(pt.Pawning_Advance_Amount AS DECIMAL(18,2))), 0) AS loans,
          COUNT(*) AS count
        FROM pawning_ticket pt
        WHERE pt.Branch_idBranch = ?
          AND ${ticketDateExpr} >= DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)
-       GROUP BY ${ticketDateExpr}
+       GROUP BY ${ticketDateExpr}, ${dayLabelExpr}
        ORDER BY ${ticketDateExpr} ASC`,
       [branchId],
     );

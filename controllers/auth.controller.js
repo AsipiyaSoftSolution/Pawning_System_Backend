@@ -126,7 +126,9 @@ const userWithoutPassword = async (userId) => {
       company: company[0],
       branches: userBranches,
       companyDocuments: companyDocuments,
-      branchIds: branchIds.map((branch) => branch.Branch_idBranch),
+      branchIds: branchIds
+        .map((branch) => Number(branch.Branch_idBranch))
+        .filter((id) => Number.isFinite(id)),
       headBranchId,
       isCashier: cashierAccount.length > 0,
       cashierAccountId:
@@ -188,6 +190,15 @@ export const login = async (req, res, next) => {
     );
 
     const isProduction = process.env.NODE_ENV === "production";
+
+    // Enable activity-log middleware to record this login
+    req.userId = user.idUser;
+    req.companyId = user.Company_idCompany;
+    req.activityLogAction = "Log In";
+    req.activityLogMetadata = {
+      email: user.Email,
+      companyId: user.Company_idCompany,
+    };
 
     // Set cookies and send response (include tokens in body for SPA Authorization header).
     res

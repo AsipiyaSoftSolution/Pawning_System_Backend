@@ -12,9 +12,43 @@ import { parse } from "path";
 
 const customerLog = async (idCustomer, date, type, Description, userId) => {
   try {
-    const [result] = await pool.query(
-      "INSERT INTO customer_log (Customer_idCustomer, Date_Time, Type, Description, User_idUser) VALUES (?, ?, ?, ?, ?)",
-      [idCustomer, date, type, Description, userId],
+    // customer_log lives in Account Center as company_customer_log (pool2)
+    const [cusRows] = await pool.query(
+      `SELECT accountCenterCusId, Branch_idBranch
+       FROM customer
+       WHERE idCustomer = ?
+       LIMIT 1`,
+      [idCustomer],
+    );
+    const accountCenterCusId = cusRows[0]?.accountCenterCusId;
+    if (!accountCenterCusId) {
+      console.warn(
+        `[customerLog] Skip log — no accountCenterCusId for pawning customer ${idCustomer}`,
+      );
+      return;
+    }
+
+    const [result] = await pool2.query(
+      `INSERT INTO company_customer_log (
+         Company_Customer_idCompany_Customer,
+         Company_User_idCompany_User,
+         branch_idbranch,
+         Asipiya_Software,
+         Log_Timestamp,
+         Log_Type,
+         Type_Id,
+         Long_Description
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        accountCenterCusId,
+        userId || null,
+        cusRows[0]?.Branch_idBranch || null,
+        "pawning",
+        date || new Date(),
+        type,
+        null,
+        Description,
+      ],
     );
 
     if (result.affectedRows === 0) {
@@ -1154,12 +1188,34 @@ export const getCustomerLogsDataById = async (req, res, next) => {
       return next(errorHandler(400, "Customer ID is required"));
     }
 
-    const [logs] = await pool.query(
-      `SELECT cl.*
-       FROM customer_log cl
-       WHERE cl.Customer_idCustomer = ?
-       ORDER BY STR_TO_DATE(cl.Date_Time, '%Y-%m-%d %H:%i:%s') ASC `,
+    // Logs are stored in Account Center (company_customer_log)
+    const [cusRows] = await pool.query(
+      `SELECT accountCenterCusId FROM customer WHERE idCustomer = ? LIMIT 1`,
       [customerId],
+    );
+    const accountCenterCusId = cusRows[0]?.accountCenterCusId;
+    if (!accountCenterCusId) {
+      return res.status(200).json({
+        success: true,
+        message: "Customer logs fetched successfully",
+        logs: [],
+      });
+    }
+
+    const [logs] = await pool2.query(
+      `SELECT
+         cl.idCompany_Customer_Log AS idCustomer_Log,
+         cl.Company_Customer_idCompany_Customer AS Customer_idCustomer,
+         cl.Company_User_idCompany_User AS User_idUser,
+         cl.Log_Type AS Type,
+         cl.Long_Description AS Description,
+         cl.Log_Timestamp AS Date_Time,
+         cl.Type_Id,
+         cl.Asipiya_Software
+       FROM company_customer_log cl
+       WHERE cl.Company_Customer_idCompany_Customer = ?
+       ORDER BY cl.Log_Timestamp ASC`,
+      [accountCenterCusId],
     );
 
     // Fetch user data from pool2

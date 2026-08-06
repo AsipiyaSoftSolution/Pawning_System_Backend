@@ -21,6 +21,8 @@ import {
   fullTemplateKey,
 } from "../utils/pawningLetterTemplateFields.js";
 import { getRequestAccessToken } from "../utils/requestAuth.js";
+import { isStageInterestMethod } from "../utils/pawningProductConstants.js";
+import { computeInterestApplyOnDate } from "../utils/pawningInterestSchedule.js";
 
 /** Fetch company_customer data by Pawning customer ids via Account Center subsystem API */
 async function fetchCustomersByPawningIds(
@@ -342,8 +344,8 @@ export const createPawningTicket = async (req, res, next) => {
 
     // Validate that productId exists in pawning_product table
     const [productExists] = await connection.query(
-      "SELECT idPawning_Product FROM pawning_product WHERE idPawning_Product = ?",
-      [data.ticketData.productId],
+      "SELECT idPawning_Product FROM pawning_product WHERE idPawning_Product = ? AND (Branch_idBranch = ? OR Branch_idBranch IS NULL)",
+      [data.ticketData.productId, req.branchId],
     );
 
     if (productExists.length === 0) {
@@ -403,7 +405,7 @@ export const createPawningTicket = async (req, res, next) => {
 
     // get the ticket's product service charge type and other data
     const [productData] = await connection.query(
-      "SELECT Service_Charge_Create_As,Interest_Method,Service_Charge_Value,Service_Charge_Value_Type,Late_Charge_Create_As,Early_Settlement_Charge_Create_As FROM pawning_product WHERE idPawning_Product = ?",
+      "SELECT Service_Charge_Create_As,Interest_Method,Service_Charge_Value,Service_Charge_Value_Type,Late_Charge_Create_As,Late_Charge_Status,Late_Charge,Early_Settlement_Charge_Create_As FROM pawning_product WHERE idPawning_Product = ?",
       [data.ticketData.productId],
     );
 
@@ -593,23 +595,69 @@ export const createPawningTicket = async (req, res, next) => {
       status = 1; // approve and disburse the loan
     }
 
+    // The product_plan row whose period / amount band matches this ticket.
+    // Item-level charges must read from this row, not from an arbitrary plan.
+    let matchedProductPlanId = productPlanData?.[0]?.idProduct_Plan || null;
+    if (!matchedProductPlanId) {
+      if (productData[0].Interest_Method === "Interest For Period") {
+        const [pid] = await connection.query(
+          "SELECT idProduct_Plan FROM product_plan WHERE Pawning_Product_idPawning_Product = ? AND Period_Type = ? AND CAST(? AS UNSIGNED) BETWEEN CAST(Minimum_Period AS UNSIGNED) AND CAST(Maximum_Period AS UNSIGNED)",
+          [
+            data.ticketData.productId,
+            data.ticketData.periodType,
+            data.ticketData.period,
+          ],
+        );
+        matchedProductPlanId = pid[0]?.idProduct_Plan || null;
+      } else if (
+        productData[0].Interest_Method === "Interest For Pawning Amount"
+      ) {
+        const [pid] = await connection.query(
+          "SELECT idProduct_Plan FROM product_plan WHERE Pawning_Product_idPawning_Product = ? AND CAST(? AS UNSIGNED) BETWEEN CAST(Minimum_Amount AS UNSIGNED) AND CAST(Maximum_Amount AS UNSIGNED)",
+          [data.ticketData.productId, data.ticketData.pawningAdvance],
+        );
+        matchedProductPlanId = pid[0]?.idProduct_Plan || null;
+      }
+    }
+
+    const lateChargeColumns = `Late_Charge,lateChargeStage1,lateChargeStage2,lateChargeStage3,lateChargeStage4,
+        lateChargeStage1StartDate,lateChargeStage2StartDate,lateChargeStage3StartDate,lateChargeStage4StartDate,
+        lateChargeStage1EndDate,lateChargeStage2EndDate,lateChargeStage3EndDate,lateChargeStage4EndDate,
+        numberOfLateChargeStages`;
+
     let lateChargeData = [];
     if (productData[0].Late_Charge_Create_As === "Charge For Product") {
-      // fetch late charge stages from pawning_product
       const [rows] = await connection.query(
-        "SELECT lateChargeStage1,lateChargeStage2,lateChargeStage3,lateChargeStage4,lateChargeStage1StartDate,lateChargeStage2StartDate,lateChargeStage3StartDate,lateChargeStage4StartDate,lateChargeStage1EndDate,lateChargeStage2EndDate,lateChargeStage3EndDate,lateChargeStage4EndDate,numberOfLateChargeStages FROM pawning_product WHERE idPawning_Product = ?",
+        `SELECT ${lateChargeColumns} FROM pawning_product WHERE idPawning_Product = ?`,
         [data.ticketData.productId],
       );
       lateChargeData = rows;
     } else if (
-      productData[0].Late_Charge_Create_As === "Charge For Product Item"
+      productData[0].Late_Charge_Create_As === "Charge For Product Item" &&
+      matchedProductPlanId
     ) {
-      // fetch late charge stages from the matching product_plan row
       const [rows] = await connection.query(
-        "SELECT lateChargeStage1,lateChargeStage2,lateChargeStage3,lateChargeStage4,lateChargeStage1StartDate,lateChargeStage2StartDate,lateChargeStage3StartDate,lateChargeStage4StartDate,lateChargeStage1EndDate,lateChargeStage2EndDate,lateChargeStage3EndDate,lateChargeStage4EndDate,numberOfLateChargeStages FROM product_plan WHERE Pawning_Product_idPawning_Product = ?",
-        [data.ticketData.productId],
+        `SELECT ${lateChargeColumns} FROM product_plan WHERE idProduct_Plan = ?`,
+        [matchedProductPlanId],
       );
       lateChargeData = rows;
+    }
+
+    // Flat (non-staged) late charge: take the rate from the product config
+    // rather than trusting the client, so daily accrual has a reliable source.
+    const lateChargeSource = lateChargeData[0] || {};
+    const configuredLateChargeStages =
+      parseInt(lateChargeSource.numberOfLateChargeStages, 10) || 0;
+    const lateChargeInactive =
+      String(productData[0].Late_Charge_Status ?? "0") !== "1" ||
+      productData[0].Late_Charge_Create_As === "inactive" ||
+      !productData[0].Late_Charge_Create_As;
+    let lateChargePercent = 0;
+    if (!lateChargeInactive && configuredLateChargeStages < 1) {
+      lateChargePercent =
+        parseFloat(lateChargeSource.Late_Charge) ||
+        parseFloat(data.ticketData.lateChargePercent) ||
+        0;
     }
 
     // Snapshot early settlement stage config onto the ticket (same columns as pawning_product / product_plan)
@@ -633,42 +681,39 @@ export const createPawningTicket = async (req, res, next) => {
           [data.ticketData.productId],
         );
         earlySettlementRow = esRows[0] || null;
-      } else if (earlySettlementCreateAs === "Charge For Product Item") {
-        let planId = productPlanData?.[0]?.idProduct_Plan;
-        if (
-          !planId &&
-          productData[0].Interest_Method === "Interest For Period"
-        ) {
-          const [pid] = await connection.query(
-            "SELECT idProduct_Plan FROM product_plan WHERE Pawning_Product_idPawning_Product = ? AND Period_Type = ? AND CAST(? AS UNSIGNED) BETWEEN CAST(Minimum_Period AS UNSIGNED) AND CAST(Maximum_Period AS UNSIGNED)",
-            [
-              data.ticketData.productId,
-              data.ticketData.periodType,
-              data.ticketData.period,
-            ],
-          );
-          planId = pid[0]?.idProduct_Plan;
-        } else if (
-          !planId &&
-          productData[0].Interest_Method === "Interest For Pawning Amount"
-        ) {
-          const [pid] = await connection.query(
-            "SELECT idProduct_Plan FROM product_plan WHERE Pawning_Product_idPawning_Product = ? AND CAST(? AS UNSIGNED) BETWEEN CAST(Minimum_Amount AS UNSIGNED) AND CAST(Maximum_Amount AS UNSIGNED)",
-            [data.ticketData.productId, data.ticketData.pawningAdvance],
-          );
-          planId = pid[0]?.idProduct_Plan;
-        }
-        if (planId) {
-          const [esRows] = await connection.query(
-            `SELECT ${earlySettlementStageColumns} FROM product_plan WHERE idProduct_Plan = ?`,
-            [planId],
-          );
-          earlySettlementRow = esRows[0] || null;
-        }
+      } else if (
+        earlySettlementCreateAs === "Charge For Product Item" &&
+        matchedProductPlanId
+      ) {
+        const [esRows] = await connection.query(
+          `SELECT ${earlySettlementStageColumns} FROM product_plan WHERE idProduct_Plan = ?`,
+          [matchedProductPlanId],
+        );
+        earlySettlementRow = esRows[0] || null;
       }
     }
 
     const es = earlySettlementRow || {};
+
+    // Resolve Interest_apply_on from the product plan so "Interest Calculate After"
+    // = 0 starts interest on the grant date, and N > 0 delays by N days.
+    // Do not trust the client date alone (timezone / stale UI values).
+    let interestApplyOnDate = data.ticketData.interestApplyOn || null;
+    if (matchedProductPlanId) {
+      const [interestPlanRows] = await connection.query(
+        "SELECT Interest_Calculate_After FROM product_plan WHERE idProduct_Plan = ?",
+        [matchedProductPlanId],
+      );
+      interestApplyOnDate = computeInterestApplyOnDate(
+        data.ticketData.grantDate || new Date(),
+        interestPlanRows[0]?.Interest_Calculate_After,
+      );
+    } else if (!interestApplyOnDate) {
+      interestApplyOnDate = computeInterestApplyOnDate(
+        data.ticketData.grantDate || new Date(),
+        0,
+      );
+    }
 
     // Insert into pawning_ticket table
     const [result] = await connection.query(
@@ -688,8 +733,8 @@ export const createPawningTicket = async (req, res, next) => {
         data.ticketData.pawningAdvance,
         data.ticketData.interestRate,
         serviceChargeRate, // service charge rate
-        data.ticketData.lateChargePercent,
-        data.ticketData.interestApplyOn,
+        lateChargePercent,
+        interestApplyOnDate,
         req.userId,
         req.branchId, // Fixed: removed extra comma
         data.ticketData.productId,
@@ -1588,11 +1633,8 @@ export const sendAssessedValues = async (req, res, next) => {
   }
 };
 
-const INTEREST_STAGES_METHOD = "calculate for stages ";
-
 const isInterestStagesPlan = (plan) =>
-  String(plan?.interestApplicableMethod || "").trim() ===
-    INTEREST_STAGES_METHOD.trim() &&
+  isStageInterestMethod(plan?.interestApplicableMethod) &&
   (parseInt(plan?.noOfStages, 10) || 0) >= 2;
 
 const buildInterestStagesPayload = (plan) => {
@@ -1620,9 +1662,9 @@ const buildInterestStagesPayload = (plan) => {
 };
 
 const isLateChargeStagesSource = (source) => {
-  const fixedPct = parseFloat(source?.Late_Charge) || 0;
-  if (fixedPct > 0) return false;
-  return (parseInt(source?.numberOfLateChargeStages, 10) || 0) >= 2;
+  const configuredStages = parseInt(source?.numberOfLateChargeStages, 10) || 0;
+  if (configuredStages >= 1) return true;
+  return false;
 };
 
 const buildLateChargeStagesPayload = (source) => {
@@ -1746,16 +1788,10 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
     const interestType = filteredPlan.Interest_type || "N/A";
     const serviceChargeType = filteredPlan.Service_Charge_Value_type || "N/A";
 
-    const currentDate = new Date();
-    const daysToAdd = Number(filteredPlan.Interest_Calculate_After) || 0;
-    const interestApplyOn = new Date(
-      currentDate.getTime() + daysToAdd * 24 * 60 * 60 * 1000,
+    const interestApplyOnDate = computeInterestApplyOnDate(
+      new Date(),
+      filteredPlan.Interest_Calculate_After,
     );
-
-    let interestApplyOnDate = null;
-    if (interestApplyOn instanceof Date && !isNaN(interestApplyOn)) {
-      interestApplyOnDate = interestApplyOn.toISOString().split("T")[0];
-    }
 
     let lateChargeIsStages = false;
     let lateChargeStages = null;

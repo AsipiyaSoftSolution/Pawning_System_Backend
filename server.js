@@ -21,6 +21,8 @@ import pawningTicketPaymentRoutes from "./routes/pawning.ticket.payment.route.js
 import accountRoutes from "./routes/account.route.js";
 import reportRoutes from "./routes/report.route.js";
 import dashboardRoutes from "./routes/dashboard.route.js";
+import activityLogRoutes from "./routes/activityLog.route.js";
+import { activityLogMiddleware } from "./middlewares/activityLog.middleware.js";
 
 // Shedule cron jobs
 import { addDailyTicketLog } from "./utils/pawning.ticket.logs.js";
@@ -59,6 +61,9 @@ app.use(express.json({ limit: "100mb" }));
 app.use(express.urlencoded({ extended: true, limit: "100mb" }));
 app.use(cookieParser());
 
+// Activity log: wrap mutating responses (needs req.userId from later auth)
+app.use(activityLogMiddleware);
+
 // Health / root — browsing the API port in Chrome should not look "broken"
 app.get("/", (_req, res) => {
   res.json({
@@ -83,6 +88,7 @@ app.use("/api/pawning-ticket-payment", pawningTicketPaymentRoutes);
 app.use("/api/account", accountRoutes);
 app.use("/api/report", reportRoutes);
 app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/activity-logs", activityLogRoutes);
 
 const PORT = process.env.PORT || 3000;
 

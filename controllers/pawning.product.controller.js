@@ -1,6 +1,11 @@
 import { errorHandler } from "../utils/errorHandler.js";
 import { pool, pool2 } from "../utils/db.js";
 import { getPaginationData, getCompanyBranches } from "../utils/helper.js";
+import {
+  isStageInterestMethod,
+  normalizeStageEnd,
+} from "../utils/pawningProductConstants.js";
+import { validatePawningProductPayload } from "../utils/pawningProductValidation.js";
 
 // Function to get user  data by userId and companyId to display last updated user info when fetching pawning product details
 const returnUserData = async (userId, companyId) => {
@@ -75,6 +80,10 @@ export const getPawningProductById = async (req, res, next) => {
       return next(errorHandler(400, "Product ID is required"));
     }
 
+    if (!req.branchId) {
+      return next(errorHandler(400, "Branch ID is required"));
+    }
+
     // Get main pawning product data
     const [productRows] = await pool.query(
       `SELECT 
@@ -122,8 +131,8 @@ export const getPawningProductById = async (req, res, next) => {
         early_settlement_stage4_value_type,
         early_settlement_effect_type
       FROM pawning_product 
-      WHERE idPawning_Product = ?`,
-      [idPawning_Product],
+      WHERE idPawning_Product = ? AND Branch_idBranch = ?`,
+      [idPawning_Product, req.branchId],
     );
 
     if (productRows.length === 0) {
@@ -417,7 +426,7 @@ export const getPawningProductById = async (req, res, next) => {
         }
 
         // Add stage fields only when interestApplicableMethod indicates staged calculation
-        if (plan.interestApplicableMethod === "calculate for stages") {
+        if (isStageInterestMethod(plan.interestApplicableMethod)) {
           Object.assign(base, {
             stage1StartDate: plan.stage1StartDate,
             stage1EndDate: plan.stage1EndDate,
@@ -524,6 +533,7 @@ export const getPawningProducts = async (req, res, next) => {
 
 // Delete a pawning product by ID
 export const deletePawningProductById = async (req, res, next) => {
+  let connection;
   try {
     const productId = req.params.productId || req.params.id;
     if (!productId) {
@@ -534,7 +544,7 @@ export const deletePawningProductById = async (req, res, next) => {
     }
 
     const [existingProduct] = await pool.query(
-      `SELECT * FROM pawning_product WHERE idPawning_Product = ? AND Branch_idBranch = ?`,
+      `SELECT idPawning_Product FROM pawning_product WHERE idPawning_Product = ? AND Branch_idBranch = ?`,
       [productId, req.branchId],
     );
 
@@ -542,24 +552,55 @@ export const deletePawningProductById = async (req, res, next) => {
       return next(errorHandler(404, "Pawning product not found"));
     }
 
-    // Delete from Product Plan table first
-    const [result] = await pool.query(
-      `DELETE FROM product_plan WHERE Pawning_Product_idPawning_Product = ?`,
+    // Tickets snapshot their rates, but they still reference the product row.
+    const [linkedTickets] = await pool.query(
+      `SELECT COUNT(*) AS total FROM pawning_ticket WHERE Pawning_Product_idPawning_Product = ?`,
       [productId],
     );
 
-    if (result.affectedRows === 0) {
-      return next(errorHandler(500, "Failed to delete product plan"));
+    if (Number(linkedTickets[0]?.total) > 0) {
+      return next(
+        errorHandler(
+          409,
+          "This product cannot be deleted because pawning tickets are using it.",
+        ),
+      );
     }
+
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    await connection.query(
+      `DELETE FROM product_plan WHERE Pawning_Product_idPawning_Product = ?`,
+      [productId],
+    );
+    await connection.query(
+      `DELETE FROM early_settlement_charges WHERE Pawning_Product_idPawning_Product = ?`,
+      [productId],
+    );
+    const [result] = await connection.query(
+      `DELETE FROM pawning_product WHERE idPawning_Product = ? AND Branch_idBranch = ?`,
+      [productId, req.branchId],
+    );
+
+    if (result.affectedRows === 0) {
+      await connection.rollback();
+      return next(errorHandler(500, "Failed to delete pawning product"));
+    }
+
+    await connection.commit();
 
     res.status(200).json({
       success: true,
-      message: "Pawning product plan deleted successfully",
-      productId: result.insertId,
+      message: "Pawning product deleted successfully",
+      productId: Number(productId),
     });
   } catch (error) {
+    if (connection) await connection.rollback();
     console.error("Error deleting pawning product:", error);
     return next(errorHandler(500, "Internal Server Error"));
+  } finally {
+    if (connection) connection.release();
   }
 };
 
@@ -629,13 +670,13 @@ async function createOnePawningProductForBranch(
       data.lateCharge?.lateChargeStage3 || 0,
       data.lateCharge?.lateChargeStage4 || 0,
       data.lateCharge?.lateChargeStage1StartDate ?? null,
-      data.lateCharge?.lateChargeStage1EndDate || null,
+      normalizeStageEnd(data.lateCharge?.lateChargeStage1EndDate),
       data.lateCharge?.lateChargeStage2StartDate || null,
-      data.lateCharge?.lateChargeStage2EndDate || null,
+      normalizeStageEnd(data.lateCharge?.lateChargeStage2EndDate),
       data.lateCharge?.lateChargeStage3StartDate || null,
-      data.lateCharge?.lateChargeStage3EndDate || null,
+      normalizeStageEnd(data.lateCharge?.lateChargeStage3EndDate),
       data.lateCharge?.lateChargeStage4StartDate || null,
-      data.lateCharge?.lateChargeStage4EndDate || null,
+      normalizeStageEnd(data.lateCharge?.lateChargeStage4EndDate),
       data.lateCharge?.numberOfLateChargeStages || 0,
     ],
   );
@@ -752,6 +793,7 @@ async function createOnePawningProductForBranch(
   }
 
   for (const plan of productPlans) {
+    const carat22Percentages = plan.carat22Percentages || {};
     const amount22CaratValue =
       interestMethod === "Interest For Pawning Amount"
         ? data.amount22
@@ -780,7 +822,7 @@ async function createOnePawningProductForBranch(
         productId,
         plan.stage1StartDate !== null &&
         plan.stage1StartDate !== undefined &&
-        plan.stage1StartTime !== ""
+        plan.stage1StartDate !== ""
           ? plan.stage1StartDate
           : 0,
         (plan.stage1EndDate === null ||
@@ -840,12 +882,12 @@ async function createOnePawningProductForBranch(
         parseFloat(plan.stage3Interest) || 0,
         parseFloat(plan.stage4Interest) || 0,
         plan.interestApplicableMethod || null,
-        data.percentages?.oneWeek || 0,
-        data.percentages?.oneMonth || 0,
-        data.percentages?.threeMonths || 0,
-        data.percentages?.sixMonths || 0,
-        data.percentages?.nineMonths || 0,
-        data.percentages?.twelveMonths || 0,
+        carat22Percentages.oneWeek ?? data.percentages?.oneWeek ?? 0,
+        carat22Percentages.oneMonth ?? data.percentages?.oneMonth ?? 0,
+        carat22Percentages.threeMonths ?? data.percentages?.threeMonths ?? 0,
+        carat22Percentages.sixMonths ?? data.percentages?.sixMonths ?? 0,
+        carat22Percentages.nineMonths ?? data.percentages?.nineMonths ?? 0,
+        carat22Percentages.twelveMonths ?? data.percentages?.twelveMonths ?? 0,
         plan.numberOfStages || 0,
         plan.lateChargeStage1 || 0,
         plan.lateChargeStage2 || 0,
@@ -854,13 +896,13 @@ async function createOnePawningProductForBranch(
         plan.lateChargeStage1StartDate !== undefined
           ? plan.lateChargeStage1StartDate
           : null,
-        plan.lateChargeStage1EndDate || null,
+        normalizeStageEnd(plan.lateChargeStage1EndDate),
         plan.lateChargeStage2StartDate || null,
-        plan.lateChargeStage2EndDate || null,
+        normalizeStageEnd(plan.lateChargeStage2EndDate),
         plan.lateChargeStage3StartDate || null,
-        plan.lateChargeStage3EndDate || null,
+        normalizeStageEnd(plan.lateChargeStage3EndDate),
         plan.lateChargeStage4StartDate || null,
-        plan.lateChargeStage4EndDate || null,
+        normalizeStageEnd(plan.lateChargeStage4EndDate),
         plan.numberOfLateChargeStages || 0,
       ],
     );
@@ -954,6 +996,11 @@ export const createPawningProduct = async (req, res, next) => {
       return next(errorHandler(400, "Product data is required"));
     }
 
+    const validationErrors = validatePawningProductPayload(data);
+    if (validationErrors.length > 0) {
+      return next(errorHandler(400, validationErrors.join(" ")));
+    }
+
     connection = await pool.getConnection();
     await connection.beginTransaction();
 
@@ -996,6 +1043,12 @@ export const createPawningProductForBranches = async (req, res, next) => {
     if (!data) {
       return next(errorHandler(400, "Product data is required"));
     }
+
+    const validationErrors = validatePawningProductPayload(data);
+    if (validationErrors.length > 0) {
+      return next(errorHandler(400, validationErrors.join(" ")));
+    }
+
     if (!Array.isArray(branchIds) || branchIds.length === 0) {
       return next(
         errorHandler(
@@ -1133,15 +1186,9 @@ export const updatePawningProductById = async (req, res, next) => {
       return next(errorHandler(400, "Product data is required"));
     }
 
-    // Validate required fields
-    if (!data.productName || data.productName.trim().length < 3) {
-      return next(
-        errorHandler(400, "Product name must be at least 3 characters"),
-      );
-    }
-
-    if (!data.productItems || data.productItems.length === 0) {
-      return next(errorHandler(400, "At least one product item is required"));
+    const validationErrors = validatePawningProductPayload(data);
+    if (validationErrors.length > 0) {
+      return next(errorHandler(400, validationErrors.join(" ")));
     }
 
     // Check if product exists and belongs to the branch
@@ -1260,19 +1307,19 @@ export const updatePawningProductById = async (req, res, next) => {
         data.interestMethod || null,
         req.userId,
         new Date(),
-        data.lateCharge.lateChargeStage1 || 0,
-        data.lateCharge.lateChargeStage2 || 0,
-        data.lateCharge.lateChargeStage3 || 0,
-        data.lateCharge.lateChargeStage4 || 0,
-        data.lateCharge.lateChargeStage1StartDate || 0,
-        data.lateCharge.lateChargeStage1EndDate || null,
-        data.lateCharge.lateChargeStage2StartDate || null,
-        data.lateCharge.lateChargeStage2EndDate || null,
-        data.lateCharge.lateChargeStage3StartDate || null,
-        data.lateCharge.lateChargeStage3EndDate || null,
-        data.lateCharge.lateChargeStage4StartDate || null,
-        data.lateCharge.lateChargeStage4EndDate || null,
-        data.lateCharge.numberOfLateChargeStages || 0,
+        data.lateCharge?.lateChargeStage1 || 0,
+        data.lateCharge?.lateChargeStage2 || 0,
+        data.lateCharge?.lateChargeStage3 || 0,
+        data.lateCharge?.lateChargeStage4 || 0,
+        data.lateCharge?.lateChargeStage1StartDate || 0,
+        normalizeStageEnd(data.lateCharge?.lateChargeStage1EndDate),
+        data.lateCharge?.lateChargeStage2StartDate || null,
+        normalizeStageEnd(data.lateCharge?.lateChargeStage2EndDate),
+        data.lateCharge?.lateChargeStage3StartDate || null,
+        normalizeStageEnd(data.lateCharge?.lateChargeStage3EndDate),
+        data.lateCharge?.lateChargeStage4StartDate || null,
+        normalizeStageEnd(data.lateCharge?.lateChargeStage4EndDate),
+        data.lateCharge?.numberOfLateChargeStages || 0,
         idPawning_Product,
       ],
     );
@@ -1372,13 +1419,8 @@ export const updatePawningProductById = async (req, res, next) => {
       const earlySettlements = data.earlysettlementsData?.earlySettlements;
 
       if (!earlySettlements || earlySettlements.length === 0) {
-        await connection.rollback();
-        connection.release();
-        return next(
-          errorHandler(
-            400,
-            "Early settlement data is required for settlement amount charges",
-          ),
+        throw new Error(
+          "Early settlement data is required for settlement amount charges",
         );
       }
 
@@ -1421,11 +1463,12 @@ export const updatePawningProductById = async (req, res, next) => {
       // Get amount for 22 caratage
       const amount22CaratValue = parseFloat(plan.amount22Carat) || 0;
 
-      // Validate stage dates if stage-based calculation is used
-      if (plan.interestApplicableMethod === "Calculate for stages") {
-        // Stage 1 start must be 0
+      // Validate stage dates if stage-based calculation is used.
+      // Throw (not `return next`) so the open transaction is rolled back —
+      // the existing product plans have already been deleted at this point.
+      if (isStageInterestMethod(plan.interestApplicableMethod)) {
         if (plan.stage1StartDate !== 0 && plan.stage1StartDate !== "0") {
-          return next(errorHandler(400, "Stage 1 start date must be 0"));
+          throw new Error("Stage 1 start date must be 0");
         }
       }
 
@@ -1578,36 +1621,40 @@ export const updatePawningProductById = async (req, res, next) => {
           parseFloat(carat22Percentages.twelveMonths) || 0,
           plan.numberOfStages || 0,
           plan.interestApplicableMethod || null,
-          plan.lateChargeStage1 || data.lateCharge.lateChargeStage1 || 0,
-          plan.lateChargeStage2 || data.lateCharge.lateChargeStage2 || 0,
-          plan.lateChargeStage3 || data.lateCharge.lateChargeStage3 || 0,
-          plan.lateChargeStage4 || data.lateCharge.lateChargeStage4 || 0,
+          plan.lateChargeStage1 || data.lateCharge?.lateChargeStage1 || 0,
+          plan.lateChargeStage2 || data.lateCharge?.lateChargeStage2 || 0,
+          plan.lateChargeStage3 || data.lateCharge?.lateChargeStage3 || 0,
+          plan.lateChargeStage4 || data.lateCharge?.lateChargeStage4 || 0,
           plan.lateChargeStage1StartDate !== undefined
             ? plan.lateChargeStage1StartDate
-            : data.lateCharge.lateChargeStage1StartDate || 0,
-          plan.lateChargeStage1EndDate ||
-            data.lateCharge.lateChargeStage1EndDate ||
-            null,
+            : data.lateCharge?.lateChargeStage1StartDate || 0,
+          normalizeStageEnd(
+            plan.lateChargeStage1EndDate ||
+              data.lateCharge?.lateChargeStage1EndDate,
+          ),
           plan.lateChargeStage2StartDate ||
-            data.lateCharge.lateChargeStage2StartDate ||
+            data.lateCharge?.lateChargeStage2StartDate ||
             null,
-          plan.lateChargeStage2EndDate ||
-            data.lateCharge.lateChargeStage2EndDate ||
-            null,
+          normalizeStageEnd(
+            plan.lateChargeStage2EndDate ||
+              data.lateCharge?.lateChargeStage2EndDate,
+          ),
           plan.lateChargeStage3StartDate ||
-            data.lateCharge.lateChargeStage3StartDate ||
+            data.lateCharge?.lateChargeStage3StartDate ||
             null,
-          plan.lateChargeStage3EndDate ||
-            data.lateCharge.lateChargeStage3EndDate ||
-            null,
+          normalizeStageEnd(
+            plan.lateChargeStage3EndDate ||
+              data.lateCharge?.lateChargeStage3EndDate,
+          ),
           plan.lateChargeStage4StartDate ||
-            data.lateCharge.lateChargeStage4StartDate ||
+            data.lateCharge?.lateChargeStage4StartDate ||
             null,
-          plan.lateChargeStage4EndDate ||
-            data.lateCharge.lateChargeStage4EndDate ||
-            null,
+          normalizeStageEnd(
+            plan.lateChargeStage4EndDate ||
+              data.lateCharge?.lateChargeStage4EndDate,
+          ),
           plan.numberOfLateChargeStages ||
-            data.lateCharge.numberOfLateChargeStages ||
+            data.lateCharge?.numberOfLateChargeStages ||
             0,
         ],
       );

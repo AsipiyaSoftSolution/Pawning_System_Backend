@@ -140,11 +140,10 @@ route.patch(
 ); // Update SMS template status (active/inactive)
 route.get("/sms-template", protectedRoute, getAllSMSTemplates); // Get all SMS templates
 
-// Assessed Values
+// Assessed Values (company-scoped — branch id is only used by the client for UX)
 route.get(
   "/:branchId/assessed-values",
   protectedRoute,
-  checkUserBranchAccess,
   getAssessedValues,
 );
 route.post(

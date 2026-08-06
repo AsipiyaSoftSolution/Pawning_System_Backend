@@ -1,6 +1,7 @@
 import { pool, pool2 } from "../utils/db.js";
 import { errorHandler } from "../utils/errorHandler.js";
 import { getPaginationData } from "../utils/helper.js";
+import { formatActivityActionForDisplay } from "../utils/activityLogActions.js";
 
 /**
  * GET /api/activity-logs
@@ -127,7 +128,7 @@ export const getActivityLogs = async (req, res, next) => {
 
     const activityLogs = rows.map((row) => ({
       id: row.id,
-      action: row.action,
+      action: formatActivityActionForDisplay(row.action),
       status: row.status,
       created_at: row.created_at,
       username: userMap.get(Number(row.user_id)) || null,

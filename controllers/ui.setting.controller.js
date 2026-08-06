@@ -61,6 +61,31 @@ export const updateDashboardCardVisibility = async (req, res, next) => {
       );
     }
 
+    let cardName = null;
+    try {
+      const [cardRows] = await pool.query(
+        "SELECT card_name FROM dashboard_cards WHERE card_id = ?",
+        [card_id],
+      );
+      cardName = cardRows[0]?.card_name || null;
+    } catch {
+      /* ignore */
+    }
+
+    const turnedOn = Number(is_visible) === 1;
+    req.activityLogAction = cardName
+      ? turnedOn
+        ? `Turned on dashboard card “${cardName}”`
+        : `Turned off dashboard card “${cardName}”`
+      : turnedOn
+        ? "Turned on a dashboard card"
+        : "Turned off a dashboard card";
+    req.activityLogMetadata = {
+      cardId: Number(card_id),
+      cardName,
+      isVisible: Number(is_visible),
+    };
+
     // check if the record already exists
     const [existingVisibilityRecord] = await pool.query(
       "SELECT 1 FROM user_card_visibility WHERE card_id = ? AND branch_id = ? AND company_id = ?",
@@ -114,6 +139,27 @@ export const updateDashboardCardColors = async (req, res, next) => {
         errorHandler(400, "Both background and font colors are required")
       );
     }
+
+    let cardName = null;
+    try {
+      const [cardRows] = await pool.query(
+        "SELECT card_name FROM dashboard_cards WHERE card_id = ?",
+        [card_id],
+      );
+      cardName = cardRows[0]?.card_name || null;
+    } catch {
+      /* ignore */
+    }
+
+    req.activityLogAction = cardName
+      ? `Updated colors for dashboard card “${cardName}”`
+      : "Updated dashboard card colors";
+    req.activityLogMetadata = {
+      cardId: Number(card_id),
+      cardName,
+      bgColor: bg_color,
+      fontColor: font_color,
+    };
 
     const [existingColorRecord] = await pool.query(
       "SELECT 1 FROM user_card_visibility WHERE card_id = ? AND branch_id = ? AND company_id = ?",

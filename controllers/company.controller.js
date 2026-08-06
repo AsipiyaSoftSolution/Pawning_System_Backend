@@ -811,7 +811,7 @@ export const getAllUsersForTheBranch = async (req, res, next) => {
     // Determine if the provided branch is the Head Office for this company
     let isHeadOffice = false;
     try {
-      const [branchRow] = await pool.query(
+      const [branchRow] = await pool2.query(
         "SELECT Name,Branch_Code FROM branch WHERE idBranch = ? AND Company_idCompany = ?",
         [req.branchId, req.companyId],
       );
@@ -862,13 +862,14 @@ export const getAllUsersForTheBranch = async (req, res, next) => {
     const whereSql =
       whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
 
-    // COUNT query - when not head office we need to join user_has_branch
+    // user / branch / user_has_branch live in Account Center DB (pool2)
     if (isHeadOffice) {
       paginationData = await getPaginationData(
         `SELECT COUNT(DISTINCT u.idUser) as total FROM user u ${whereSql}`,
         paramsForCount,
         page,
         limit,
+        false,
       );
     } else {
       paginationData = await getPaginationData(
@@ -876,6 +877,7 @@ export const getAllUsersForTheBranch = async (req, res, next) => {
         paramsForCount,
         page,
         limit,
+        false,
       );
     }
 
@@ -902,7 +904,7 @@ export const getAllUsersForTheBranch = async (req, res, next) => {
      GROUP BY u.idUser
      LIMIT ? OFFSET ?`;
 
-    [users] = await pool.query(usersSql, [...paramsForUsers, limit, offset]);
+    [users] = await pool2.query(usersSql, [...paramsForUsers, limit, offset]);
 
     // Parse branchData into array of objects {idBranch, Name}
     if (users && Array.isArray(users)) {

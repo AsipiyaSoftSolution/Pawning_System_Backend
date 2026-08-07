@@ -2,10 +2,27 @@ import { errorHandler } from "../utils/errorHandler.js";
 import { pool, pool2 } from "../utils/db.js";
 import { getPaginationData, getCompanyBranches } from "../utils/helper.js";
 import {
+  DEFAULT_INTEREST_METHOD,
   isStageInterestMethod,
   normalizeStageEnd,
+  STAGE_INTEREST_METHOD,
 } from "../utils/pawningProductConstants.js";
-import { validatePawningProductPayload } from "../utils/pawningProductValidation.js";
+import {
+  normalizeProductCode,
+  validatePawningProductPayload,
+} from "../utils/pawningProductValidation.js";
+
+/** Flat plans historically stored NULL; treat that as "default". */
+const resolveInterestApplicableMethod = (value) =>
+  isStageInterestMethod(value) ? STAGE_INTEREST_METHOD : DEFAULT_INTEREST_METHOD;
+
+/**
+ * The unique key on (Branch_idBranch, Product_Code) is the real guard against
+ * duplicate codes; this turns the driver error into something a user can act on.
+ */
+const isDuplicateProductCodeError = (error) =>
+  error?.code === "ER_DUP_ENTRY" &&
+  String(error?.sqlMessage || "").includes("uq_pawning_product_branch_code");
 
 // Function to get user  data by userId and companyId to display last updated user info when fetching pawning product details
 const returnUserData = async (userId, companyId) => {
@@ -120,6 +137,7 @@ export const getPawningProductById = async (req, res, next) => {
         idPawning_Product,
         Branch_idBranch,
         Name,
+        Product_Code,
         Service_Charge,
         Service_Charge_Create_As,
         Service_Charge_Value_type,
@@ -280,6 +298,7 @@ export const getPawningProductById = async (req, res, next) => {
       idPawning_Product: product.idPawning_Product,
       branchId: product.Branch_idBranch,
       productName: product.Name,
+      productCode: product.Product_Code,
       interestMethod: product.Interest_Method,
 
       // Service charge data
@@ -383,7 +402,9 @@ export const getPawningProductById = async (req, res, next) => {
           amount22Carat: plan.Amount_For_22_Caratage,
           lastUpdatedUser: plan.Last_Updated_User,
           lastUpdatedTime: plan.Last_Updated_Time,
-          interestApplicableMethod: plan.interestApplicableMethod,
+          interestApplicableMethod: resolveInterestApplicableMethod(
+            plan.interestApplicableMethod,
+          ),
           carat22Percentages: {
             oneWeek: plan.Week_Precentage_Amount_22_Caratage,
             oneMonth: plan.Month1_Precentage_Amount_22_Caratage,
@@ -537,7 +558,7 @@ export const getPawningProducts = async (req, res, next) => {
 
     let pawningProducts;
     [pawningProducts] = await pool.query(
-      `SELECT idPawning_Product, Name, Interest_Method, Service_Charge,Early_Settlement_Charge_Create_As, Late_Charge_Status, Branch_idBranch FROM pawning_product WHERE ${whereCondition} LIMIT ? OFFSET ?`,
+      `SELECT idPawning_Product, Name, Product_Code, Interest_Method, Service_Charge,Early_Settlement_Charge_Create_As, Late_Charge_Status, Branch_idBranch FROM pawning_product WHERE ${whereCondition} LIMIT ? OFFSET ?`,
       [...queryParams, limit, offset],
     );
 
@@ -652,7 +673,7 @@ export const deletePawningProductById = async (req, res, next) => {
  * @param {object} connection - The database connection for the transaction
  * @returns {Promise<number>} inserted pawning_product id
  */
-async function createOnePawningProductForBranch(
+export async function createOnePawningProductForBranch(
   branchId,
   data,
   userId,
@@ -686,10 +707,11 @@ async function createOnePawningProductForBranch(
   const lateChargePresentage = data.lateCharge?.percentage || 0;
 
   const [result] = await connection.query(
-    "INSERT INTO pawning_product (Branch_idBranch,Name,Service_Charge,Service_Charge_Create_As,Service_Charge_Value_type,Service_Charge_Value,Early_Settlement_Charge_Create_As,Late_Charge_Status,Late_Charge_Create_As,Late_Charge,Interest_Method,Last_Updated_User,Last_Updated_Time,lateChargeStage1,lateChargeStage2,lateChargeStage3,lateChargeStage4,lateChargeStage1StartDate,lateChargeStage1EndDate,lateChargeStage2StartDate,lateChargeStage2EndDate,lateChargeStage3StartDate,lateChargeStage3EndDate,lateChargeStage4StartDate,lateChargeStage4EndDate,numberOfLateChargeStages) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    "INSERT INTO pawning_product (Branch_idBranch,Name,Product_Code,Service_Charge,Service_Charge_Create_As,Service_Charge_Value_type,Service_Charge_Value,Early_Settlement_Charge_Create_As,Late_Charge_Status,Late_Charge_Create_As,Late_Charge,Interest_Method,Last_Updated_User,Last_Updated_Time,lateChargeStage1,lateChargeStage2,lateChargeStage3,lateChargeStage4,lateChargeStage1StartDate,lateChargeStage1EndDate,lateChargeStage2StartDate,lateChargeStage2EndDate,lateChargeStage3StartDate,lateChargeStage3EndDate,lateChargeStage4StartDate,lateChargeStage4EndDate,numberOfLateChargeStages) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     [
       branchId,
       data.productName || "Unnamed Product",
+      normalizeProductCode(data.productCode) || null,
       serviceCharge,
       serviceChargeCreateAs,
       serviceChargeCreateAs === "Charge For Product Item"
@@ -924,7 +946,7 @@ async function createOnePawningProductForBranch(
         parseFloat(plan.stage2Interest) || 0,
         parseFloat(plan.stage3Interest) || 0,
         parseFloat(plan.stage4Interest) || 0,
-        plan.interestApplicableMethod || null,
+        resolveInterestApplicableMethod(plan.interestApplicableMethod),
         carat22Percentages.oneWeek ?? data.percentages?.oneWeek ?? 0,
         carat22Percentages.oneMonth ?? data.percentages?.oneMonth ?? 0,
         carat22Percentages.threeMonths ?? data.percentages?.threeMonths ?? 0,
@@ -1069,6 +1091,14 @@ export const createPawningProduct = async (req, res, next) => {
     if (err.message?.includes("Early settlement")) {
       return next(errorHandler(400, err.message));
     }
+    if (isDuplicateProductCodeError(err)) {
+      return next(
+        errorHandler(
+          409,
+          "Product code is already used by another product in this branch.",
+        ),
+      );
+    }
     console.error("Error creating pawning product:", err);
     return next(errorHandler(500, err.message || "Internal Server Error"));
   } finally {
@@ -1179,7 +1209,12 @@ export const createPawningProductForBranches = async (req, res, next) => {
           }
         }
         console.error(`Error creating product for branch ${branchId}:`, err);
-        errors.push({ branchId, message: err.message || "Failed to create" });
+        errors.push({
+          branchId,
+          message: isDuplicateProductCodeError(err)
+            ? "Product code is already used by another product in this branch."
+            : err.message || "Failed to create",
+        });
       } finally {
         if (connection) connection.release();
       }
@@ -1318,6 +1353,7 @@ export const updatePawningProductById = async (req, res, next) => {
     const [updateResult] = await connection.query(
       `UPDATE pawning_product SET 
         Name = ?,
+        Product_Code = ?,
         Service_Charge = ?,
         Service_Charge_Create_As = ?,
         Service_Charge_Value_type = ?,
@@ -1345,6 +1381,7 @@ export const updatePawningProductById = async (req, res, next) => {
       WHERE idPawning_Product = ?`,
       [
         data.productName,
+        normalizeProductCode(data.productCode) || null,
         serviceCharge,
         serviceChargeCreateAs,
         serviceChargeCreateAs === "Charge For Product Item"
@@ -1676,7 +1713,7 @@ export const updatePawningProductById = async (req, res, next) => {
           parseFloat(carat22Percentages.nineMonths) || 0,
           parseFloat(carat22Percentages.twelveMonths) || 0,
           plan.numberOfStages || 0,
-          plan.interestApplicableMethod || null,
+          resolveInterestApplicableMethod(plan.interestApplicableMethod),
           plan.lateChargeStage1 || data.lateCharge?.lateChargeStage1 || 0,
           plan.lateChargeStage2 || data.lateCharge?.lateChargeStage2 || 0,
           plan.lateChargeStage3 || data.lateCharge?.lateChargeStage3 || 0,
@@ -1802,6 +1839,7 @@ export const updatePawningProductById = async (req, res, next) => {
       `SELECT 
         idPawning_Product,
         Name,
+        Product_Code,
         Service_Charge,
         Service_Charge_Create_As,
         Service_Charge_Value_type,
@@ -1827,6 +1865,14 @@ export const updatePawningProductById = async (req, res, next) => {
     });
   } catch (error) {
     if (connection) await connection.rollback();
+    if (isDuplicateProductCodeError(error)) {
+      return next(
+        errorHandler(
+          409,
+          "Product code is already used by another product in this branch.",
+        ),
+      );
+    }
     console.error("Error updating pawning product:", error);
     return next(errorHandler(500, error.message || "Internal Server Error"));
   } finally {

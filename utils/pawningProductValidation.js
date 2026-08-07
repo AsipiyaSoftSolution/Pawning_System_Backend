@@ -8,6 +8,18 @@ import {
 
 const MAX_STAGES = 4;
 
+/**
+ * Product codes go into the ticket number verbatim, so they are kept short and
+ * restricted to characters that survive the separators the format uses (- . /).
+ */
+export const PRODUCT_CODE_PATTERN = /^[A-Z0-9]{2,10}$/;
+
+/** Codes are stored and compared uppercase so "gld" and "GLD" cannot coexist. */
+export const normalizeProductCode = (value) =>
+  value === undefined || value === null
+    ? ""
+    : String(value).trim().toUpperCase();
+
 const toNumber = (value) => {
   if (value === undefined || value === null || value === "") return null;
   const parsed = Number(value);
@@ -109,6 +121,15 @@ export const validatePawningProductPayload = (data) => {
 
   if (!data.productName || String(data.productName).trim().length < 3) {
     errors.push("Product name must be at least 3 characters.");
+  }
+
+  const productCode = normalizeProductCode(data.productCode);
+  if (!productCode) {
+    errors.push("Product code is required.");
+  } else if (!PRODUCT_CODE_PATTERN.test(productCode)) {
+    errors.push(
+      "Product code must be 2 to 10 characters, letters and digits only.",
+    );
   }
 
   if (!isValidInterestMethod(data.interestMethod)) {

@@ -75,7 +75,10 @@ export const fullTicketDetailsReport = async (req, res, next) => {
         pt.Period_Type as periodType, pt.Period as period, pt.Maturity_date as maturityDate, 
         pt.Payble_Value as payableAmount, pt.Pawning_Advance_Amount as pawningAdvance, 
         pt.Service_Charge_Type as serviceChargeType, pt.Service_charge_Amount as serviceChargeAmount, 
-        pt.Interest_apply_on as interestType, pt.Interest_Amount_Balance as interestBalance, 
+        pt.Interest_Rate_Duration as interestType, pt.Interest_Amount_Balance as interestBalance, 
+        pt.Interest_apply_on as interestApplyOn,
+        pt.early_settlement_effect_type as earlySettlementType,
+        pt.Early_Settlement_Charge_Balance as earlySettlementAmount,
         pt.Status as status,
         pt.Customer_idCustomer,
         p.Name as productName,
@@ -166,6 +169,21 @@ export const fullTicketDetailsReport = async (req, res, next) => {
       [ticketIds],
     );
 
+    // Interest charged to date lives in the accrual log, not on the ticket row —
+    // the ticket only keeps the outstanding balance after payments.
+    const [interestCharged] = await pool.query(
+      `SELECT 
+        Pawning_Ticket_idPawning_Ticket as ticketId, 
+        SUM(Amount) as interestAmount
+      FROM ticket_log
+      WHERE Type = 'INTEREST' AND Pawning_Ticket_idPawning_Ticket IN (?)
+      GROUP BY Pawning_Ticket_idPawning_Ticket`,
+      [ticketIds],
+    );
+    const interestMap = new Map(
+      interestCharged.map((r) => [r.ticketId, parseFloat(r.interestAmount) || 0]),
+    );
+
     const paymentMap = new Map(payments.map((p) => [p.ticketId, p]));
     const articleMap = new Map();
     articles.forEach((a) => {
@@ -193,10 +211,9 @@ export const fullTicketDetailsReport = async (req, res, next) => {
       t.NIC = customer ? customer.Nic : "N/A";
       t.contact = customer ? customer.Contact_No : "N/A";
 
-      // Default placeholder values for missing fields in current DB schema
-      t.interestAmount = 0; // Needs more complex calc if not in a single column
-      t.earlySettlementType = "N/A";
-      t.earlySettlementAmount = 0;
+      t.interestAmount = interestMap.get(t.idPawning_Ticket) || 0;
+      t.earlySettlementType = t.earlySettlementType || "N/A";
+      t.earlySettlementAmount = parseFloat(t.earlySettlementAmount) || 0;
     });
 
     return res.status(200).json({

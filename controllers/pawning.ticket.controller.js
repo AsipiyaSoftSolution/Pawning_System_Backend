@@ -1160,7 +1160,7 @@ export const getProductsAndInterestMethod = async (req, res, next) => {
     );
 
     const [products] = await pool.query(
-      "SELECT idPawning_Product, Name, Interest_Method FROM pawning_product WHERE Branch_idBranch = ? ORDER BY idPawning_Product DESC LIMIT ? OFFSET ?",
+      "SELECT idPawning_Product, Name, Product_Code, Interest_Method FROM pawning_product WHERE Branch_idBranch = ? ORDER BY idPawning_Product DESC LIMIT ? OFFSET ?",
       [req.branchId, limit, offset],
     );
 
@@ -4837,6 +4837,25 @@ export const markTicketAsPrinted = async (req, res, next) => {
   }
 };
 
+/**
+ * The "Product Code" segment of a ticket number.
+ *
+ * Products carry their own code, which goes into the number verbatim. Before
+ * that column existed the segment was the product id padded to three digits,
+ * so a product whose code has not been set yet falls back to the old value and
+ * keeps producing the numbers it always did.
+ */
+const resolveProductCodeSegment = async (productId) => {
+  if (!productId) return "000";
+
+  const [rows] = await pool.query(
+    "SELECT Product_Code FROM pawning_product WHERE idPawning_Product = ?",
+    [productId],
+  );
+  const code = String(rows[0]?.Product_Code ?? "").trim();
+  return code || productId.toString().padStart(3, "0");
+};
+
 // Generate pawning ticket number
 export const generatePawningTicketNumber = async (req, res, next) => {
   try {
@@ -4904,11 +4923,7 @@ export const generatePawningTicketNumber = async (req, res, next) => {
         }
 
         if (part === "Product Code") {
-          if (productId) {
-            ticketNo += productId.toString().padStart(3, "0");
-          } else {
-            ticketNo += "000"; // default if productId not provided
-          }
+          ticketNo += await resolveProductCodeSegment(productId);
         }
 
         if (part === "Customer Number") {
@@ -5384,8 +5399,9 @@ export const getAllTicketsForCompany = async (req, res, next) => {
          -- Customer number from the customer table
          c.Customer_Number         AS customer_number,
 
-         -- Product code (id) and name from the product table
-         pp.idPawning_Product  AS product_code,
+         -- Product code, falling back to the padded id used before the column existed
+         COALESCE(NULLIF(TRIM(pp.Product_Code), ''), LPAD(pp.idPawning_Product, 3, '0'))
+                               AS product_code,
          pp.Name               AS product_name,
 
          -- Monthly ticket count for the same branch + year + month

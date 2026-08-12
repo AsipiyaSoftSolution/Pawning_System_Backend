@@ -364,12 +364,15 @@ export const getTicketDataById = async (req, res, next) => {
     ticketData[0].productName = productData[0].Name || "Unknown Product"; // attach product name to ticket data
 
     // get the officer name for the ticket from account center
-    const officerData = await subsystemApi.userNames(
-      [ticketData[0].User_idUser],
-      req.accessToken,
-    );
-    ticketData[0].officerName =
-      officerData.users?.[0]?.full_name || "Unknown Officer";
+    ticketData[0].officerName = "Unknown Officer";
+    if (ticketData[0].User_idUser) {
+      const officerData = await subsystemApi.userNames(
+        [ticketData[0].User_idUser],
+        req.accessToken,
+      );
+      ticketData[0].officerName =
+        officerData.users?.[0]?.full_name || "Unknown Officer";
+    }
     delete ticketData[0].User_idUser; // remove User_idUser from ticket data
 
     // fetch customer data for the ticket

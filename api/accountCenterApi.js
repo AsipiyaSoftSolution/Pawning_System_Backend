@@ -143,8 +143,18 @@ export const subsystemApi = {
       accessToken,
     ),
 
-  userNames: (ids, accessToken) =>
-    accCenterGet(`/subsystem/user-names?ids=${ids.join(",")}`, accessToken),
+  userNames: async (ids, accessToken) => {
+    const validIds = [...new Set((ids || []).map(Number))].filter(
+      (id) => Number.isInteger(id) && id > 0,
+    );
+    if (validIds.length === 0) {
+      return { success: true, users: [] };
+    }
+    return accCenterGet(
+      `/subsystem/user-names?ids=${validIds.join(",")}`,
+      accessToken,
+    );
+  },
 
   articleType: (id, accessToken) =>
     accCenterGet(`/subsystem/article-type/${id}`, accessToken),

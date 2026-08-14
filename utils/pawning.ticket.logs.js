@@ -611,6 +611,96 @@ const resolveLateChargeStages = (ticket) => {
   return [{ num: 1, startDay: 0, endDay: 0, rate: flatRate }];
 };
 
+const hydrateTicketLateChargeFromProduct = async (ticket, queryRunner) => {
+  const stages = parseFloat(ticket.numberOfLateChargeStages) || 0;
+  const flat = parseFloat(ticket.Late_charge_Presentage) || 0;
+  if (stages >= 1 || flat > 0) return ticket;
+
+  const productId = ticket.Pawning_Product_idPawning_Product;
+  if (!productId) return ticket;
+
+  const [products] = await queryRunner.query(
+    `SELECT Late_Charge_Create_As, Late_Charge_Status, Late_Charge,
+            lateChargeStage1, lateChargeStage2, lateChargeStage3, lateChargeStage4,
+            lateChargeStage1StartDate, lateChargeStage2StartDate,
+            lateChargeStage3StartDate, lateChargeStage4StartDate,
+            lateChargeStage1EndDate, lateChargeStage2EndDate,
+            lateChargeStage3EndDate, lateChargeStage4EndDate,
+            numberOfLateChargeStages
+     FROM pawning_product WHERE idPawning_Product = ? LIMIT 1`,
+    [productId],
+  );
+  const product = products[0];
+  if (!product) return ticket;
+  if (
+    String(product.Late_Charge_Status ?? "0") !== "1" ||
+    product.Late_Charge_Create_As === "inactive" ||
+    !product.Late_Charge_Create_As
+  ) {
+    return ticket;
+  }
+
+  let source = product;
+  if (product.Late_Charge_Create_As === "Charge For Product Item") {
+    const [plans] = await queryRunner.query(
+      `SELECT Late_Charge, numberOfLateChargeStages,
+              lateChargeStage1, lateChargeStage2, lateChargeStage3, lateChargeStage4,
+              lateChargeStage1StartDate, lateChargeStage2StartDate,
+              lateChargeStage3StartDate, lateChargeStage4StartDate,
+              lateChargeStage1EndDate, lateChargeStage2EndDate,
+              lateChargeStage3EndDate, lateChargeStage4EndDate
+       FROM product_plan
+       WHERE Pawning_Product_idPawning_Product = ?
+       ORDER BY idProduct_Plan ASC LIMIT 1`,
+      [productId],
+    );
+    if (plans[0]) source = plans[0];
+  }
+
+  const nStages = parseInt(source.numberOfLateChargeStages, 10) || 0;
+  ticket.numberOfLateChargeStages = nStages;
+  ticket.Late_charge_Presentage =
+    nStages < 1
+      ? parseFloat(source.Late_Charge) || parseFloat(product.Late_Charge) || 0
+      : 0;
+  for (let i = 1; i <= 4; i++) {
+    ticket[`lateChargeStage${i}`] = parseFloat(source[`lateChargeStage${i}`]) || 0;
+    ticket[`lateChargeStage${i}StartDate`] =
+      source[`lateChargeStage${i}StartDate`] ?? null;
+    ticket[`lateChargeStage${i}EndDate`] =
+      source[`lateChargeStage${i}EndDate`] ?? null;
+  }
+
+  await queryRunner.query(
+    `UPDATE pawning_ticket SET
+       Late_charge_Presentage = ?, numberOfLateChargeStages = ?,
+       lateChargeStage1 = ?, lateChargeStage2 = ?, lateChargeStage3 = ?, lateChargeStage4 = ?,
+       lateChargeStage1StartDate = ?, lateChargeStage2StartDate = ?,
+       lateChargeStage3StartDate = ?, lateChargeStage4StartDate = ?,
+       lateChargeStage1EndDate = ?, lateChargeStage2EndDate = ?,
+       lateChargeStage3EndDate = ?, lateChargeStage4EndDate = ?
+     WHERE idPawning_Ticket = ?`,
+    [
+      ticket.Late_charge_Presentage,
+      ticket.numberOfLateChargeStages,
+      ticket.lateChargeStage1,
+      ticket.lateChargeStage2,
+      ticket.lateChargeStage3,
+      ticket.lateChargeStage4,
+      ticket.lateChargeStage1StartDate,
+      ticket.lateChargeStage2StartDate,
+      ticket.lateChargeStage3StartDate,
+      ticket.lateChargeStage4StartDate,
+      ticket.lateChargeStage1EndDate,
+      ticket.lateChargeStage2EndDate,
+      ticket.lateChargeStage3EndDate,
+      ticket.lateChargeStage4EndDate,
+      ticket.idPawning_Ticket,
+    ],
+  );
+  return ticket;
+};
+
 const processLateChargeStages = async (
   ticket,
   ticketId,
@@ -834,14 +924,28 @@ export const accrueTicketInterestAndPenalty = async (
     return { skipped: true, reason: "not_found" };
   }
 
-  const ticket = rows[0];
-  const status = String(ticket.Status ?? "");
+  const ticketRow = rows[0];
+  const status = String(ticketRow.Status ?? "");
   if (status !== "1" && status !== "3") {
     return { skipped: true, reason: "status" };
   }
 
+  const ticket = await hydrateTicketLateChargeFromProduct(
+    ticketRow,
+    queryRunner,
+  );
+
+  const [[mat]] = await queryRunner.query(
+    `SELECT DATEDIFF(CURDATE(), DATE(Maturity_date)) AS daysPast,
+            DATE_FORMAT(DATE(Maturity_date), '%Y-%m-%d') AS matYmd
+     FROM pawning_ticket WHERE idPawning_Ticket = ?`,
+    [ticketId],
+  );
   const today = toStartOfDay(new Date());
-  const maturityDate = toStartOfDay(ticket.Maturity_date);
+  const maturityDate = mat?.matYmd
+    ? toStartOfDay(`${mat.matYmd}T00:00:00`)
+    : toStartOfDay(ticket.Maturity_date);
+  const pastMaturity = Number(mat?.daysPast) > 0;
   const noOfStages = parseFloat(ticket.noOfStages) || 0;
   const hasStages = noOfStages >= 2;
   const accessToken = options.accessToken || null;
@@ -869,7 +973,7 @@ export const accrueTicketInterestAndPenalty = async (
   }
 
   let penalty = { inserted: false, amount: 0 };
-  if (today > maturityDate) {
+  if (pastMaturity) {
     const [existingPenaltyCheck] = await queryRunner.query(
       "SELECT 1 FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? AND Type = 'PENALTY' LIMIT 1",
       [ticketId],

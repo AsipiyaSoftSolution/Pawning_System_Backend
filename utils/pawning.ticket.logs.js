@@ -937,11 +937,18 @@ export const accrueTicketInterestAndPenalty = async (
 
   const [[mat]] = await queryRunner.query(
     `SELECT DATEDIFF(CURDATE(), DATE(Maturity_date)) AS daysPast,
-            DATE_FORMAT(DATE(Maturity_date), '%Y-%m-%d') AS matYmd
+            DATE_FORMAT(DATE(Maturity_date), '%Y-%m-%d') AS matYmd,
+            DATE_FORMAT(DATE(Date_Time), '%Y-%m-%d') AS startYmd,
+            DATE_FORMAT(DATE(COALESCE(Interest_apply_on, Date_Time)), '%Y-%m-%d') AS applyYmd
      FROM pawning_ticket WHERE idPawning_Ticket = ?`,
     [ticketId],
   );
-  const today = toStartOfDay(new Date());
+  const todayYmd = toDateStr(new Date());
+  const startYmd = mat?.startYmd || toDateStr(ticket.Date_Time);
+  const applyYmd =
+    mat?.applyYmd && /^\d{4}-\d{2}-\d{2}$/.test(mat.applyYmd)
+      ? mat.applyYmd
+      : startYmd;
   const maturityDate = mat?.matYmd
     ? toStartOfDay(`${mat.matYmd}T00:00:00`)
     : toStartOfDay(ticket.Maturity_date);
@@ -949,52 +956,62 @@ export const accrueTicketInterestAndPenalty = async (
   const noOfStages = parseFloat(ticket.noOfStages) || 0;
   const hasStages = noOfStages >= 2;
   const accessToken = options.accessToken || null;
+  const ticketStartDate = toStartOfDay(ticket.Date_Time);
+  const stages = hasStages ? buildStages(ticket, noOfStages, "stage") : [];
 
-  if (hasStages) {
-    const ticketStartDate = toStartOfDay(ticket.Date_Time);
-    const stages = buildStages(ticket, noOfStages, "stage");
-    await processStageInterest(
-      ticket,
-      ticketId,
-      today,
-      ticketStartDate,
-      stages,
-      queryRunner,
-      skipAccounting ? null : accessToken,
-    );
-  } else {
-    await processOriginalInterest(
-      ticket,
-      ticketId,
-      today,
-      queryRunner,
-      skipAccounting ? null : accessToken,
-    );
-  }
+  const fromYmd = applyYmd < startYmd ? applyYmd : startYmd;
+  const [hadPenaltyBeforeRows] = await queryRunner.query(
+    "SELECT 1 FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? AND Type = 'PENALTY' LIMIT 1",
+    [ticketId],
+  );
+  const hadPenaltyBefore = hadPenaltyBeforeRows.length > 0;
 
   let penalty = { inserted: false, amount: 0 };
-  if (pastMaturity) {
-    const [existingPenaltyCheck] = await queryRunner.query(
-      "SELECT 1 FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? AND Type = 'PENALTY' LIMIT 1",
-      [ticketId],
-    );
-    const hadPenaltyBefore = existingPenaltyCheck.length > 0;
-
-    penalty = await processLateChargeStages(
-      ticket,
-      ticketId,
-      today,
-      maturityDate,
-      queryRunner,
-      { skipAccounting, skipCustomerLogs },
-    );
-
-    if (!hadPenaltyBefore && penalty.inserted && status !== "3") {
-      await queryRunner.query(
-        "UPDATE pawning_ticket SET Status = '3' WHERE idPawning_Ticket = ?",
-        [ticketId],
+  const cursor = toStartOfDay(`${fromYmd}T00:00:00`);
+  const lastDay = toStartOfDay(`${todayYmd}T00:00:00`);
+  for (let d = new Date(cursor); d <= lastDay; d.setDate(d.getDate() + 1)) {
+    const dayEnd = toStartOfDay(d);
+    if (hasStages) {
+      await processStageInterest(
+        ticket,
+        ticketId,
+        dayEnd,
+        ticketStartDate,
+        stages,
+        queryRunner,
+        skipAccounting ? null : accessToken,
+      );
+    } else {
+      await processOriginalInterest(
+        ticket,
+        ticketId,
+        dayEnd,
+        queryRunner,
+        skipAccounting ? null : accessToken,
       );
     }
+
+    if (pastMaturity && dayEnd >= maturityDate) {
+      const dayPenalty = await processLateChargeStages(
+        ticket,
+        ticketId,
+        dayEnd,
+        maturityDate,
+        queryRunner,
+        { skipAccounting, skipCustomerLogs },
+      );
+      if (dayPenalty.inserted) {
+        penalty.inserted = true;
+        penalty.amount += dayPenalty.amount || 0;
+      }
+    }
+  }
+
+  if (penalty.inserted && !hadPenaltyBefore && status !== "3") {
+    await queryRunner.query(
+      "UPDATE pawning_ticket SET Status = '3' WHERE idPawning_Ticket = ?",
+      [ticketId],
+    );
   }
 
   const latest = await getLatestLog(ticketId, queryRunner);

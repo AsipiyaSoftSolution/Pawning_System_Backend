@@ -616,15 +616,20 @@ const processLateChargeStages = async (
   ticketId,
   today,
   maturityDate,
+  queryRunner = pool,
+  options = {},
 ) => {
   const stages = resolveLateChargeStages(ticket);
-  if (stages.length === 0) return false; // no late charge configured
+  if (stages.length === 0) return { inserted: false, amount: 0 };
 
+  const skipAccounting = options.skipAccounting === true;
+  const skipCustomerLogs = options.skipCustomerLogs === true;
   const oneTimeStages = stages.slice(0, -1);
   const lastStage = stages[stages.length - 1];
   const daysSinceMaturity = daysBetween(today, maturityDate);
 
   let penaltyInserted = false;
+  let penaltyAmountTotal = 0;
 
   // ── One-time penalties for stages 1 … N-1 ─────────────────
   // Stage 1 startDay is always 0 → fires on first day after maturity
@@ -632,7 +637,7 @@ const processLateChargeStages = async (
     if (daysSinceMaturity < stage.startDay) continue;
     if (!(stage.rate > 0)) continue;
 
-    const [existing] = await pool.query(
+    const [existing] = await queryRunner.query(
       "SELECT 1 FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? AND Type = 'PENALTY' AND Description LIKE ?",
       [ticketId, `%Late Charge Stage ${stage.num}%`],
     );
@@ -642,21 +647,23 @@ const processLateChargeStages = async (
     stageDate.setDate(stageDate.getDate() + stage.startDay);
     const stageDateStr = toDateStr(stageDate);
 
-    const log = await getLatestLog(ticketId);
+    const log = await getLatestLog(ticketId, queryRunner);
     const balances = buildBalancesFromLog(log);
     const penaltyAmount = (balances.advance * stage.rate) / 100;
     const description = `${stageDateStr} - Late Charge Stage ${stage.num}`;
 
-    await createCustomerLogOnTicketPenality(
-      "TICKET PENALTY",
-      `Penalty of ${penaltyAmount} added to ticket ID ${ticketId} on ${stageDateStr} (Late Charge Stage ${stage.num})`,
-      ticket.Customer_idCustomer,
-      null,
-      {
-        ticketId,
-        branchId: ticket.Branch_idBranch,
-      },
-    );
+    if (!skipCustomerLogs) {
+      await createCustomerLogOnTicketPenality(
+        "TICKET PENALTY",
+        `Penalty of ${penaltyAmount} added to ticket ID ${ticketId} on ${stageDateStr} (Late Charge Stage ${stage.num})`,
+        ticket.Customer_idCustomer,
+        null,
+        {
+          ticketId,
+          branchId: ticket.Branch_idBranch,
+        },
+      );
+    }
     await insertTicketLog(
       ticketId,
       "PENALTY",
@@ -665,25 +672,33 @@ const processLateChargeStages = async (
       balances,
       0,
       penaltyAmount,
+      queryRunner,
     );
-    await recordPenaltyAccountingEntries(
-      ticket,
-      penaltyAmount,
-      `${description} penalty accrual`,
-    );
+    if (!skipAccounting) {
+      await recordPenaltyAccountingEntries(
+        ticket,
+        penaltyAmount,
+        `${description} penalty accrual`,
+      );
+    }
 
     penaltyInserted = true;
+    penaltyAmountTotal += penaltyAmount;
   }
 
   // ── Daily penalty for last stage ──────────────────────────
-  if (daysSinceMaturity < lastStage.startDay) return penaltyInserted;
-  if (!(lastStage.rate > 0)) return penaltyInserted;
+  if (daysSinceMaturity < lastStage.startDay) {
+    return { inserted: penaltyInserted, amount: penaltyAmountTotal };
+  }
+  if (!(lastStage.rate > 0)) {
+    return { inserted: penaltyInserted, amount: penaltyAmountTotal };
+  }
 
   const lastStageStartDate = new Date(maturityDate);
   lastStageStartDate.setDate(lastStageStartDate.getDate() + lastStage.startDay);
 
   // Find where to resume from
-  const [lastDailyLog] = await pool.query(
+  const [lastDailyLog] = await queryRunner.query(
     "SELECT Description FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? AND Type = 'PENALTY' AND Description LIKE ? ORDER BY idTicket_Log DESC LIMIT 1",
     [ticketId, `%Late Charge Stage ${lastStage.num}%`],
   );
@@ -695,31 +710,33 @@ const processLateChargeStages = async (
     startDate.setDate(startDate.getDate() + 1);
   }
 
-  // ✅ lastStage.rate is already a daily rate — no division needed
+  // lastStage.rate is already a daily rate — no division needed
   for (let d = new Date(startDate); d <= today; d.setDate(d.getDate() + 1)) {
     const dateStr = toDateStr(d);
     const description = `${dateStr} - Late Charge Stage ${lastStage.num}`;
 
-    const [existing] = await pool.query(
+    const [existing] = await queryRunner.query(
       "SELECT 1 FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? AND Type = 'PENALTY' AND Description = ?",
       [ticketId, description],
     );
     if (existing.length > 0) continue;
 
-    const log = await getLatestLog(ticketId);
+    const log = await getLatestLog(ticketId, queryRunner);
     const balances = buildBalancesFromLog(log);
     const penaltyAmount = (balances.advance * lastStage.rate) / 100;
 
-    await createCustomerLogOnTicketPenality(
-      "TICKET PENALTY",
-      `Penalty of ${penaltyAmount} added to ticket ID ${ticketId} on ${dateStr}`,
-      ticket.Customer_idCustomer,
-      null,
-      {
-        ticketId,
-        branchId: ticket.Branch_idBranch,
-      },
-    );
+    if (!skipCustomerLogs) {
+      await createCustomerLogOnTicketPenality(
+        "TICKET PENALTY",
+        `Penalty of ${penaltyAmount} added to ticket ID ${ticketId} on ${dateStr}`,
+        ticket.Customer_idCustomer,
+        null,
+        {
+          ticketId,
+          branchId: ticket.Branch_idBranch,
+        },
+      );
+    }
     await insertTicketLog(
       ticketId,
       "PENALTY",
@@ -728,17 +745,21 @@ const processLateChargeStages = async (
       balances,
       0,
       penaltyAmount,
+      queryRunner,
     );
-    await recordPenaltyAccountingEntries(
-      ticket,
-      penaltyAmount,
-      `${description} penalty accrual`,
-    );
+    if (!skipAccounting) {
+      await recordPenaltyAccountingEntries(
+        ticket,
+        penaltyAmount,
+        `${description} penalty accrual`,
+      );
+    }
 
     penaltyInserted = true;
+    penaltyAmountTotal += penaltyAmount;
   }
 
-  return penaltyInserted;
+  return { inserted: penaltyInserted, amount: penaltyAmountTotal };
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -793,61 +814,108 @@ export const applyTicketInterestLogsOnApproval = async (
   }
 };
 
+/**
+ * Accrue interest (to today) and late-charge penalties (after maturity)
+ * for one Active or Overdue ticket. Idempotent via ticket_log descriptions.
+ */
+export const accrueTicketInterestAndPenalty = async (
+  ticketId,
+  options = {},
+) => {
+  const queryRunner = options.queryRunner || pool;
+  const skipAccounting = options.skipAccounting === true;
+  const skipCustomerLogs = options.skipCustomerLogs === true;
+
+  const [rows] = await queryRunner.query(
+    "SELECT * FROM pawning_ticket WHERE idPawning_Ticket = ?",
+    [ticketId],
+  );
+  if (rows.length === 0) {
+    return { skipped: true, reason: "not_found" };
+  }
+
+  const ticket = rows[0];
+  const status = String(ticket.Status ?? "");
+  if (status !== "1" && status !== "3") {
+    return { skipped: true, reason: "status" };
+  }
+
+  const today = toStartOfDay(new Date());
+  const maturityDate = toStartOfDay(ticket.Maturity_date);
+  const noOfStages = parseFloat(ticket.noOfStages) || 0;
+  const hasStages = noOfStages >= 2;
+  const accessToken = options.accessToken || null;
+
+  if (hasStages) {
+    const ticketStartDate = toStartOfDay(ticket.Date_Time);
+    const stages = buildStages(ticket, noOfStages, "stage");
+    await processStageInterest(
+      ticket,
+      ticketId,
+      today,
+      ticketStartDate,
+      stages,
+      queryRunner,
+      skipAccounting ? null : accessToken,
+    );
+  } else {
+    await processOriginalInterest(
+      ticket,
+      ticketId,
+      today,
+      queryRunner,
+      skipAccounting ? null : accessToken,
+    );
+  }
+
+  let penalty = { inserted: false, amount: 0 };
+  if (today > maturityDate) {
+    const [existingPenaltyCheck] = await queryRunner.query(
+      "SELECT 1 FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? AND Type = 'PENALTY' LIMIT 1",
+      [ticketId],
+    );
+    const hadPenaltyBefore = existingPenaltyCheck.length > 0;
+
+    penalty = await processLateChargeStages(
+      ticket,
+      ticketId,
+      today,
+      maturityDate,
+      queryRunner,
+      { skipAccounting, skipCustomerLogs },
+    );
+
+    if (!hadPenaltyBefore && penalty.inserted && status !== "3") {
+      await queryRunner.query(
+        "UPDATE pawning_ticket SET Status = '3' WHERE idPawning_Ticket = ?",
+        [ticketId],
+      );
+    }
+  }
+
+  const latest = await getLatestLog(ticketId, queryRunner);
+  return {
+    skipped: false,
+    penaltyInserted: penalty.inserted,
+    penaltyAmount: penalty.amount,
+    lateBalance: parseFloat(latest?.Late_Charges_Balance) || 0,
+    interestBalance: parseFloat(latest?.Interest_Balance) || 0,
+    totalBalance: parseFloat(latest?.Total_Balance) || 0,
+  };
+};
+
 // ─────────────────────────────────────────────────────────────
 // MAIN ENTRY POINT
 // ─────────────────────────────────────────────────────────────
 
 export const addDailyTicketLog = async () => {
   try {
-    const [activeTickets] = await pool.query(
-      "SELECT * FROM pawning_ticket WHERE Status = '1'",
+    const [tickets] = await pool.query(
+      "SELECT idPawning_Ticket FROM pawning_ticket WHERE Status IN ('1', '3')",
     );
 
-    for (const ticket of activeTickets) {
-      const ticketId = ticket.idPawning_Ticket;
-      const today = toStartOfDay(new Date());
-      const maturityDate = toStartOfDay(ticket.Maturity_date);
-      const noOfStages = parseFloat(ticket.noOfStages) || 0;
-      const hasStages = noOfStages >= 2;
-
-      // ── STEP 1: Process interest ───────────────────────────
-      if (hasStages) {
-        const ticketStartDate = toStartOfDay(ticket.Date_Time);
-        const stages = buildStages(ticket, noOfStages, "stage");
-        await processStageInterest(
-          ticket,
-          ticketId,
-          today,
-          ticketStartDate,
-          stages,
-        );
-      } else {
-        await processOriginalInterest(ticket, ticketId, today);
-      }
-
-      // ── STEP 2: Process late charge penalties (post maturity) ──
-      if (today > maturityDate) {
-        const [existingPenaltyCheck] = await pool.query(
-          "SELECT 1 FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? AND Type = 'PENALTY' LIMIT 1",
-          [ticketId],
-        );
-        const hadPenaltyBefore = existingPenaltyCheck.length > 0;
-
-        const penaltyInserted = await processLateChargeStages(
-          ticket,
-          ticketId,
-          today,
-          maturityDate,
-        );
-
-        // Flip status to overdue only on the very first penalty ever inserted
-        if (!hadPenaltyBefore && penaltyInserted && ticket.Status !== "3") {
-          await pool.query(
-            "UPDATE pawning_ticket SET Status = '3' WHERE idPawning_Ticket = ?",
-            [ticketId],
-          );
-        }
-      }
+    for (const row of tickets) {
+      await accrueTicketInterestAndPenalty(row.idPawning_Ticket);
     }
   } catch (error) {
     console.error("Error adding daily ticket log:", error);

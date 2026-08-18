@@ -33,23 +33,173 @@ function normalizeBranchIds(ids) {
   ];
 }
 
-/** Head office: all company branches. Otherwise: the selected branch only. */
+/**
+ * Head office: assigned branches only (optional filterBranchId).
+ * Other branches: the selected branch only.
+ */
 async function resolveDashboardBranchIds(req) {
-  if (req.isHeadBranch) {
-    try {
-      const companyBranches = normalizeBranchIds(
-        await getCompanyBranches(req.companyId),
-      );
-      if (companyBranches.length) return companyBranches;
-    } catch (err) {
-      console.warn(
-        "[dashboard] getCompanyBranches failed:",
-        err.message,
-      );
-    }
-  }
   const selected = Number(req.params.branchId || req.branchId);
+  const assigned = normalizeBranchIds(req.branches);
+
+  if (!req.isHeadBranch) {
+    return Number.isFinite(selected) ? [selected] : [];
+  }
+
+  let allowed = assigned.length
+    ? assigned
+    : Number.isFinite(selected)
+      ? [selected]
+      : [];
+
+  try {
+    const companyBranches = normalizeBranchIds(
+      await getCompanyBranches(req.companyId),
+    );
+    if (companyBranches.length) {
+      allowed = allowed.filter((id) => companyBranches.includes(id));
+    }
+  } catch (err) {
+    console.warn("[dashboard] getCompanyBranches failed:", err.message);
+  }
+
+  const filterRaw = req.query.filterBranchId ?? req.query.branchId;
+  if (filterRaw != null && String(filterRaw).trim() !== "") {
+    const filterId = Number(filterRaw);
+    if (!Number.isFinite(filterId) || !allowed.includes(filterId)) {
+      return [];
+    }
+    return [filterId];
+  }
+
+  if (allowed.length) {
+    const operating = allowed.filter((id) => id !== selected);
+    return operating.length ? operating : allowed;
+  }
   return Number.isFinite(selected) ? [selected] : [];
+}
+
+async function getBranchPerformance(branchIds) {
+  const ids = normalizeBranchIds(branchIds);
+  if (!ids.length) return [];
+
+  let nameMap = new Map();
+  try {
+    const placeholders = ids.map(() => "?").join(",");
+    const [branches] = await pool2.query(
+      `SELECT idBranch, Name FROM branch WHERE idBranch IN (${placeholders})`,
+      ids,
+    );
+    nameMap = new Map(
+      branches.map((b) => [Number(b.idBranch), b.Name || `Branch ${b.idBranch}`]),
+    );
+  } catch (err) {
+    console.warn("[dashboard] branch names failed:", err.message);
+  }
+
+  const byId = new Map(
+    ids.map((id) => [
+      id,
+      {
+        branchId: id,
+        branchName: nameMap.get(id) || `Branch ${id}`,
+        newLoansCount: 0,
+        newLoansValue: 0,
+        redemptionsCount: 0,
+        redemptionsValue: 0,
+        interestCollected: 0,
+        activeLoanCapital: 0,
+        articlesInVault: 0,
+        overdueCount: 0,
+      },
+    ]),
+  );
+
+  const merge = (rows, fields) => {
+    (rows || []).forEach((row) => {
+      const id = Number(row.branchId);
+      const target = byId.get(id);
+      if (!target) return;
+      fields.forEach((field) => {
+        target[field] = num(row[field]);
+      });
+    });
+  };
+
+  const [[loanRows], [redemptionRows], [interestRows], [capitalRows], [vaultRows], [overdueRows]] =
+    await Promise.all([
+      pool.query(
+        `SELECT pt.Branch_idBranch AS branchId,
+                COUNT(*) AS newLoansCount,
+                COALESCE(SUM(CAST(pt.Pawning_Advance_Amount AS DECIMAL(18,2))), 0) AS newLoansValue
+         FROM pawning_ticket pt
+         WHERE pt.Branch_idBranch IN (?)
+           AND ${ticketDateExpr} = CURDATE()
+           AND IFNULL(pt.Status, '0') IN ${ACTIVE_STATUSES}
+         GROUP BY pt.Branch_idBranch`,
+        [ids],
+      ),
+      pool.query(
+        `SELECT pt.Branch_idBranch AS branchId,
+                COUNT(*) AS redemptionsCount,
+                COALESCE(SUM(CAST(p.Advance_Payment AS DECIMAL(18,2))), 0) AS redemptionsValue
+         FROM payment p
+         INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = p.Pawning_Ticket_idPawning_Ticket
+         WHERE pt.Branch_idBranch IN (?)
+           AND ${paymentDateExpr} = CURDATE()
+           AND UPPER(p.Type) LIKE '%SETTLEMENT%'
+         GROUP BY pt.Branch_idBranch`,
+        [ids],
+      ),
+      pool.query(
+        `SELECT pt.Branch_idBranch AS branchId,
+                COALESCE(SUM(${paymentFeesExpr}), 0) AS interestCollected
+         FROM payment p
+         INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = p.Pawning_Ticket_idPawning_Ticket
+         WHERE pt.Branch_idBranch IN (?)
+           AND ${paymentDateExpr} = CURDATE()
+         GROUP BY pt.Branch_idBranch`,
+        [ids],
+      ),
+      pool.query(
+        `SELECT pt.Branch_idBranch AS branchId,
+                COALESCE(SUM(CAST(pt.Balance_Amount AS DECIMAL(18,2))), 0) AS activeLoanCapital
+         FROM pawning_ticket pt
+         WHERE pt.Branch_idBranch IN (?)
+           AND IFNULL(pt.Status, '0') IN ${ACTIVE_STATUSES}
+         GROUP BY pt.Branch_idBranch`,
+        [ids],
+      ),
+      pool.query(
+        `SELECT pt.Branch_idBranch AS branchId,
+                COUNT(ta.idTicket_Articles) AS articlesInVault
+         FROM ticket_articles ta
+         INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = ta.Pawning_Ticket_idPawning_Ticket
+         WHERE pt.Branch_idBranch IN (?)
+           AND IFNULL(pt.Status, '0') IN ${ACTIVE_STATUSES}
+         GROUP BY pt.Branch_idBranch`,
+        [ids],
+      ),
+      pool.query(
+        `SELECT pt.Branch_idBranch AS branchId,
+                COUNT(*) AS overdueCount
+         FROM pawning_ticket pt
+         WHERE pt.Branch_idBranch IN (?)
+           AND IFNULL(pt.Status, '0') = '3'
+         GROUP BY pt.Branch_idBranch`,
+        [ids],
+      ),
+    ]);
+
+  merge(loanRows, ["newLoansCount", "newLoansValue"]);
+  merge(redemptionRows, ["redemptionsCount", "redemptionsValue"]);
+  merge(interestRows, ["interestCollected"]);
+  merge(capitalRows, ["activeLoanCapital"]);
+  merge(vaultRows, ["articlesInVault"]);
+  merge(overdueRows, ["overdueCount"]);
+
+  return [...byId.values()].sort((a, b) =>
+    String(a.branchName).localeCompare(String(b.branchName)),
+  );
 }
 
 async function enrichCustomerNames(rows) {
@@ -1104,27 +1254,47 @@ export const getDashboardMetrics = async (req, res, next) => {
       return next(errorHandler(400, "No accessible branches for dashboard"));
     }
 
-    const data = {};
-    await Promise.all(
-      requestedCards.map(async (key) => {
-        const handler = handlers[key];
-        if (!handler) {
-          data[key] = null;
-          return;
-        }
-        try {
-          data[key] = await handler(branchIds, companyId);
-        } catch (err) {
-          console.error(`[dashboard] metric "${key}" failed:`, err.message);
-          data[key] = null;
-        }
-      }),
+    const isAllAssignedBranches = Boolean(
+      req.isHeadBranch && branchIds.length > 1,
     );
+
+    const data = {};
+    const jobs = requestedCards.map(async (key) => {
+      const handler = handlers[key];
+      if (!handler) {
+        data[key] = null;
+        return;
+      }
+      try {
+        data[key] = await handler(branchIds, companyId);
+      } catch (err) {
+        console.error(`[dashboard] metric "${key}" failed:`, err.message);
+        data[key] = null;
+      }
+    });
+
+    let branchPerformance = [];
+    if (isAllAssignedBranches) {
+      jobs.push(
+        getBranchPerformance(branchIds)
+          .then((rows) => {
+            branchPerformance = rows;
+          })
+          .catch((err) => {
+            console.error("[dashboard] branch performance failed:", err.message);
+            branchPerformance = [];
+          }),
+      );
+    }
+
+    await Promise.all(jobs);
 
     res.status(200).json({
       success: true,
       data,
-      scope: req.isHeadBranch ? "company" : "branch",
+      scope: isAllAssignedBranches ? "company" : "branch",
+      showBranchColumn: isAllAssignedBranches,
+      branchPerformance,
     });
   } catch (error) {
     console.error("Error in getDashboardMetrics:", error);

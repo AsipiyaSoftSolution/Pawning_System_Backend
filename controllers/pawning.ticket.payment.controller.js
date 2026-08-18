@@ -126,6 +126,10 @@ function normalizeBranchIds(branchIds) {
   ];
 }
 
+function isSettledTicketStatus(status) {
+  return String(status ?? "").trim() === "2";
+}
+
 // Search tickets by ticket number, customer NIC, or customer name with pagination
 async function resolveTicketSearchBranchIds(req) {
   const queryBranchId = req.query.branchId;
@@ -188,7 +192,9 @@ export const searchByTickerNumberCustomerNICOrName = async (req, res, next) => {
     const branchPlaceholders = branchIds.map(() => "?").join(",");
     let query = `SELECT pt.idPawning_Ticket, pt.Ticket_No, pt.Customer_idCustomer, pt.Status, pt.Branch_idBranch
                  FROM pawning_ticket pt 
-                 WHERE pt.Branch_idBranch IN (${branchPlaceholders}) AND pt.Status != '-1' AND pt.Status IS NOT NULL`;
+                 WHERE pt.Branch_idBranch IN (${branchPlaceholders})
+                   AND pt.Status IS NOT NULL
+                   AND pt.Status NOT IN ('-1', '2')`;
 
     let queryParams = [...branchIds];
     let whereConditions = [];
@@ -281,6 +287,7 @@ export const searchByTickerNumberCustomerNICOrName = async (req, res, next) => {
         idPawning_Ticket: t.idPawning_Ticket,
         Ticket_No: t.Ticket_No,
         Branch_idBranch: t.Branch_idBranch,
+        Status: t.Status,
         Full_name: cus.Full_Name || "Unknown",
         NIC: cus.Nic || "",
       };
@@ -683,6 +690,23 @@ export const createTicketAdditionalCharge = async (req, res, next) => {
     connection = await pool.getConnection();
     await connection.beginTransaction();
 
+    const [ticketRow] = await connection.query(
+      "SELECT Status, Branch_idBranch FROM pawning_ticket WHERE idPawning_Ticket = ?",
+      [ticketId],
+    );
+    if (!ticketRow.length) {
+      await connection.rollback();
+      return next(errorHandler(404, "No ticket found for the given ID"));
+    }
+    if (!(await userCanAccessTicketBranch(req, ticketRow[0].Branch_idBranch))) {
+      await connection.rollback();
+      return next(errorHandler(403, "Access denied to this ticket's branch"));
+    }
+    if (isSettledTicketStatus(ticketRow[0].Status)) {
+      await connection.rollback();
+      return next(errorHandler(400, "Ticket is already settled"));
+    }
+
     const [result] = await connection.query(
       "INSERT INTO additional_charges (Description,Amount,Pawning_Ticket_idPawning_Ticket,Note,User_idUser,Date_Time) VALUES (?,?,?,?,?,NOW())",
       [description, amount, ticketId, note, req.userId],
@@ -768,11 +792,14 @@ export const createPaymentForTicket = async (req, res, next) => {
     connection = await pool.getConnection();
 
     const [existingTicket] = await connection.query(
-      "SELECT Interest_apply_on,Maturity_date,Date_Time,Ticket_No,Customer_idCustomer,Net_Weight,SEQ_No FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+      "SELECT Interest_apply_on,Maturity_date,Date_Time,Ticket_No,Customer_idCustomer,Net_Weight,SEQ_No,Status FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
       [ticketId, req.branchId],
     );
     if (existingTicket.length === 0) {
       return next(errorHandler(404, "No ticket found for the given ID"));
+    }
+    if (isSettledTicketStatus(existingTicket[0].Status)) {
+      return next(errorHandler(400, "Ticket is already settled"));
     }
 
     const [ticketLog] = await connection.query(
@@ -1052,13 +1079,18 @@ export const createTicketRenewalPayment = async (req, res, next) => {
     try {
       // check if the ticket exists and belongs to the branch
       const [existingTicket] = await connection.query(
-        "SELECT Interest_apply_on,Maturity_date,Date_Time,Ticket_No,Period_Type,Period,Customer_idCustomer,Net_Weight,SEQ_No FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+        "SELECT Interest_apply_on,Maturity_date,Date_Time,Ticket_No,Period_Type,Period,Customer_idCustomer,Net_Weight,SEQ_No,Status FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
         [ticketId, req.branchId],
       );
       if (existingTicket.length === 0) {
         await connection.rollback();
         connection.release();
         return next(errorHandler(404, "No ticket found for the given ID"));
+      }
+      if (isSettledTicketStatus(existingTicket[0].Status)) {
+        await connection.rollback();
+        connection.release();
+        return next(errorHandler(400, "Ticket is already settled"));
       }
 
       // get the lastest ticket log entry for the ticket
@@ -2002,12 +2034,16 @@ export const reqAccessForTicketRenew = async (req, res, next) => {
     const ticketId = req.params.ticketId;
 
     const [ticketData] = await pool.query(
-      "SELECT renewReqStatus FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
+      "SELECT renewReqStatus, Status FROM pawning_ticket WHERE idPawning_Ticket = ? AND Branch_idBranch = ?",
       [ticketId, req.branchId],
     );
 
     if (!ticketData || ticketData.length === 0) {
       return next(errorHandler(404, "Ticket not found"));
+    }
+
+    if (isSettledTicketStatus(ticketData[0].Status)) {
+      return next(errorHandler(400, "Ticket is already settled"));
     }
 
     if (ticketData[0].renewReqStatus === 1) {

@@ -6,6 +6,7 @@ import {
 } from "../controllers/ui.setting.controller.js";
 import { protectedRoute } from "../middlewares/auth.middleware.js";
 import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
+import { checkUserSelectedHeadBranch } from "../middlewares/headBranch.middleware.js";
 
 const router = express.Router();
 
@@ -13,6 +14,7 @@ router.get(
   "/:branchId/dashboard-cards",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserSelectedHeadBranch,
   getDashboardUIComponents
 );
 router.post(

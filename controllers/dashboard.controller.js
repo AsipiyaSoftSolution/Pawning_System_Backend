@@ -1,5 +1,6 @@
 import { pool, pool2 } from "../utils/db.js";
 import { errorHandler } from "../utils/errorHandler.js";
+import { getCompanyBranches } from "../utils/helper.js";
 
 /** Active / overdue tickets that still hold articles in vault */
 const ACTIVE_STATUSES = "('1', '3')";
@@ -19,6 +20,37 @@ const num = (v) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 };
+
+function normalizeBranchIds(ids) {
+  if (!Array.isArray(ids)) {
+    const n = Number(ids);
+    return Number.isFinite(n) ? [n] : [];
+  }
+  return [
+    ...new Set(
+      ids.map((id) => Number(id)).filter((id) => Number.isFinite(id)),
+    ),
+  ];
+}
+
+/** Head office: all company branches. Otherwise: the selected branch only. */
+async function resolveDashboardBranchIds(req) {
+  if (req.isHeadBranch) {
+    try {
+      const companyBranches = normalizeBranchIds(
+        await getCompanyBranches(req.companyId),
+      );
+      if (companyBranches.length) return companyBranches;
+    } catch (err) {
+      console.warn(
+        "[dashboard] getCompanyBranches failed:",
+        err.message,
+      );
+    }
+  }
+  const selected = Number(req.params.branchId || req.branchId);
+  return Number.isFinite(selected) ? [selected] : [];
+}
 
 async function enrichCustomerNames(rows) {
   if (!Array.isArray(rows) || rows.length === 0) return rows;
@@ -95,6 +127,40 @@ async function enrichUserNames(rows) {
   }
 }
 
+async function enrichBranchNames(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return rows;
+  const ids = [
+    ...new Set(
+      rows
+        .map((r) => Number(r.branchId ?? r.Branch_idBranch))
+        .filter((id) => Number.isFinite(id) && id > 0),
+    ),
+  ];
+  if (!ids.length) return rows;
+  try {
+    const placeholders = ids.map(() => "?").join(",");
+    const [branches] = await pool2.query(
+      `SELECT idBranch, Name FROM branch WHERE idBranch IN (${placeholders})`,
+      ids,
+    );
+    const map = new Map(
+      branches.map((b) => [Number(b.idBranch), b.Name]),
+    );
+    return rows.map((r) => {
+      const name = map.get(Number(r.branchId ?? r.Branch_idBranch));
+      if (!name) return r;
+      return {
+        ...r,
+        branchName: name,
+        location: name || r.location,
+      };
+    });
+  } catch (err) {
+    console.warn("[dashboard] enrichBranchNames failed:", err.message);
+    return rows;
+  }
+}
+
 const TABLE_PREVIEW_LIMIT = 8;
 
 /**
@@ -116,8 +182,9 @@ async function tablePreview({
     TABLE_PREVIEW_LIMIT,
   ]);
   const mapped = mapRows ? await mapRows(rows) : rows;
+  const list = Array.isArray(mapped) ? mapped : [];
   return {
-    rows: Array.isArray(mapped) ? mapped : [],
+    rows: await enrichBranchNames(list),
     total,
     previewLimit: TABLE_PREVIEW_LIMIT,
   };
@@ -131,16 +198,16 @@ const emptyTablePreview = () => ({
 
 const handlers = {
   // ─── SUMMARIES ───────────────────────────────────────────────────────────
-  new_loans: async (branchId) => {
+  new_loans: async (branchIds) => {
     const [rows] = await pool.query(
       `SELECT
          COUNT(*) AS newLoansCount,
          COALESCE(SUM(CAST(pt.Pawning_Advance_Amount AS DECIMAL(18,2))), 0) AS newLoansValue
        FROM pawning_ticket pt
-       WHERE pt.Branch_idBranch = ?
+       WHERE pt.Branch_idBranch IN (?)
          AND ${ticketDateExpr} = CURDATE()
          AND IFNULL(pt.Status, '0') IN ${ACTIVE_STATUSES}`,
-      [branchId],
+      [branchIds],
     );
     return {
       newLoansCount: num(rows[0]?.newLoansCount),
@@ -148,17 +215,17 @@ const handlers = {
     };
   },
 
-  redemptions: async (branchId) => {
+  redemptions: async (branchIds) => {
     const [rows] = await pool.query(
       `SELECT
          COUNT(*) AS redemptionsCount,
          COALESCE(SUM(CAST(p.Advance_Payment AS DECIMAL(18,2))), 0) AS redemptionsValue
        FROM payment p
        INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = p.Pawning_Ticket_idPawning_Ticket
-       WHERE pt.Branch_idBranch = ?
+       WHERE pt.Branch_idBranch IN (?)
          AND ${paymentDateExpr} = CURDATE()
          AND UPPER(p.Type) LIKE '%SETTLEMENT%'`,
-      [branchId],
+      [branchIds],
     );
     return {
       redemptionsCount: num(rows[0]?.redemptionsCount),
@@ -166,63 +233,63 @@ const handlers = {
     };
   },
 
-  interest_collected: async (branchId) => {
+  interest_collected: async (branchIds) => {
     const [rows] = await pool.query(
       `SELECT COALESCE(SUM(${paymentFeesExpr}), 0) AS interestFeesCollectedToday
        FROM payment p
        INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = p.Pawning_Ticket_idPawning_Ticket
-       WHERE pt.Branch_idBranch = ?
+       WHERE pt.Branch_idBranch IN (?)
          AND ${paymentDateExpr} = CURDATE()`,
-      [branchId],
+      [branchIds],
     );
     return {
       interestFeesCollectedToday: num(rows[0]?.interestFeesCollectedToday),
     };
   },
 
-  net_cash_flow: async (branchId) => {
+  net_cash_flow: async (branchIds) => {
     const [inRows] = await pool.query(
       `SELECT COALESCE(SUM(CAST(p.Amount AS DECIMAL(18,2))), 0) AS inflow
        FROM payment p
        INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = p.Pawning_Ticket_idPawning_Ticket
-       WHERE pt.Branch_idBranch = ?
+       WHERE pt.Branch_idBranch IN (?)
          AND ${paymentDateExpr} = CURDATE()`,
-      [branchId],
+      [branchIds],
     );
     const [outRows] = await pool.query(
       `SELECT COALESCE(SUM(CAST(pt.Pawning_Advance_Amount AS DECIMAL(18,2))), 0) AS outflow
        FROM pawning_ticket pt
-       WHERE pt.Branch_idBranch = ?
+       WHERE pt.Branch_idBranch IN (?)
          AND ${ticketDateExpr} = CURDATE()
          AND IFNULL(pt.Status, '0') IN ${ACTIVE_STATUSES}`,
-      [branchId],
+      [branchIds],
     );
     return {
       netCashFlow: num(inRows[0]?.inflow) - num(outRows[0]?.outflow),
     };
   },
 
-  new_pledges: async (branchId) => {
+  new_pledges: async (branchIds) => {
     const [rows] = await pool.query(
       `SELECT COUNT(*) AS newPledgesCount
        FROM pawning_ticket pt
-       WHERE pt.Branch_idBranch = ?
+       WHERE pt.Branch_idBranch IN (?)
          AND ${ticketDateExpr} = CURDATE()`,
-      [branchId],
+      [branchIds],
     );
     return { newPledgesCount: num(rows[0]?.newPledgesCount) };
   },
 
-  wtd_new_loans: async (branchId) => {
+  wtd_new_loans: async (branchIds) => {
     const [rows] = await pool.query(
       `SELECT
          COUNT(*) AS newLoansCount,
          COALESCE(SUM(CAST(pt.Pawning_Advance_Amount AS DECIMAL(18,2))), 0) AS wtdNewLoansValue
        FROM pawning_ticket pt
-       WHERE pt.Branch_idBranch = ?
+       WHERE pt.Branch_idBranch IN (?)
          AND ${ticketDateExpr} >= DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)
          AND IFNULL(pt.Status, '0') IN ${ACTIVE_STATUSES}`,
-      [branchId],
+      [branchIds],
     );
     return {
       newLoansCount: num(rows[0]?.newLoansCount),
@@ -231,71 +298,71 @@ const handlers = {
     };
   },
 
-  mtd_interest: async (branchId) => {
+  mtd_interest: async (branchIds) => {
     const [rows] = await pool.query(
       `SELECT COALESCE(SUM(${paymentFeesExpr}), 0) AS mtdInterestIncome
        FROM payment p
        INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = p.Pawning_Ticket_idPawning_Ticket
-       WHERE pt.Branch_idBranch = ?
+       WHERE pt.Branch_idBranch IN (?)
          AND ${paymentDateExpr} >= DATE_FORMAT(CURDATE(), '%Y-%m-01')`,
-      [branchId],
+      [branchIds],
     );
     return { mtdInterestIncome: num(rows[0]?.mtdInterestIncome) };
   },
 
-  renewals_mtd: async (branchId) => {
+  renewals_mtd: async (branchIds) => {
     const [rows] = await pool.query(
       `SELECT COUNT(*) AS pledgesRenewedThisMonth
        FROM payment p
        INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = p.Pawning_Ticket_idPawning_Ticket
-       WHERE pt.Branch_idBranch = ?
+       WHERE pt.Branch_idBranch IN (?)
          AND ${paymentDateExpr} >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
          AND UPPER(p.Type) LIKE '%RENEWAL%'`,
-      [branchId],
+      [branchIds],
     );
     return {
       pledgesRenewedThisMonth: num(rows[0]?.pledgesRenewedThisMonth),
     };
   },
 
-  active_loan_capital: async (branchId) => {
+  active_loan_capital: async (branchIds) => {
     const [rows] = await pool.query(
       `SELECT COALESCE(SUM(CAST(pt.Balance_Amount AS DECIMAL(18,2))), 0) AS totalActiveLoanCapital
        FROM pawning_ticket pt
-       WHERE pt.Branch_idBranch = ?
+       WHERE pt.Branch_idBranch IN (?)
          AND IFNULL(pt.Status, '0') IN ${ACTIVE_STATUSES}`,
-      [branchId],
+      [branchIds],
     );
     return {
       totalActiveLoanCapital: num(rows[0]?.totalActiveLoanCapital),
     };
   },
 
-  articles_in_vault: async (branchId) => {
+  articles_in_vault: async (branchIds) => {
     const [rows] = await pool.query(
       `SELECT COUNT(*) AS totalArticlesInVault
        FROM ticket_articles ta
        INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = ta.Pawning_Ticket_idPawning_Ticket
-       WHERE pt.Branch_idBranch = ?
+       WHERE pt.Branch_idBranch IN (?)
          AND IFNULL(pt.Status, '0') IN ${ACTIVE_STATUSES}`,
-      [branchId],
+      [branchIds],
     );
     return { totalArticlesInVault: num(rows[0]?.totalArticlesInVault) };
   },
 
-  gold_weight: async (branchId) => {
+  gold_weight: async (branchIds) => {
     const [rows] = await pool.query(
       `SELECT COALESCE(SUM(CAST(ta.Net_Weight AS DECIMAL(18,3))), 0) AS totalGoldWeightGrams
        FROM ticket_articles ta
        INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = ta.Pawning_Ticket_idPawning_Ticket
-       WHERE pt.Branch_idBranch = ?
+       WHERE pt.Branch_idBranch IN (?)
          AND IFNULL(pt.Status, '0') IN ${ACTIVE_STATUSES}`,
-      [branchId],
+      [branchIds],
     );
     return { totalGoldWeightGrams: num(rows[0]?.totalGoldWeightGrams) };
   },
 
-  avg_ltv: async (branchId) => {
+  avg_ltv: async (branchIds) => {
     const [rows] = await pool.query(
       `SELECT AVG(
          CASE
@@ -306,58 +373,59 @@ const handlers = {
          END
        ) AS averageLTV
        FROM pawning_ticket pt
-       WHERE pt.Branch_idBranch = ?
+       WHERE pt.Branch_idBranch IN (?)
          AND IFNULL(pt.Status, '0') IN ${ACTIVE_STATUSES}`,
-      [branchId],
+      [branchIds],
     );
     return { averageLTV: num(rows[0]?.averageLTV) };
   },
 
-  expiring_count: async (branchId) => {
+  expiring_count: async (branchIds) => {
     const [rows] = await pool.query(
       `SELECT COUNT(*) AS articlesExpiringIn7Days
        FROM pawning_ticket pt
-       WHERE pt.Branch_idBranch = ?
+       WHERE pt.Branch_idBranch IN (?)
          AND IFNULL(pt.Status, '0') = '1'
          AND ${maturityDateExpr} BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)`,
-      [branchId],
+      [branchIds],
     );
     return {
       articlesExpiringIn7Days: num(rows[0]?.articlesExpiringIn7Days),
     };
   },
 
-  overdue_count: async (branchId) => {
+  overdue_count: async (branchIds) => {
     const [rows] = await pool.query(
       `SELECT COUNT(*) AS overdueArticlesCount
        FROM pawning_ticket pt
-       WHERE pt.Branch_idBranch = ?
+       WHERE pt.Branch_idBranch IN (?)
          AND IFNULL(pt.Status, '0') = '3'`,
-      [branchId],
+      [branchIds],
     );
     return { overdueArticlesCount: num(rows[0]?.overdueArticlesCount) };
   },
 
-  new_customers: async (branchId) => {
+  new_customers: async (branchIds) => {
     const [rows] = await pool.query(
       `SELECT COUNT(*) AS newCustomersToday
        FROM customer c
-       WHERE c.Branch_idBranch = ?
+       WHERE c.Branch_idBranch IN (?)
          AND DATE(c.created_at) = CURDATE()`,
-      [branchId],
+      [branchIds],
     );
     return { newCustomersToday: num(rows[0]?.newCustomersToday) };
   },
 
   // ─── TABLES (preview + total for dashboard cards) ────────────────────────
-  expiring_articles: async (branchId) => {
-    const where = `pt.Branch_idBranch = ?
+  expiring_articles: async (branchIds) => {
+    const where = `pt.Branch_idBranch IN (?)
          AND IFNULL(pt.Status, '0') = '1'
          AND ${maturityDateExpr} BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 7 DAY)`;
     return tablePreview({
       countSql: `SELECT COUNT(*) AS total FROM pawning_ticket pt WHERE ${where}`,
-      countParams: [branchId],
+      countParams: [branchIds],
       dataSql: `SELECT
+         pt.Branch_idBranch AS branchId,
          pt.Ticket_No AS articleId,
          c.Customer_Number AS customerNumber,
          c.accountCenterCusId,
@@ -367,18 +435,19 @@ const handlers = {
        LEFT JOIN customer c ON c.idCustomer = pt.Customer_idCustomer
        WHERE ${where}
        ORDER BY ${maturityDateExpr} ASC`,
-      dataParams: [branchId],
+      dataParams: [branchIds],
       mapRows: enrichCustomerNames,
     });
   },
 
-  overdue_articles: async (branchId) => {
-    const where = `pt.Branch_idBranch = ?
+  overdue_articles: async (branchIds) => {
+    const where = `pt.Branch_idBranch IN (?)
          AND IFNULL(pt.Status, '0') = '3'`;
     return tablePreview({
       countSql: `SELECT COUNT(*) AS total FROM pawning_ticket pt WHERE ${where}`,
-      countParams: [branchId],
+      countParams: [branchIds],
       dataSql: `SELECT
+         pt.Branch_idBranch AS branchId,
          pt.Ticket_No AS articleId,
          c.Customer_Number AS customerNumber,
          c.accountCenterCusId,
@@ -389,21 +458,22 @@ const handlers = {
        LEFT JOIN customer c ON c.idCustomer = pt.Customer_idCustomer
        WHERE ${where}
        ORDER BY daysOverdue DESC`,
-      dataParams: [branchId],
+      dataParams: [branchIds],
       mapRows: enrichCustomerNames,
     });
   },
 
-  transaction_log: async (branchId) => {
-    const where = `pt.Branch_idBranch = ?
+  transaction_log: async (branchIds) => {
+    const where = `pt.Branch_idBranch IN (?)
          AND ${paymentDateExpr} = CURDATE()`;
     return tablePreview({
       countSql: `SELECT COUNT(*) AS total
        FROM payment p
        INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = p.Pawning_Ticket_idPawning_Ticket
        WHERE ${where}`,
-      countParams: [branchId],
+      countParams: [branchIds],
       dataSql: `SELECT
+         pt.Branch_idBranch AS branchId,
          p.Date_time AS time,
          p.Type AS type,
          p.Ticket_no AS articleId,
@@ -416,7 +486,7 @@ const handlers = {
        LEFT JOIN customer c ON c.idCustomer = pt.Customer_idCustomer
        WHERE ${where}
        ORDER BY STR_TO_DATE(REPLACE(SUBSTRING(p.Date_time, 1, 19), 'T', ' '), '%Y-%m-%d %H:%i:%s') DESC`,
-      dataParams: [branchId],
+      dataParams: [branchIds],
       mapRows: async (rows) => {
         const enriched = await enrichCustomerNames(rows);
         return enriched.map((r) => ({ ...r, customer: r.customerName }));
@@ -424,16 +494,17 @@ const handlers = {
     });
   },
 
-  high_value_transactions: async (branchId) => {
-    const where = `pt.Branch_idBranch = ?
+  high_value_transactions: async (branchIds) => {
+    const where = `pt.Branch_idBranch IN (?)
          AND CAST(p.Amount AS DECIMAL(18,2)) >= 200000`;
     return tablePreview({
       countSql: `SELECT COUNT(*) AS total
        FROM payment p
        INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = p.Pawning_Ticket_idPawning_Ticket
        WHERE ${where}`,
-      countParams: [branchId],
+      countParams: [branchIds],
       dataSql: `SELECT
+         pt.Branch_idBranch AS branchId,
          p.Date_time AS time,
          p.id AS transactionId,
          c.Customer_Number AS customerNumber,
@@ -445,7 +516,7 @@ const handlers = {
        LEFT JOIN customer c ON c.idCustomer = pt.Customer_idCustomer
        WHERE ${where}
        ORDER BY CAST(p.Amount AS DECIMAL(18,2)) DESC`,
-      dataParams: [branchId],
+      dataParams: [branchIds],
       mapRows: async (rows) => {
         const enriched = await enrichCustomerNames(rows);
         return enriched.map((r) => ({ ...r, customer: r.customerName }));
@@ -453,16 +524,17 @@ const handlers = {
     });
   },
 
-  active_articles: async (branchId) => {
-    const where = `pt.Branch_idBranch = ?
+  active_articles: async (branchIds) => {
+    const where = `pt.Branch_idBranch IN (?)
          AND IFNULL(pt.Status, '0') IN ${ACTIVE_STATUSES}`;
     return tablePreview({
       countSql: `SELECT COUNT(*) AS total
        FROM ticket_articles ta
        INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = ta.Pawning_Ticket_idPawning_Ticket
        WHERE ${where}`,
-      countParams: [branchId],
+      countParams: [branchIds],
       dataSql: `SELECT
+         pt.Branch_idBranch AS branchId,
          ta.idTicket_Articles AS articleId,
          pt.Ticket_No AS pledgeId,
          c.Customer_Number AS customerNumber,
@@ -479,7 +551,7 @@ const handlers = {
        LEFT JOIN customer c ON c.idCustomer = pt.Customer_idCustomer
        WHERE ${where}
        ORDER BY pt.idPawning_Ticket DESC`,
-      dataParams: [branchId],
+      dataParams: [branchIds],
       mapRows: async (rows) => {
         const enriched = await enrichCustomerNames(rows);
         return enriched.map((r) => ({ ...r, customer: r.customerName }));
@@ -487,16 +559,17 @@ const handlers = {
     });
   },
 
-  vault_inventory: async (branchId) => {
-    const where = `pt.Branch_idBranch = ?
+  vault_inventory: async (branchIds) => {
+    const where = `pt.Branch_idBranch IN (?)
          AND IFNULL(pt.Status, '0') IN ${ACTIVE_STATUSES}`;
     return tablePreview({
       countSql: `SELECT COUNT(*) AS total
        FROM ticket_articles ta
        INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = ta.Pawning_Ticket_idPawning_Ticket
        WHERE ${where}`,
-      countParams: [branchId],
+      countParams: [branchIds],
       dataSql: `SELECT
+         pt.Branch_idBranch AS branchId,
          ta.idTicket_Articles AS articleId,
          pt.Ticket_No AS pledgeId,
          CONCAT(IFNULL(ta.Article_category, 'Item'), ' (', IFNULL(ta.Article_Condition, '-'), ')') AS description,
@@ -507,15 +580,16 @@ const handlers = {
        INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = ta.Pawning_Ticket_idPawning_Ticket
        WHERE ${where}
        ORDER BY ta.idTicket_Articles DESC`,
-      dataParams: [branchId],
+      dataParams: [branchIds],
     });
   },
 
-  customer_list: async (branchId) => {
+  customer_list: async (branchIds) => {
     return tablePreview({
-      countSql: `SELECT COUNT(*) AS total FROM customer c WHERE c.Branch_idBranch = ?`,
-      countParams: [branchId],
+      countSql: `SELECT COUNT(*) AS total FROM customer c WHERE c.Branch_idBranch IN (?)`,
+      countParams: [branchIds],
       dataSql: `SELECT
+         c.Branch_idBranch AS branchId,
          c.idCustomer AS customerId,
          c.Customer_Number AS customerNumber,
          c.accountCenterCusId,
@@ -523,23 +597,24 @@ const handlers = {
          CASE WHEN c.status = 1 THEN 'Active' ELSE 'Inactive' END AS status
        FROM customer c
        LEFT JOIN pawning_ticket pt ON pt.Customer_idCustomer = c.idCustomer
-       WHERE c.Branch_idBranch = ?
-       GROUP BY c.idCustomer, c.Customer_Number, c.accountCenterCusId, c.status
+       WHERE c.Branch_idBranch IN (?)
+       GROUP BY c.idCustomer, c.Customer_Number, c.accountCenterCusId, c.status, c.Branch_idBranch
        ORDER BY totalLoanVolume DESC`,
-      dataParams: [branchId],
+      dataParams: [branchIds],
       mapRows: enrichCustomerNames,
     });
   },
 
-  settled_last_month: async (branchId) => {
-    const where = `pt.Branch_idBranch = ?
+  settled_last_month: async (branchIds) => {
+    const where = `pt.Branch_idBranch IN (?)
          AND IFNULL(pt.Status, '0') = '2'
          AND DATE(COALESCE(pt.updated_at, pt.created_at)) >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 1 MONTH), '%Y-%m-01')
          AND DATE(COALESCE(pt.updated_at, pt.created_at)) < DATE_FORMAT(CURDATE(), '%Y-%m-01')`;
     return tablePreview({
       countSql: `SELECT COUNT(*) AS total FROM pawning_ticket pt WHERE ${where}`,
-      countParams: [branchId],
+      countParams: [branchIds],
       dataSql: `SELECT
+         pt.Branch_idBranch AS branchId,
          pt.Ticket_No AS articleId,
          pt.Ticket_No AS pledgeId,
          c.Customer_Number AS customerNumber,
@@ -550,7 +625,7 @@ const handlers = {
        LEFT JOIN customer c ON c.idCustomer = pt.Customer_idCustomer
        WHERE ${where}
        ORDER BY COALESCE(pt.updated_at, pt.created_at) DESC`,
-      dataParams: [branchId],
+      dataParams: [branchIds],
       mapRows: async (rows) => {
         const enriched = await enrichCustomerNames(rows);
         return enriched.map((r) => ({ ...r, customer: r.customerName }));
@@ -558,8 +633,8 @@ const handlers = {
     });
   },
 
-  renewals_last_month: async (branchId) => {
-    const where = `pt.Branch_idBranch = ?
+  renewals_last_month: async (branchIds) => {
+    const where = `pt.Branch_idBranch IN (?)
          AND UPPER(p.Type) LIKE '%RENEWAL%'
          AND ${paymentDateExpr} >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 1 MONTH), '%Y-%m-01')
          AND ${paymentDateExpr} < DATE_FORMAT(CURDATE(), '%Y-%m-01')`;
@@ -568,8 +643,9 @@ const handlers = {
        FROM payment p
        INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = p.Pawning_Ticket_idPawning_Ticket
        WHERE ${where}`,
-      countParams: [branchId],
+      countParams: [branchIds],
       dataSql: `SELECT
+         pt.Branch_idBranch AS branchId,
          p.Ticket_no AS articleId,
          p.Ticket_no AS pledgeId,
          c.Customer_Number AS customerNumber,
@@ -581,7 +657,7 @@ const handlers = {
        LEFT JOIN customer c ON c.idCustomer = pt.Customer_idCustomer
        WHERE ${where}
        ORDER BY STR_TO_DATE(REPLACE(SUBSTRING(p.Date_time, 1, 19), 'T', ' '), '%Y-%m-%d %H:%i:%s') DESC`,
-      dataParams: [branchId],
+      dataParams: [branchIds],
       mapRows: async (rows) => {
         const enriched = await enrichCustomerNames(rows);
         return enriched.map((r) => ({ ...r, customer: r.customerName }));
@@ -589,7 +665,7 @@ const handlers = {
     });
   },
 
-  activity_log: async (branchId, companyId) => {
+  activity_log: async (_branchIds, companyId) => {
     let userIds = [];
     try {
       const [users] = await pool2.query(
@@ -633,14 +709,15 @@ const handlers = {
     });
   },
 
-  top_customers: async (branchId) => {
+  top_customers: async (branchIds) => {
     return tablePreview({
       countSql: `SELECT COUNT(DISTINCT c.idCustomer) AS total
        FROM customer c
        INNER JOIN pawning_ticket pt ON pt.Customer_idCustomer = c.idCustomer
-       WHERE c.Branch_idBranch = ?`,
-      countParams: [branchId],
+       WHERE c.Branch_idBranch IN (?)`,
+      countParams: [branchIds],
       dataSql: `SELECT
+         c.Branch_idBranch AS branchId,
          c.idCustomer AS customerId,
          c.Customer_Number AS customerNumber,
          c.accountCenterCusId,
@@ -648,38 +725,38 @@ const handlers = {
          COALESCE(SUM(CAST(pt.Pawning_Advance_Amount AS DECIMAL(18,2))), 0) AS totalLoanVolume
        FROM customer c
        INNER JOIN pawning_ticket pt ON pt.Customer_idCustomer = c.idCustomer
-       WHERE c.Branch_idBranch = ?
-       GROUP BY c.idCustomer, c.Customer_Number, c.accountCenterCusId
+       WHERE c.Branch_idBranch IN (?)
+       GROUP BY c.idCustomer, c.Customer_Number, c.accountCenterCusId, c.Branch_idBranch
        ORDER BY totalLoanVolume DESC`,
-      dataParams: [branchId],
+      dataParams: [branchIds],
       mapRows: enrichCustomerNames,
     });
   },
 
   // ─── CHARTS ──────────────────────────────────────────────────────────────
-  loans_vs_redemptions: async (branchId) => {
+  loans_vs_redemptions: async (branchIds) => {
     const [loanRows] = await pool.query(
       `SELECT ${ticketDateExpr} AS date,
               COALESCE(SUM(CAST(pt.Pawning_Advance_Amount AS DECIMAL(18,2))), 0) AS loans
        FROM pawning_ticket pt
-       WHERE pt.Branch_idBranch = ?
+       WHERE pt.Branch_idBranch IN (?)
          AND ${ticketDateExpr} >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
          AND IFNULL(pt.Status, '0') NOT IN ('-1')
        GROUP BY ${ticketDateExpr}
        ORDER BY date ASC`,
-      [branchId],
+      [branchIds],
     );
     const [redemptionRows] = await pool.query(
       `SELECT ${paymentDateExpr} AS date,
               COALESCE(SUM(CAST(p.Amount AS DECIMAL(18,2))), 0) AS redemptions
        FROM payment p
        INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = p.Pawning_Ticket_idPawning_Ticket
-       WHERE pt.Branch_idBranch = ?
+       WHERE pt.Branch_idBranch IN (?)
          AND ${paymentDateExpr} >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
          AND UPPER(p.Type) LIKE '%SETTLEMENT%'
        GROUP BY ${paymentDateExpr}
        ORDER BY date ASC`,
-      [branchId],
+      [branchIds],
     );
     const dateMap = {};
     loanRows.forEach((r) => {
@@ -698,7 +775,7 @@ const handlers = {
     );
   },
 
-  monthly_income: async (branchId) => {
+  monthly_income: async (branchIds) => {
     const monthKeyExpr = `DATE_FORMAT(${paymentDateExpr}, '%Y-%m')`;
     const monthLabelExpr = `DATE_FORMAT(${paymentDateExpr}, '%b')`;
     const [rows] = await pool.query(
@@ -714,11 +791,11 @@ const handlers = {
          ), 0) AS fees
        FROM payment p
        INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = p.Pawning_Ticket_idPawning_Ticket
-       WHERE pt.Branch_idBranch = ?
+       WHERE pt.Branch_idBranch IN (?)
          AND ${paymentDateExpr} >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
        GROUP BY ${monthKeyExpr}, ${monthLabelExpr}
        ORDER BY ${monthKeyExpr} ASC`,
-      [branchId],
+      [branchIds],
     );
     return rows.map((r) => ({
       month: r.month,
@@ -727,7 +804,7 @@ const handlers = {
     }));
   },
 
-  revenue_sources: async (branchId) => {
+  revenue_sources: async (branchIds) => {
     const [rows] = await pool.query(
       `SELECT
          COALESCE(SUM(CAST(p.Interest_Payment AS DECIMAL(18,2))), 0) AS interest,
@@ -737,9 +814,9 @@ const handlers = {
          COALESCE(SUM(CAST(p.Other_Charges_Payment AS DECIMAL(18,2))), 0) AS other
        FROM payment p
        INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = p.Pawning_Ticket_idPawning_Ticket
-       WHERE pt.Branch_idBranch = ?
+       WHERE pt.Branch_idBranch IN (?)
          AND ${paymentDateExpr} >= DATE_FORMAT(CURDATE(), '%Y-%m-01')`,
-      [branchId],
+      [branchIds],
     );
     const r = rows[0] || {};
     return [
@@ -751,18 +828,18 @@ const handlers = {
     ].filter((x) => x.value > 0);
   },
 
-  busiest_hours: async (branchId) => {
+  busiest_hours: async (branchIds) => {
     const [rows] = await pool.query(
       `SELECT
          HOUR(STR_TO_DATE(REPLACE(SUBSTRING(p.Date_time, 1, 19), 'T', ' '), '%Y-%m-%d %H:%i:%s')) AS hour,
          COUNT(*) AS count
        FROM payment p
        INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = p.Pawning_Ticket_idPawning_Ticket
-       WHERE pt.Branch_idBranch = ?
+       WHERE pt.Branch_idBranch IN (?)
          AND ${paymentDateExpr} >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
        GROUP BY hour
        ORDER BY hour ASC`,
-      [branchId],
+      [branchIds],
     );
     return rows.map((r) => ({
       hour: `${String(r.hour).padStart(2, "0")}:00`,
@@ -770,7 +847,7 @@ const handlers = {
     }));
   },
 
-  new_vs_repeat: async (branchId) => {
+  new_vs_repeat: async (branchIds) => {
     const [rows] = await pool.query(
       `SELECT
          CASE WHEN ticket_count = 1 THEN 'New' ELSE 'Repeat' END AS name,
@@ -778,26 +855,26 @@ const handlers = {
        FROM (
          SELECT pt.Customer_idCustomer, COUNT(*) AS ticket_count
          FROM pawning_ticket pt
-         WHERE pt.Branch_idBranch = ?
+         WHERE pt.Branch_idBranch IN (?)
          GROUP BY pt.Customer_idCustomer
        ) t
        GROUP BY name`,
-      [branchId],
+      [branchIds],
     );
     return rows.map((r) => ({ name: r.name, value: num(r.value) }));
   },
 
-  customer_acquisition: async (branchId) => {
+  customer_acquisition: async (branchIds) => {
     const [rows] = await pool.query(
       `SELECT DATE_FORMAT(c.created_at, '%b') AS month,
               DATE_FORMAT(c.created_at, '%Y-%m') AS monthKey,
               COUNT(*) AS newCustomers
        FROM customer c
-       WHERE c.Branch_idBranch = ?
+       WHERE c.Branch_idBranch IN (?)
          AND c.created_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
        GROUP BY DATE_FORMAT(c.created_at, '%Y-%m'), DATE_FORMAT(c.created_at, '%b')
        ORDER BY DATE_FORMAT(c.created_at, '%Y-%m') ASC`,
-      [branchId],
+      [branchIds],
     );
     return rows.map((r) => ({
       month: r.month,
@@ -805,7 +882,7 @@ const handlers = {
     }));
   },
 
-  loan_value_distribution: async (branchId) => {
+  loan_value_distribution: async (branchIds) => {
     const [rows] = await pool.query(
       `SELECT
          CASE
@@ -816,16 +893,16 @@ const handlers = {
          END AS name,
          COUNT(*) AS value
        FROM pawning_ticket pt
-       WHERE pt.Branch_idBranch = ?
+       WHERE pt.Branch_idBranch IN (?)
          AND IFNULL(pt.Status, '0') IN ${ACTIVE_STATUSES}
        GROUP BY name
        ORDER BY MIN(CAST(pt.Pawning_Advance_Amount AS DECIMAL(18,2)))`,
-      [branchId],
+      [branchIds],
     );
     return rows.map((r) => ({ name: r.name, value: num(r.value) }));
   },
 
-  karat_distribution: async (branchId) => {
+  karat_distribution: async (branchIds) => {
     // Avoid '?' inside SQL strings — mysql2 treats it as a bind placeholder.
     const [rows] = await pool.query(
       `SELECT
@@ -833,16 +910,16 @@ const handlers = {
          COUNT(*) AS value
        FROM ticket_articles ta
        INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = ta.Pawning_Ticket_idPawning_Ticket
-       WHERE pt.Branch_idBranch = ?
+       WHERE pt.Branch_idBranch IN (?)
          AND IFNULL(pt.Status, '0') IN ${ACTIVE_STATUSES}
        GROUP BY CONCAT(COALESCE(NULLIF(TRIM(ta.Caratage), ''), 'N/A'), 'K')
        ORDER BY MIN(CAST(NULLIF(TRIM(ta.Caratage), '') AS UNSIGNED)) ASC`,
-      [branchId],
+      [branchIds],
     );
     return rows.map((r) => ({ name: r.name, value: num(r.value) }));
   },
 
-  articles_by_status: async (branchId) => {
+  articles_by_status: async (branchIds) => {
     const [rows] = await pool.query(
       `SELECT name, COUNT(*) AS value
        FROM (
@@ -856,15 +933,15 @@ const handlers = {
              ELSE CONCAT('Status ', IFNULL(pt.Status, '0'))
            END AS name
          FROM pawning_ticket pt
-         WHERE pt.Branch_idBranch = ?
+         WHERE pt.Branch_idBranch IN (?)
        ) t
        GROUP BY name`,
-      [branchId],
+      [branchIds],
     );
     return rows.map((r) => ({ name: r.name, value: num(r.value) }));
   },
 
-  ltv_distribution: async (branchId) => {
+  ltv_distribution: async (branchIds) => {
     const [rows] = await pool.query(
       `SELECT
          CASE
@@ -883,56 +960,56 @@ const handlers = {
              ELSE 0
            END AS ltv
          FROM pawning_ticket pt
-         WHERE pt.Branch_idBranch = ?
+         WHERE pt.Branch_idBranch IN (?)
            AND IFNULL(pt.Status, '0') IN ${ACTIVE_STATUSES}
        ) t
        GROUP BY name`,
-      [branchId],
+      [branchIds],
     );
     return rows.map((r) => ({ name: r.name, value: num(r.value) }));
   },
 
-  month_comparison: async (branchId) => {
+  month_comparison: async (branchIds) => {
     const [thisMonth] = await pool.query(
       `SELECT
          (SELECT COALESCE(SUM(CAST(pt.Pawning_Advance_Amount AS DECIMAL(18,2))), 0)
           FROM pawning_ticket pt
-          WHERE pt.Branch_idBranch = ?
+          WHERE pt.Branch_idBranch IN (?)
             AND ${ticketDateExpr} >= DATE_FORMAT(CURDATE(), '%Y-%m-01')) AS loans,
          (SELECT COALESCE(SUM(CAST(p.Amount AS DECIMAL(18,2))), 0)
           FROM payment p
           INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = p.Pawning_Ticket_idPawning_Ticket
-          WHERE pt.Branch_idBranch = ?
+          WHERE pt.Branch_idBranch IN (?)
             AND ${paymentDateExpr} >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
             AND UPPER(p.Type) LIKE '%SETTLEMENT%') AS redemptions,
          (SELECT COALESCE(SUM(${paymentFeesExpr}), 0)
           FROM payment p
           INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = p.Pawning_Ticket_idPawning_Ticket
-          WHERE pt.Branch_idBranch = ?
+          WHERE pt.Branch_idBranch IN (?)
             AND ${paymentDateExpr} >= DATE_FORMAT(CURDATE(), '%Y-%m-01')) AS income`,
-      [branchId, branchId, branchId],
+      [branchIds, branchIds, branchIds],
     );
     const [lastMonth] = await pool.query(
       `SELECT
          (SELECT COALESCE(SUM(CAST(pt.Pawning_Advance_Amount AS DECIMAL(18,2))), 0)
           FROM pawning_ticket pt
-          WHERE pt.Branch_idBranch = ?
+          WHERE pt.Branch_idBranch IN (?)
             AND ${ticketDateExpr} >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 1 MONTH), '%Y-%m-01')
             AND ${ticketDateExpr} < DATE_FORMAT(CURDATE(), '%Y-%m-01')) AS loans,
          (SELECT COALESCE(SUM(CAST(p.Amount AS DECIMAL(18,2))), 0)
           FROM payment p
           INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = p.Pawning_Ticket_idPawning_Ticket
-          WHERE pt.Branch_idBranch = ?
+          WHERE pt.Branch_idBranch IN (?)
             AND ${paymentDateExpr} >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 1 MONTH), '%Y-%m-01')
             AND ${paymentDateExpr} < DATE_FORMAT(CURDATE(), '%Y-%m-01')
             AND UPPER(p.Type) LIKE '%SETTLEMENT%') AS redemptions,
          (SELECT COALESCE(SUM(${paymentFeesExpr}), 0)
           FROM payment p
           INNER JOIN pawning_ticket pt ON pt.idPawning_Ticket = p.Pawning_Ticket_idPawning_Ticket
-          WHERE pt.Branch_idBranch = ?
+          WHERE pt.Branch_idBranch IN (?)
             AND ${paymentDateExpr} >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 1 MONTH), '%Y-%m-01')
             AND ${paymentDateExpr} < DATE_FORMAT(CURDATE(), '%Y-%m-01')) AS income`,
-      [branchId, branchId, branchId],
+      [branchIds, branchIds, branchIds],
     );
     return [
       {
@@ -953,7 +1030,7 @@ const handlers = {
     ];
   },
 
-  weekly_performance: async (branchId) => {
+  weekly_performance: async (branchIds) => {
     const dayLabelExpr = `DATE_FORMAT(${ticketDateExpr}, '%a')`;
     const [rows] = await pool.query(
       `SELECT
@@ -962,11 +1039,11 @@ const handlers = {
          COALESCE(SUM(CAST(pt.Pawning_Advance_Amount AS DECIMAL(18,2))), 0) AS loans,
          COUNT(*) AS count
        FROM pawning_ticket pt
-       WHERE pt.Branch_idBranch = ?
+       WHERE pt.Branch_idBranch IN (?)
          AND ${ticketDateExpr} >= DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)
        GROUP BY ${ticketDateExpr}, ${dayLabelExpr}
        ORDER BY ${ticketDateExpr} ASC`,
-      [branchId],
+      [branchIds],
     );
     return rows.map((r) => ({
       day: r.day,
@@ -975,19 +1052,19 @@ const handlers = {
     }));
   },
 
-  expiry_volume: async (branchId) => {
+  expiry_volume: async (branchIds) => {
     const [rows] = await pool.query(
       `SELECT
          ${maturityDateExpr} AS date,
          COUNT(*) AS count,
          COALESCE(SUM(CAST(pt.Balance_Amount AS DECIMAL(18,2))), 0) AS amount
        FROM pawning_ticket pt
-       WHERE pt.Branch_idBranch = ?
+       WHERE pt.Branch_idBranch IN (?)
          AND IFNULL(pt.Status, '0') = '1'
          AND ${maturityDateExpr} BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 30 DAY)
        GROUP BY ${maturityDateExpr}
        ORDER BY date ASC`,
-      [branchId],
+      [branchIds],
     );
     return rows.map((r) => ({
       date: r.date ? String(r.date).slice(0, 10) : "",
@@ -999,6 +1076,7 @@ const handlers = {
 
 /**
  * GET /api/dashboard/:branchId/metrics?cards=key1,key2
+ * Head office returns company-wide totals (all branches).
  */
 export const getDashboardMetrics = async (req, res, next) => {
   try {
@@ -1021,6 +1099,11 @@ export const getDashboardMetrics = async (req, res, next) => {
       return res.status(200).json({ success: true, data: {} });
     }
 
+    const branchIds = await resolveDashboardBranchIds(req);
+    if (!branchIds.length) {
+      return next(errorHandler(400, "No accessible branches for dashboard"));
+    }
+
     const data = {};
     await Promise.all(
       requestedCards.map(async (key) => {
@@ -1030,7 +1113,7 @@ export const getDashboardMetrics = async (req, res, next) => {
           return;
         }
         try {
-          data[key] = await handler(branchId, companyId);
+          data[key] = await handler(branchIds, companyId);
         } catch (err) {
           console.error(`[dashboard] metric "${key}" failed:`, err.message);
           data[key] = null;
@@ -1038,7 +1121,11 @@ export const getDashboardMetrics = async (req, res, next) => {
       }),
     );
 
-    res.status(200).json({ success: true, data });
+    res.status(200).json({
+      success: true,
+      data,
+      scope: req.isHeadBranch ? "company" : "branch",
+    });
   } catch (error) {
     console.error("Error in getDashboardMetrics:", error);
     return next(errorHandler(500, "Internal server error"));

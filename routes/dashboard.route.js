@@ -2,6 +2,7 @@ import express from "express";
 import { getDashboardMetrics } from "../controllers/dashboard.controller.js";
 import { protectedRoute } from "../middlewares/auth.middleware.js";
 import { checkUserBranchAccess } from "../middlewares/branch.middlware.js";
+import { checkUserSelectedHeadBranch } from "../middlewares/headBranch.middleware.js";
 
 const router = express.Router();
 
@@ -10,6 +11,7 @@ router.get(
   "/:branchId/metrics",
   protectedRoute,
   checkUserBranchAccess,
+  checkUserSelectedHeadBranch,
   getDashboardMetrics,
 );
 

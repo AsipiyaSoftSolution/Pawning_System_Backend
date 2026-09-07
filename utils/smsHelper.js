@@ -1,5 +1,6 @@
 import { pool } from "./db.js";
 import { subsystemApi } from "../api/accountCenterApi.js";
+import { applySmsTemplateVariables } from "./smsDateFormat.js";
 
 /**
  * Sends a Pawning system SMS asynchronously, catching any errors internally
@@ -21,12 +22,10 @@ export const sendPawningSmsSafely = async ({
     );
 
     if (smsTemplateData?.template && smsTemplateData.template.length > 0) {
-      let smsText = smsTemplateData.template[0].Template;
-
-      for (const [key, value] of Object.entries(placeholders)) {
-        const regex = new RegExp(`@${key}@`, "g");
-        smsText = smsText.replace(regex, value);
-      }
+      const smsText = applySmsTemplateVariables(
+        smsTemplateData.template[0].Template,
+        placeholders,
+      );
 
       const [accCenterCustomer] = await pool.query(
         "SELECT accountCenterCusId FROM customer WHERE idCustomer = ?",

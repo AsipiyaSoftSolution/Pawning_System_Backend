@@ -366,7 +366,10 @@ export const forgetPassword = async (req, res, next) => {
 
       // Create company object - the mask will be validated in sendViaHutch
       const company = {
-        mask: companyRows[0]?.SMS_Mask || process.env.HUTCH_DEFAULT_MASK,
+        mask:
+          String(companyRows[0]?.SMS_Mask || "").startsWith("!")
+            ? process.env.HUTCH_DEFAULT_MASK
+            : companyRows[0]?.SMS_Mask || process.env.HUTCH_DEFAULT_MASK,
       };
 
       const message = `Your password reset OTP is ${token}`;
@@ -551,7 +554,9 @@ export const resetPassword = async (req, res, next) => {
 
     // Create company object - the mask will be validated in sendViaHutch
     const company = {
-      mask: companyRows[0]?.SMS_Mask || process.env.HUTCH_DEFAULT_MASK,
+      mask: String(companyRows[0]?.SMS_Mask || "").startsWith("!")
+        ? process.env.HUTCH_DEFAULT_MASK
+        : companyRows[0]?.SMS_Mask || process.env.HUTCH_DEFAULT_MASK,
     };
 
     const message = `Hello ${user[0].full_name}, your password has been reset successfully. If you did not perform this action, please contact support immediately.`;

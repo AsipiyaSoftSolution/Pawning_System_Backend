@@ -41,7 +41,12 @@ const validateStageRates = (plan, index, prefix, count, errors) => {
       errors.push(`${label(index)}: stage ${stage} rate cannot exceed 100%.`);
     }
 
-    const start = toNumber(plan[`${prefix}${stage}StartDate`]);
+    const startRaw = plan[`${prefix}${stage}StartDate`];
+    const start =
+      stage === 1 &&
+      (startRaw === undefined || startRaw === null || startRaw === "")
+        ? 0
+        : toNumber(startRaw);
     if (stage === 1) {
       if (start !== 0) {
         errors.push(`${label(index)}: stage 1 must start on day 0.`);

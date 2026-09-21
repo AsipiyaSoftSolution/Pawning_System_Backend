@@ -21,7 +21,7 @@ import {
   fullTemplateKey,
 } from "../utils/pawningLetterTemplateFields.js";
 import { getRequestAccessToken } from "../utils/requestAuth.js";
-import { isStageInterestMethod } from "../utils/pawningProductConstants.js";
+import { usesStagedInterest } from "../utils/pawningProductConstants.js";
 import { computeInterestApplyOnDate } from "../utils/pawningInterestSchedule.js";
 
 /** Fetch company_customer data by Pawning customer ids via Account Center subsystem API */
@@ -715,6 +715,14 @@ export const createPawningTicket = async (req, res, next) => {
       );
     }
 
+    const planStageSnapshot = productPlanStagesData[0] || {};
+    const snapshotUsesStages = usesStagedInterest(planStageSnapshot);
+    const snapshotStageCount = snapshotUsesStages
+      ? parseInt(planStageSnapshot.noOfStages, 10) || 0
+      : 0;
+    const snapshotStageValue = (field, fallback = null) =>
+      snapshotUsesStages ? (planStageSnapshot[field] ?? fallback) : fallback;
+
     // Insert into pawning_ticket table
     const [result] = await connection.query(
       "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount,Service_Charge_Type,Service_Charge_Rate,Early_Settlement_Charge_Balance,Additiona_Charges_Balance,Service_Charge_Balance,Late_Charge_Balance,Interest_Amount_Balance,Balance_Amount,Interest_Rate_Duration,stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,Status,service_charge_paid_by_customer,service_charge_paid_from_pawning_advance,noOfStages,lateChargeStage1,lateChargeStage2,lateChargeStage3,lateChargeStage4,lateChargeStage1StartDate,lateChargeStage2StartDate,lateChargeStage3StartDate,lateChargeStage4StartDate,lateChargeStage1EndDate,lateChargeStage2EndDate,lateChargeStage3EndDate,lateChargeStage4EndDate,numberOfLateChargeStages,early_settlement_effect_type,early_settlement_stage1_start_day,early_settlement_stage1_end_day,early_settlement_stage1_value,early_settlement_stage1_value_type,early_settlement_stage2_start_day,early_settlement_stage2_end_day,early_settlement_stage2_value,early_settlement_stage2_value_type,early_settlement_stage3_start_day,early_settlement_stage3_end_day,early_settlement_stage3_value,early_settlement_stage3_value_type,early_settlement_stage4_start_day,early_settlement_stage4_end_day,early_settlement_stage4_value,early_settlement_stage4_value_type) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -748,22 +756,22 @@ export const createPawningTicket = async (req, res, next) => {
         0, // initial interest amount balance set to 0
         data.ticketData.pawningAdvance, // initial balance amount set to pawning advance
         data.ticketData.Interest_Rate_Duration,
-        productPlanStagesData[0]?.stage1StartDate || null,
-        productPlanStagesData[0]?.stage1EndDate || null,
-        productPlanStagesData[0]?.stage2StartDate || null,
-        productPlanStagesData[0]?.stage2EndDate || null,
-        productPlanStagesData[0]?.stage3StartDate || null,
-        productPlanStagesData[0]?.stage3EndDate || null,
-        productPlanStagesData[0]?.stage4StartDate || null,
-        productPlanStagesData[0]?.stage4EndDate || null,
-        productPlanStagesData[0]?.stage1Interest || 0,
-        productPlanStagesData[0]?.stage2Interest || 0,
-        productPlanStagesData[0]?.stage3Interest || 0,
-        productPlanStagesData[0]?.stage4Interest || 0,
+        snapshotStageValue("stage1StartDate"),
+        snapshotStageValue("stage1EndDate"),
+        snapshotStageValue("stage2StartDate"),
+        snapshotStageValue("stage2EndDate"),
+        snapshotStageValue("stage3StartDate"),
+        snapshotStageValue("stage3EndDate"),
+        snapshotStageValue("stage4StartDate"),
+        snapshotStageValue("stage4EndDate"),
+        snapshotStageValue("stage1Interest", 0),
+        snapshotStageValue("stage2Interest", 0),
+        snapshotStageValue("stage3Interest", 0),
+        snapshotStageValue("stage4Interest", 0),
         status, // initial status (can be 0 or -1 based on company settings)
         data.ticketData.serviceChargePaidBy === "customer" ? 1 : null,
         data.ticketData.serviceChargePaidBy === "advance" ? 1 : null,
-        productPlanStagesData[0]?.noOfStages || 0,
+        snapshotStageCount,
         lateChargeData[0]?.lateChargeStage1 || 0,
         lateChargeData[0]?.lateChargeStage2 || 0,
         lateChargeData[0]?.lateChargeStage3 || 0,
@@ -1633,9 +1641,7 @@ export const sendAssessedValues = async (req, res, next) => {
   }
 };
 
-const isInterestStagesPlan = (plan) =>
-  isStageInterestMethod(plan?.interestApplicableMethod) &&
-  (parseInt(plan?.noOfStages, 10) || 0) >= 2;
+const isInterestStagesPlan = (plan) => usesStagedInterest(plan);
 
 const buildInterestStagesPayload = (plan) => {
   const count = Math.min(parseInt(plan?.noOfStages, 10) || 0, 4);

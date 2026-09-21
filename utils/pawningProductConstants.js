@@ -40,6 +40,21 @@ const normalize = (value) =>
 export const isStageInterestMethod = (value) =>
   normalize(value) === normalize(STAGE_INTEREST_METHOD);
 
+/**
+ * True when a product plan or ticket should accrue via stage rates.
+ * Tickets do not snapshot interestApplicableMethod, so a leftover
+ * noOfStages=4 with all-zero rates is NOT treated as staged.
+ */
+export const usesStagedInterest = (source) => {
+  const count = parseInt(source?.noOfStages ?? source?.numberOfStages, 10) || 0;
+  if (count < 2) return false;
+  if (isStageInterestMethod(source?.interestApplicableMethod)) return true;
+  for (let stage = 1; stage <= Math.min(count, 4); stage += 1) {
+    if ((parseFloat(source?.[`stage${stage}Interest`]) || 0) > 0) return true;
+  }
+  return false;
+};
+
 export const isUntilSettlement = (value) =>
   UNTIL_SETTLEMENT_ALIASES.includes(normalize(value));
 

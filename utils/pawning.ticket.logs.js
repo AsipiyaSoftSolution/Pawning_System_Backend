@@ -1,6 +1,7 @@
 import { pool } from "../utils/db.js";
 import { createCustomerLogOnTicketPenality } from "./customer.logs.js";
 import { pawningPaymentsApi } from "../api/accountCenterApi.js";
+import { usesStagedInterest } from "./pawningProductConstants.js";
 
 // Helper: record accounting entries for accrued interest
 const recordInterestAccountingEntries = async (
@@ -879,7 +880,7 @@ export const applyTicketInterestLogsOnApproval = async (
   const ticket = rows[0];
   const today = toStartOfDay(new Date());
   const noOfStages = parseFloat(ticket.noOfStages) || 0;
-  const hasStages = noOfStages >= 2;
+  const hasStages = usesStagedInterest(ticket);
 
   if (hasStages) {
     const ticketStartDate = toStartOfDay(ticket.Date_Time);
@@ -947,7 +948,7 @@ export const accrueTicketInterestAndPenalty = async (
     : toStartOfDay(ticket.Maturity_date);
   const pastMaturity = Number(mat?.daysPast) > 0;
   const noOfStages = parseFloat(ticket.noOfStages) || 0;
-  const hasStages = noOfStages >= 2;
+  const hasStages = usesStagedInterest(ticket);
   const accessToken = options.accessToken || null;
 
   if (hasStages) {

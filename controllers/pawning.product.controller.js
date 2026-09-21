@@ -4,6 +4,7 @@ import { getPaginationData, getCompanyBranches } from "../utils/helper.js";
 import {
   DEFAULT_INTEREST_METHOD,
   isStageInterestMethod,
+  isUntilSettlement,
   normalizeStageEnd,
   STAGE_INTEREST_METHOD,
 } from "../utils/pawningProductConstants.js";
@@ -15,6 +16,68 @@ import {
 /** Flat plans historically stored NULL; treat that as "default". */
 const resolveInterestApplicableMethod = (value) =>
   isStageInterestMethod(value) ? STAGE_INTEREST_METHOD : DEFAULT_INTEREST_METHOD;
+
+const TO_MATURITY_DATE = "To maturity date";
+
+const isMaturityEnd = (value) =>
+  value !== undefined &&
+  value !== null &&
+  String(value).trim() !== "" &&
+  (isUntilSettlement(value) ||
+    String(value).toLowerCase().includes("maturity"));
+
+/**
+ * Snapshot interest stages for product_plan insert.
+ * Default plans must persist noOfStages=0 so tickets do not take the staged
+ * accrual path with empty stage rates.
+ */
+const persistInterestStages = (plan = {}) => {
+  const staged = isStageInterestMethod(plan.interestApplicableMethod);
+  const requested =
+    parseInt(plan.numberOfStages ?? plan.noOfStages, 10) || 0;
+  const count = staged ? Math.min(Math.max(requested, 2), 4) : 0;
+
+  const start = (stage) => {
+    if (!staged || stage > count) return stage === 1 ? 0 : null;
+    const raw = plan[`stage${stage}StartDate`];
+    if (stage === 1) {
+      return raw === undefined || raw === null || raw === "" ? 0 : raw;
+    }
+    return raw === undefined || raw === "" ? null : raw;
+  };
+
+  const end = (stage) => {
+    if (!staged || stage > count) return null;
+    if (stage === count) return TO_MATURITY_DATE;
+    const raw = plan[`stage${stage}EndDate`];
+    if (isMaturityEnd(raw)) return TO_MATURITY_DATE;
+    if (raw === undefined || raw === null || raw === "") return null;
+    return raw;
+  };
+
+  const rate = (stage) => {
+    if (!staged || stage > count) return 0;
+    const numeric = parseFloat(plan[`stage${stage}Interest`]);
+    return Number.isFinite(numeric) ? numeric : 0;
+  };
+
+  return {
+    method: resolveInterestApplicableMethod(plan.interestApplicableMethod),
+    noOfStages: count,
+    stage1StartDate: start(1),
+    stage1EndDate: end(1),
+    stage2StartDate: start(2),
+    stage2EndDate: end(2),
+    stage3StartDate: start(3),
+    stage3EndDate: end(3),
+    stage4StartDate: start(4),
+    stage4EndDate: end(4),
+    stage1Interest: rate(1),
+    stage2Interest: rate(2),
+    stage3Interest: rate(3),
+    stage4Interest: rate(4),
+  };
+};
 
 /**
  * The unique key on (Branch_idBranch, Product_Code) is the real guard against
@@ -221,18 +284,18 @@ export const getPawningProductById = async (req, res, next) => {
         Last_Updated_User,
         Last_Updated_Time,
         interestApplicableMethod,
-        CASE WHEN interestApplicableMethod = 'calculate for stages ' THEN stage1StartDate ELSE NULL END AS stage1StartDate,
-        CASE WHEN interestApplicableMethod = 'calculate for stages ' THEN stage1EndDate ELSE NULL END AS stage1EndDate,
-        CASE WHEN interestApplicableMethod = 'calculate for stages ' THEN stage2StartDate ELSE NULL END AS stage2StartDate,
-        CASE WHEN interestApplicableMethod = 'calculate for stages ' THEN stage2EndDate ELSE NULL END AS stage2EndDate,
-        CASE WHEN interestApplicableMethod = 'calculate for stages ' THEN stage3StartDate ELSE NULL END AS stage3StartDate,
-        CASE WHEN interestApplicableMethod = 'calculate for stages ' THEN stage3EndDate ELSE NULL END AS stage3EndDate,
-        CASE WHEN interestApplicableMethod = 'calculate for stages ' THEN stage4StartDate ELSE NULL END AS stage4StartDate,
-        CASE WHEN interestApplicableMethod = 'calculate for stages ' THEN stage4EndDate ELSE NULL END AS stage4EndDate,
-        CASE WHEN interestApplicableMethod = 'calculate for stages ' THEN stage1Interest ELSE NULL END AS stage1Interest,
-        CASE WHEN interestApplicableMethod = 'calculate for stages ' THEN stage2Interest ELSE NULL END AS stage2Interest,
-        CASE WHEN interestApplicableMethod = 'calculate for stages ' THEN stage3Interest ELSE NULL END AS stage3Interest,
-        CASE WHEN interestApplicableMethod = 'calculate for stages ' THEN stage4Interest ELSE NULL END AS stage4Interest,
+        stage1StartDate,
+        stage1EndDate,
+        stage2StartDate,
+        stage2EndDate,
+        stage3StartDate,
+        stage3EndDate,
+        stage4StartDate,
+        stage4EndDate,
+        stage1Interest,
+        stage2Interest,
+        stage3Interest,
+        stage4Interest,
         Week_Precentage_Amount_22_Caratage,
         Month1_Precentage_Amount_22_Caratage,
         Month3_Precentage_Amount_22_Caratage,
@@ -860,6 +923,7 @@ export async function createOnePawningProductForBranch(
       interestMethod === "Interest For Pawning Amount"
         ? data.amount22
         : plan.amount22Carat;
+    const stages = persistInterestStages(plan);
     const [planInsertResult] = await connection.query(
       "INSERT INTO product_plan (Period_Type,Minimum_Period,Maximum_Period,Minimum_Amount,Maximum_Amount,Interest_type,Interest,Interest_Calculate_After,Service_Charge_Value_type,Service_Charge_Value,Early_Settlement_Charge_Value_type,Early_Settlement_Charge_Value,Late_Charge,Amount_For_22_Caratage,Last_Updated_User,Last_Updated_Time,Pawning_Product_idPawning_Product,stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,interestApplicableMethod,Week_Precentage_Amount_22_Caratage,Month1_Precentage_Amount_22_Caratage,Month3_Precentage_Amount_22_Caratage,Month6_Precentage_Amount_22_Caratage,Month9_Precentage_Amount_22_Caratage,Month12_Precentage_Amount_22_Caratage,noOfStages,lateChargeStage1,lateChargeStage2,lateChargeStage3,lateChargeStage4,lateChargeStage1StartDate,lateChargeStage1EndDate,lateChargeStage2StartDate,lateChargeStage2EndDate,lateChargeStage3StartDate,lateChargeStage3EndDate,lateChargeStage4StartDate,lateChargeStage4EndDate,numberOfLateChargeStages) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [
@@ -885,75 +949,26 @@ export async function createOnePawningProductForBranch(
         userId,
         new Date(),
         productId,
-        plan.stage1StartDate !== null &&
-        plan.stage1StartDate !== undefined &&
-        plan.stage1StartDate !== ""
-          ? plan.stage1StartDate
-          : 0,
-        (plan.stage1EndDate === null ||
-          plan.stage1EndDate === "" ||
-          plan.stage1EndDate === undefined) &&
-        plan.stage1StartDate !== null &&
-        plan.stage1StartDate !== undefined &&
-        plan.stage1StartDate !== "" &&
-        (plan.stage2StartDate === null ||
-          plan.stage2StartDate === undefined ||
-          plan.stage2StartDate === "")
-          ? "To maturity date"
-          : plan.stage1EndDate === "To maturity date"
-            ? "To maturity date"
-            : plan.stage1EndDate || null,
-        plan.stage2StartDate || null,
-        (plan.stage2EndDate === null ||
-          plan.stage2EndDate === "" ||
-          plan.stage2EndDate === undefined) &&
-        plan.stage2StartDate !== null &&
-        plan.stage2StartDate !== undefined &&
-        plan.stage2StartDate !== "" &&
-        (plan.stage3StartDate === null ||
-          plan.stage3StartDate === undefined ||
-          plan.stage3StartDate === "")
-          ? "To maturity date"
-          : plan.stage2EndDate === "To maturity date"
-            ? "To maturity date"
-            : plan.stage2EndDate || null,
-        plan.stage3StartDate || null,
-        (plan.stage3EndDate === null ||
-          plan.stage3EndDate === "" ||
-          plan.stage3EndDate === undefined) &&
-        plan.stage3StartDate !== null &&
-        plan.stage3StartDate !== undefined &&
-        plan.stage3StartDate !== "" &&
-        (plan.stage4StartDate === null ||
-          plan.stage4StartDate === undefined ||
-          plan.stage4StartDate === "")
-          ? "To maturity date"
-          : plan.stage3EndDate === "To maturity date"
-            ? "To maturity date"
-            : plan.stage3EndDate || null,
-        plan.stage4StartDate || null,
-        (plan.stage4EndDate === null ||
-          plan.stage4EndDate === "" ||
-          plan.stage4EndDate === undefined) &&
-        plan.stage4StartDate !== null &&
-        plan.stage4StartDate !== undefined &&
-        plan.stage4StartDate !== ""
-          ? "To maturity date"
-          : plan.stage4EndDate === "To maturity date"
-            ? "To maturity date"
-            : plan.stage4EndDate || null,
-        parseFloat(plan.stage1Interest) || 0,
-        parseFloat(plan.stage2Interest) || 0,
-        parseFloat(plan.stage3Interest) || 0,
-        parseFloat(plan.stage4Interest) || 0,
-        resolveInterestApplicableMethod(plan.interestApplicableMethod),
+        stages.stage1StartDate,
+        stages.stage1EndDate,
+        stages.stage2StartDate,
+        stages.stage2EndDate,
+        stages.stage3StartDate,
+        stages.stage3EndDate,
+        stages.stage4StartDate,
+        stages.stage4EndDate,
+        stages.stage1Interest,
+        stages.stage2Interest,
+        stages.stage3Interest,
+        stages.stage4Interest,
+        stages.method,
         carat22Percentages.oneWeek ?? data.percentages?.oneWeek ?? 0,
         carat22Percentages.oneMonth ?? data.percentages?.oneMonth ?? 0,
         carat22Percentages.threeMonths ?? data.percentages?.threeMonths ?? 0,
         carat22Percentages.sixMonths ?? data.percentages?.sixMonths ?? 0,
         carat22Percentages.nineMonths ?? data.percentages?.nineMonths ?? 0,
         carat22Percentages.twelveMonths ?? data.percentages?.twelveMonths ?? 0,
-        plan.numberOfStages || 0,
+        stages.noOfStages,
         plan.lateChargeStage1 || 0,
         plan.lateChargeStage2 || 0,
         plan.lateChargeStage3 || 0,
@@ -1552,21 +1567,7 @@ export const updatePawningProductById = async (req, res, next) => {
 
       // Get amount for 22 caratage
       const amount22CaratValue = parseFloat(plan.amount22Carat) || 0;
-
-      // Validate stage dates if stage-based calculation is used.
-      // Throw (not `return next`) so the open transaction is rolled back —
-      // the existing product plans have already been deleted at this point.
-      if (isStageInterestMethod(plan.interestApplicableMethod)) {
-        if (plan.stage1StartDate !== 0 && plan.stage1StartDate !== "0") {
-          throw new Error("Stage 1 start date must be 0");
-        }
-      }
-
-      // Prepare stage values (convert null/undefined to null, keep numbers/strings as is)
-      const prepareStageValue = (value) => {
-        if (value === undefined || value === null || value === "") return null;
-        return value;
-      };
+      const stages = persistInterestStages(plan);
 
       const [productPlanResult] = await connection.query(
         `INSERT INTO product_plan (
@@ -1646,74 +1647,26 @@ export const updatePawningProductById = async (req, res, next) => {
           req.userId,
           new Date(),
           idPawning_Product,
-          // Stage dates (can be null, numeric, or string for stage4)
-          prepareStageValue(plan.stage1StartDate) || 0,
-          (plan.stage1EndDate === null ||
-            plan.stage1EndDate === "" ||
-            plan.stage1EndDate === undefined) &&
-          plan.stage1StartDate !== null &&
-          plan.stage1StartDate !== undefined &&
-          plan.stage1StartDate !== "" &&
-          (plan.stage2StartDate === null ||
-            plan.stage2StartDate === undefined ||
-            plan.stage2StartDate === "")
-            ? "To maturity date"
-            : plan.stage1EndDate === "To maturity date"
-              ? "To maturity date"
-              : prepareStageValue(plan.stage1EndDate),
-          prepareStageValue(plan.stage2StartDate),
-          (plan.stage2EndDate === null ||
-            plan.stage2EndDate === "" ||
-            plan.stage2EndDate === undefined) &&
-          plan.stage2StartDate !== null &&
-          plan.stage2StartDate !== undefined &&
-          plan.stage2StartDate !== "" &&
-          (plan.stage3StartDate === null ||
-            plan.stage3StartDate === undefined ||
-            plan.stage3StartDate === "")
-            ? "To maturity date"
-            : plan.stage2EndDate === "To maturity date"
-              ? "To maturity date"
-              : prepareStageValue(plan.stage2EndDate),
-          prepareStageValue(plan.stage3StartDate),
-          (plan.stage3EndDate === null ||
-            plan.stage3EndDate === "" ||
-            plan.stage3EndDate === undefined) &&
-          plan.stage3StartDate !== null &&
-          plan.stage3StartDate !== undefined &&
-          plan.stage3StartDate !== "" &&
-          (plan.stage4StartDate === null ||
-            plan.stage4StartDate === undefined ||
-            plan.stage4StartDate === "")
-            ? "To maturity date"
-            : plan.stage3EndDate === "To maturity date"
-              ? "To maturity date"
-              : prepareStageValue(plan.stage3EndDate),
-          prepareStageValue(plan.stage4StartDate),
-          (plan.stage4EndDate === null ||
-            plan.stage4EndDate === "" ||
-            plan.stage4EndDate === undefined) &&
-          plan.stage4StartDate !== null &&
-          plan.stage4StartDate !== undefined &&
-          plan.stage4StartDate !== ""
-            ? "To maturity date"
-            : plan.stage4EndDate === "To maturity date"
-              ? "To maturity date"
-              : prepareStageValue(plan.stage4EndDate),
-          // Stage interests
-          parseFloat(plan.stage1Interest) || 0,
-          parseFloat(plan.stage2Interest) || 0,
-          parseFloat(plan.stage3Interest) || 0,
-          parseFloat(plan.stage4Interest) || 0,
-          // 22-carat percentages from plan.carat22Percentages
+          stages.stage1StartDate,
+          stages.stage1EndDate,
+          stages.stage2StartDate,
+          stages.stage2EndDate,
+          stages.stage3StartDate,
+          stages.stage3EndDate,
+          stages.stage4StartDate,
+          stages.stage4EndDate,
+          stages.stage1Interest,
+          stages.stage2Interest,
+          stages.stage3Interest,
+          stages.stage4Interest,
           parseFloat(carat22Percentages.oneWeek) || 0,
           parseFloat(carat22Percentages.oneMonth) || 0,
           parseFloat(carat22Percentages.threeMonths) || 0,
           parseFloat(carat22Percentages.sixMonths) || 0,
           parseFloat(carat22Percentages.nineMonths) || 0,
           parseFloat(carat22Percentages.twelveMonths) || 0,
-          plan.numberOfStages || 0,
-          resolveInterestApplicableMethod(plan.interestApplicableMethod),
+          stages.noOfStages,
+          stages.method,
           plan.lateChargeStage1 || data.lateCharge?.lateChargeStage1 || 0,
           plan.lateChargeStage2 || data.lateCharge?.lateChargeStage2 || 0,
           plan.lateChargeStage3 || data.lateCharge?.lateChargeStage3 || 0,

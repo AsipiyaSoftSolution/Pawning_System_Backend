@@ -31,11 +31,9 @@ const recordInterestAccountingEntries = async (
       await pawningPaymentsApi.ticketInterestDoubleEntries(data, accessToken);
     } catch (error) {
       console.error("Failed to record interest accounting entries:", error);
-      throw error;
     }
   } catch (err) {
     console.error("Failed to record interest accounting entries:", err);
-    throw err;
   }
 };
 
@@ -53,25 +51,14 @@ const recordPenaltyAccountingEntries = async (ticket, penaltyAmount, note) => {
     const descriptionText =
       note || `Penalty accrued for ${ticketLabel} (Daily process)`;
 
-    try {
-      const data = {
-        branchId: branchId,
-        penaltyAmount: penaltyAmount,
-        description: descriptionText,
-      };
-      try {
-        await pawningPaymentsApi.ticketPenaltyDoubleEntries(data, null);
-      } catch (error) {
-        console.error("Failed to record penalty accounting entries:", error);
-        throw error;
-      }
-    } catch (err) {
-      console.error("Failed to record penalty accounting entries:", err);
-      throw err;
-    }
+    const data = {
+      branchId: branchId,
+      penaltyAmount: penaltyAmount,
+      description: descriptionText,
+    };
+    await pawningPaymentsApi.ticketPenaltyDoubleEntries(data, null);
   } catch (err) {
     console.error("Failed to record penalty accounting entries:", err);
-    throw err;
   }
 };
 
@@ -81,9 +68,11 @@ export const createPawningTicketLogOnCreate = async (
   type,
   userId,
   amount,
+  connection = null,
 ) => {
   try {
-    const [result] = await pool.query(
+    const queryRunner = connection || pool;
+    const [result] = await queryRunner.query(
       `INSERT INTO ticket_log (
         Pawning_Ticket_idPawning_Ticket, Type, Type_Id, User_idUser, Date_Time,
         Amount, Advance_Balance, Interest_Balance, Service_Charge_Balance, Aditional_Charge_Balance, Total_Balance, Late_Charges_Balance
@@ -337,6 +326,23 @@ const buildBalancesFromLog = (log) => ({
   additional: parseFloat(log?.Aditional_Charge_Balance) || 0,
 });
 
+const withAdvance = (ticket, balances) => {
+  if (!(balances.advance > 0)) {
+    balances.advance =
+      parseFloat(ticket?.Pawning_Advance_Amount) ||
+      parseFloat(ticket?.Balance_Amount) ||
+      0;
+  }
+  return balances;
+};
+
+const lastStageWithRate = (stages = []) => {
+  for (let i = stages.length - 1; i >= 0; i -= 1) {
+    if ((parseFloat(stages[i]?.rate) || 0) > 0) return stages[i];
+  }
+  return stages[stages.length - 1] || null;
+};
+
 const insertTicketLog = async (
   ticketId,
   type,
@@ -417,8 +423,9 @@ const processStageInterest = async (
   if (today < interestApplyOn) return;
 
   const daysSinceCreation = daysBetween(today, ticketStartDate);
-  const oneTimeStages = stages.slice(0, -1);
-  const lastStage = stages[stages.length - 1];
+  const dailyStage = lastStageWithRate(stages) || stages[stages.length - 1];
+  if (!dailyStage) return;
+  const oneTimeStages = stages.filter((stage) => stage.num !== dailyStage.num);
 
   // ── One-time interest for stages 1 … N-1 ──────────────────
   for (const stage of oneTimeStages) {
@@ -438,7 +445,7 @@ const processStageInterest = async (
     const stageDateStr = toDateStr(stageDate);
 
     const log = await getLatestLog(ticketId, queryRunner);
-    const balances = buildBalancesFromLog(log);
+    const balances = withAdvance(ticket, buildBalancesFromLog(log));
     const interestAmount = (balances.advance * stage.rate) / 100;
     if (!(interestAmount > 0)) continue;
     const description = `${stageDateStr} - Stage ${stage.num}`;
@@ -461,16 +468,20 @@ const processStageInterest = async (
     );
   }
 
-  // ── Daily interest for last stage ─────────────────────────
-  if (daysSinceCreation < lastStage.startDay) return;
+  // ── Daily interest for the last stage that actually has a rate ──
+  // Leftover empty last slots (e.g. noOfStages=4, stage4Interest=0) must not
+  // zero out daily accrual or delay it until that empty stage's start day.
+  if (daysSinceCreation < (parseFloat(dailyStage.startDay) || 0)) return;
 
   const lastStageStartDate = new Date(ticketStartDate);
-  lastStageStartDate.setDate(lastStageStartDate.getDate() + lastStage.startDay);
+  lastStageStartDate.setDate(
+    lastStageStartDate.getDate() + (parseFloat(dailyStage.startDay) || 0),
+  );
 
   // Find where to resume from
   const [lastDailyLog] = await queryRunner.query(
     "SELECT Description FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? AND Type = 'INTEREST' AND Description LIKE ? ORDER BY idTicket_Log DESC LIMIT 1",
-    [ticketId, `%Stage ${lastStage.num}%`],
+    [ticketId, `%Stage ${dailyStage.num}%`],
   );
 
   let startDate = new Date(lastStageStartDate);
@@ -484,13 +495,16 @@ const processStageInterest = async (
   }
 
   const divisor = getDailyInterestDivisor(ticket.Interest_Rate_Duration);
-  const dailyRate = lastStage.rate / divisor;
+  let dailyRate = (parseFloat(dailyStage.rate) || 0) / divisor;
+  if (!(dailyRate > 0)) {
+    dailyRate = (parseFloat(ticket.Interest_Rate) || 0) / divisor;
+  }
 
   for (let d = new Date(startDate); d <= today; d.setDate(d.getDate() + 1)) {
     if (d < interestApplyOn) continue;
 
     const dateStr = toDateStr(d);
-    const description = `${dateStr} - Stage ${lastStage.num}`;
+    const description = `${dateStr} - Stage ${dailyStage.num}`;
 
     const [existing] = await queryRunner.query(
       "SELECT 1 FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? AND Type = 'INTEREST' AND Description = ?",
@@ -499,7 +513,7 @@ const processStageInterest = async (
     if (existing.length > 0) continue;
 
     const log = await getLatestLog(ticketId, queryRunner);
-    const balances = buildBalancesFromLog(log);
+    const balances = withAdvance(ticket, buildBalancesFromLog(log));
     const interestAmount = (balances.advance * dailyRate) / 100;
     if (!(interestAmount > 0)) continue;
 
@@ -572,7 +586,7 @@ const processOriginalInterest = async (
     if (existing.length > 0) continue;
 
     const log = await getLatestLog(ticketId, queryRunner);
-    const balances = buildBalancesFromLog(log);
+    const balances = withAdvance(ticket, buildBalancesFromLog(log));
     const interestAmount = (balances.advance * dailyRate) / 100;
     if (!(interestAmount > 0)) continue;
 
@@ -705,28 +719,55 @@ const hydrateTicketLateChargeFromProduct = async (ticket, queryRunner) => {
   return ticket;
 };
 
+const lastPositiveStageRate = (source) => {
+  const count = parseInt(source?.noOfStages ?? source?.numberOfStages, 10) || 4;
+  for (let i = Math.min(count, 4); i >= 1; i -= 1) {
+    const rate = parseFloat(source?.[`stage${i}Interest`]) || 0;
+    if (rate > 0) return rate;
+  }
+  return 0;
+};
+
 const hydrateTicketInterestFromProduct = async (ticket, queryRunner) => {
-  if (usesStagedInterest(ticket)) return ticket;
-  if ((parseFloat(ticket.Interest_Rate) || 0) > 0) return ticket;
+  const existingRate = parseFloat(ticket.Interest_Rate) || 0;
+  if (existingRate > 0 && ticket.Interest_Rate_Duration) return ticket;
+
+  let filledRate = existingRate;
+  if (!(filledRate > 0)) {
+    filledRate = lastPositiveStageRate(ticket);
+  }
 
   const productId = ticket.Pawning_Product_idPawning_Product;
-  if (!productId) return ticket;
+  if (productId && (!(filledRate > 0) || !ticket.Interest_Rate_Duration)) {
+    const [plans] = await queryRunner.query(
+      `SELECT Interest, Interest_type, noOfStages,
+              stage1Interest, stage2Interest, stage3Interest, stage4Interest
+       FROM product_plan
+       WHERE Pawning_Product_idPawning_Product = ?
+       ORDER BY idProduct_Plan ASC
+       LIMIT 1`,
+      [productId],
+    );
+    const plan = plans[0];
+    if (plan) {
+      if (!(filledRate > 0)) {
+        filledRate =
+          parseFloat(plan.Interest) || lastPositiveStageRate(plan) || 0;
+      }
+      if (!ticket.Interest_Rate_Duration && plan.Interest_type) {
+        ticket.Interest_Rate_Duration = plan.Interest_type;
+      }
+    }
+  }
 
-  const [plans] = await queryRunner.query(
-    `SELECT Interest, Interest_type
-     FROM product_plan
-     WHERE Pawning_Product_idPawning_Product = ?
-     ORDER BY idProduct_Plan ASC
-     LIMIT 1`,
-    [productId],
-  );
-  const plan = plans[0];
-  if (!plan) return ticket;
-
-  const planRate = parseFloat(plan.Interest) || 0;
-  if (planRate > 0) ticket.Interest_Rate = planRate;
-  if (!ticket.Interest_Rate_Duration && plan.Interest_type) {
-    ticket.Interest_Rate_Duration = plan.Interest_type;
+  if (filledRate > 0 && !(existingRate > 0)) {
+    ticket.Interest_Rate = filledRate;
+    if (ticket.idPawning_Ticket) {
+      await queryRunner.query(
+        "UPDATE pawning_ticket SET Interest_Rate = ? WHERE idPawning_Ticket = ?",
+        [filledRate, ticket.idPawning_Ticket],
+      );
+    }
   }
   return ticket;
 };
@@ -768,7 +809,7 @@ const processLateChargeStages = async (
     const stageDateStr = toDateStr(stageDate);
 
     const log = await getLatestLog(ticketId, queryRunner);
-    const balances = buildBalancesFromLog(log);
+    const balances = withAdvance(ticket, buildBalancesFromLog(log));
     const penaltyAmount = (balances.advance * stage.rate) / 100;
     const description = `${stageDateStr} - Late Charge Stage ${stage.num}`;
 
@@ -842,7 +883,7 @@ const processLateChargeStages = async (
     if (existing.length > 0) continue;
 
     const log = await getLatestLog(ticketId, queryRunner);
-    const balances = buildBalancesFromLog(log);
+    const balances = withAdvance(ticket, buildBalancesFromLog(log));
     const penaltyAmount = (balances.advance * lastStage.rate) / 100;
 
     if (!skipCustomerLogs) {
@@ -906,7 +947,7 @@ export const applyTicketInterestLogsOnApproval = async (
     throw new Error("Ticket not found for interest accrual");
   }
 
-  const ticket = rows[0];
+  const ticket = await hydrateTicketInterestFromProduct(rows[0], queryRunner);
   const today = toStartOfDay(new Date());
   const noOfStages = parseFloat(ticket.noOfStages) || 0;
   const hasStages = usesStagedInterest(ticket);

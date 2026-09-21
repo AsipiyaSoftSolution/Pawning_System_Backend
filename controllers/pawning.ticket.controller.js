@@ -553,7 +553,7 @@ export const createPawningTicket = async (req, res, next) => {
       productPlanData[0]?.idProduct_Plan
     ) {
       const [stagesData] = await connection.query(
-        "SELECT stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,interestApplicableMethod,noOfStages FROM product_plan WHERE idProduct_Plan = ?",
+        "SELECT Interest,Interest_type,stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,interestApplicableMethod,noOfStages FROM product_plan WHERE idProduct_Plan = ?",
         [productPlanData[0].idProduct_Plan],
       );
       // Defensive assignment and logging
@@ -722,6 +722,17 @@ export const createPawningTicket = async (req, res, next) => {
       : 0;
     const snapshotStageValue = (field, fallback = null) =>
       snapshotUsesStages ? (planStageSnapshot[field] ?? fallback) : fallback;
+    const resolvedInterestRate = (() => {
+      const given = parseFloat(data.ticketData.interestRate) || 0;
+      if (given > 0) return given;
+      if (snapshotUsesStages) {
+        for (let i = snapshotStageCount; i >= 1; i -= 1) {
+          const rate = parseFloat(planStageSnapshot[`stage${i}Interest`]) || 0;
+          if (rate > 0) return rate;
+        }
+      }
+      return parseFloat(planStageSnapshot.Interest) || given;
+    })();
 
     // Insert into pawning_ticket table
     const [result] = await connection.query(
@@ -739,7 +750,7 @@ export const createPawningTicket = async (req, res, next) => {
         data.ticketData.netWeight,
         data.ticketData.payableValue,
         data.ticketData.pawningAdvance,
-        data.ticketData.interestRate,
+        resolvedInterestRate,
         serviceChargeRate, // service charge rate
         lateChargePercent,
         interestApplyOnDate,
@@ -891,6 +902,7 @@ export const createPawningTicket = async (req, res, next) => {
       "CREATE",
       req.userId,
       data.ticketData.pawningAdvance,
+      connection,
     );
 
     try {
@@ -927,6 +939,7 @@ export const createPawningTicket = async (req, res, next) => {
         "APPROVE-TICKET",
         "Ticket approved, according to company settings it is approved after creation.",
         req.userId,
+        connection,
       );
 
       await applyTicketInterestLogsOnApproval(
@@ -972,6 +985,7 @@ export const createPawningTicket = async (req, res, next) => {
         "APPROVE-TICKET",
         "Ticket approved, according to company settings it is approved after creation.",
         req.userId,
+        connection,
       );
 
       await applyTicketInterestLogsOnApproval(
@@ -1783,11 +1797,16 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
       ? buildInterestStagesPayload(filteredPlan)
       : null;
 
-    let interestRate = 0;
+    let interestRate = parseFloat(filteredPlan.Interest) || 0;
     if (interestIsStages) {
-      interestRate = parseFloat(filteredPlan.stage4Interest) || 0;
-    } else {
-      interestRate = parseFloat(filteredPlan.Interest) || 0;
+      const count = Math.min(parseInt(filteredPlan.noOfStages, 10) || 0, 4);
+      for (let i = count; i >= 1; i -= 1) {
+        const stageRate = parseFloat(filteredPlan[`stage${i}Interest`]) || 0;
+        if (stageRate > 0) {
+          interestRate = stageRate;
+          break;
+        }
+      }
     }
 
     const serviceCharge = parseFloat(filteredPlan.Service_Charge_Value) || 0;
@@ -2854,6 +2873,7 @@ export const approvePawningTicket = async (req, res, next) => {
           "APPROVE-TICKET",
           req.body.note || "Ticket approved",
           req.userId,
+          connection,
         );
 
         await applyTicketInterestLogsOnApproval(
@@ -3024,6 +3044,7 @@ export const approvePawningTicket = async (req, res, next) => {
           "APPROVE-TICKET",
           "Ticket fully approved",
           req.userId,
+          connection,
         );
 
         await applyTicketInterestLogsOnApproval(

@@ -440,6 +440,7 @@ const processStageInterest = async (
     const log = await getLatestLog(ticketId, queryRunner);
     const balances = buildBalancesFromLog(log);
     const interestAmount = (balances.advance * stage.rate) / 100;
+    if (!(interestAmount > 0)) continue;
     const description = `${stageDateStr} - Stage ${stage.num}`;
 
     await insertTicketLog(
@@ -500,6 +501,7 @@ const processStageInterest = async (
     const log = await getLatestLog(ticketId, queryRunner);
     const balances = buildBalancesFromLog(log);
     const interestAmount = (balances.advance * dailyRate) / 100;
+    if (!(interestAmount > 0)) continue;
 
     await insertTicketLog(
       ticketId,
@@ -572,6 +574,7 @@ const processOriginalInterest = async (
     const log = await getLatestLog(ticketId, queryRunner);
     const balances = buildBalancesFromLog(log);
     const interestAmount = (balances.advance * dailyRate) / 100;
+    if (!(interestAmount > 0)) continue;
 
     await insertTicketLog(
       ticketId,
@@ -699,6 +702,32 @@ const hydrateTicketLateChargeFromProduct = async (ticket, queryRunner) => {
       ticket.idPawning_Ticket,
     ],
   );
+  return ticket;
+};
+
+const hydrateTicketInterestFromProduct = async (ticket, queryRunner) => {
+  if (usesStagedInterest(ticket)) return ticket;
+  if ((parseFloat(ticket.Interest_Rate) || 0) > 0) return ticket;
+
+  const productId = ticket.Pawning_Product_idPawning_Product;
+  if (!productId) return ticket;
+
+  const [plans] = await queryRunner.query(
+    `SELECT Interest, Interest_type
+     FROM product_plan
+     WHERE Pawning_Product_idPawning_Product = ?
+     ORDER BY idProduct_Plan ASC
+     LIMIT 1`,
+    [productId],
+  );
+  const plan = plans[0];
+  if (!plan) return ticket;
+
+  const planRate = parseFloat(plan.Interest) || 0;
+  if (planRate > 0) ticket.Interest_Rate = planRate;
+  if (!ticket.Interest_Rate_Duration && plan.Interest_type) {
+    ticket.Interest_Rate_Duration = plan.Interest_type;
+  }
   return ticket;
 };
 
@@ -931,8 +960,8 @@ export const accrueTicketInterestAndPenalty = async (
     return { skipped: true, reason: "status" };
   }
 
-  const ticket = await hydrateTicketLateChargeFromProduct(
-    ticketRow,
+  const ticket = await hydrateTicketInterestFromProduct(
+    await hydrateTicketLateChargeFromProduct(ticketRow, queryRunner),
     queryRunner,
   );
 

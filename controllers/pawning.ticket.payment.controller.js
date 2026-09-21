@@ -458,17 +458,27 @@ export const getTicketDataById = async (req, res, next) => {
 
     // get article type and category names from pool2 for each article item and attach them
     for (let item of articleItems) {
-      const [typeData] = await pool2.query(
-        "SELECT Description FROM article_types WHERE idArticle_Types = ?",
-        [parseInt(item.Article_type)],
-      );
-      item.ArticleTypeName = typeData[0]?.Description || "Unknown Type";
+      const typeId = Number.parseInt(item.Article_type, 10);
+      if (Number.isFinite(typeId) && typeId > 0) {
+        const [typeData] = await pool2.query(
+          "SELECT Description FROM article_types WHERE idArticle_Types = ?",
+          [typeId],
+        );
+        item.ArticleTypeName = typeData[0]?.Description || "Unknown Type";
+      } else {
+        item.ArticleTypeName = "Unknown Type";
+      }
 
-      const [categoryData] = await pool2.query(
-        "SELECT Description FROM article_categories WHERE idArticle_Categories = ?",
-        [parseInt(item.Article_category)],
-      );
-      item.categoryName = categoryData[0]?.Description || "Unknown Category";
+      const categoryId = Number.parseInt(item.Article_category, 10);
+      if (Number.isFinite(categoryId) && categoryId > 0) {
+        const [categoryData] = await pool2.query(
+          "SELECT Description FROM article_categories WHERE idArticle_Categories = ?",
+          [categoryId],
+        );
+        item.categoryName = categoryData[0]?.Description || "Unknown Category";
+      } else {
+        item.categoryName = "Unknown Category";
+      }
 
       // Remove Article_type and Article_category from item
       delete item.Article_type;

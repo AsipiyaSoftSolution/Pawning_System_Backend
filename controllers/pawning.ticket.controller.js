@@ -2011,9 +2011,10 @@ export const getTicketDataById = async (req, res, next) => {
 
     // fetch article_types and article_categories via Account Center subsystem API
     for (let item of articleItems) {
-      if (item.Article_type) {
+      const typeId = Number.parseInt(item.Article_type, 10);
+      if (Number.isFinite(typeId) && typeId > 0) {
         const articleType = await fetchArticleTypeById(
-          parseInt(item.Article_type),
+          typeId,
           req.accessToken,
         );
         item.ArticleTypeName = articleType?.Description || null;
@@ -2021,9 +2022,10 @@ export const getTicketDataById = async (req, res, next) => {
         item.ArticleTypeName = null;
       }
 
-      if (item.Article_category) {
+      const categoryId = Number.parseInt(item.Article_category, 10);
+      if (Number.isFinite(categoryId) && categoryId > 0) {
         const articleCategory = await fetchArticleCategoryById(
-          parseInt(item.Article_category),
+          categoryId,
           req.accessToken,
         );
         item.categoryName = articleCategory?.Description || null;

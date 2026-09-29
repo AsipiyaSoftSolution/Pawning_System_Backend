@@ -12,6 +12,97 @@ import {
   subsystemApi,
 } from "../api/accountCenterApi.js";
 import { buildPawningPaymentPrintRow } from "../utils/pawningPaymentPrint.js";
+import { designationHasPrivilege } from "../middlewares/privilages.middleware.js";
+import { PAWNING_PRIVILEGES } from "../constants/pawningPrivileges.js";
+import { createCustomerLogOnTicketPenality } from "../utils/customer.logs.js";
+
+function roundMoney(value) {
+  const n = parseFloat(value);
+  return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0;
+}
+
+/**
+ * Validate an optional late-charge waiver sent with a ticket payment.
+ * Returns { amount: 0 } when no waiver was requested. A waiver that covers the
+ * whole outstanding late charge returns the unrounded balance so it clears to zero.
+ */
+async function resolvePenaltyWaiver(req, lateChargesBalance) {
+  const raw = req.body?.penaltyWaiverAmount;
+  if (raw === undefined || raw === null || raw === "" || Number(raw) === 0) {
+    return { amount: 0, reason: null };
+  }
+
+  const requested = roundMoney(raw);
+  if (!Number.isFinite(Number(raw)) || !(requested > 0)) {
+    throw errorHandler(400, "Penalty waiver amount must be a positive number");
+  }
+
+  const reason = String(req.body?.penaltyWaiverReason ?? "").trim();
+  if (reason.length < 3) {
+    throw errorHandler(400, "A reason is required to waive the penalty");
+  }
+
+  const allowed = await designationHasPrivilege(req.designationId, [
+    PAWNING_PRIVILEGES.TICKET_PENALTY_WAIVE,
+  ]);
+  if (!allowed) {
+    throw errorHandler(
+      403,
+      "Your designation doesn't have permission to waive penalties",
+    );
+  }
+
+  const outstanding = Math.max(0, parseFloat(lateChargesBalance) || 0);
+  if (requested > roundMoney(outstanding) + 0.005) {
+    throw errorHandler(
+      400,
+      `Penalty waiver cannot exceed the outstanding late charges of ${roundMoney(outstanding).toFixed(2)}`,
+    );
+  }
+
+  const amount =
+    requested >= roundMoney(outstanding) - 0.005 ? outstanding : requested;
+  return { amount, reason: reason.slice(0, 250) };
+}
+
+/** Ticket log row recording the waiver, written just before the payment row. */
+async function insertPenaltyWaiverTicketLog(
+  connection,
+  { ticketId, paymentId, paymentLabel, waiver, balances, totalBalance, userId },
+) {
+  const [result] = await connection.query(
+    "INSERT INTO ticket_log(Pawning_Ticket_idPawning_Ticket,Date_Time,Type,Description,Amount,Interest_Balance,Service_Charge_Balance,Late_Charges_Balance,Aditional_Charge_Balance,Advance_Balance,Total_Balance,User_idUser,Type_Id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    [
+      ticketId,
+      new Date(),
+      "PENALTY WAIVER",
+      `Penalty waived with ${paymentLabel}. Payment ID: ${paymentId}. Reason: ${waiver.reason}`,
+      waiver.amount,
+      balances.Interest_Balance,
+      balances.Service_Charge_Balance,
+      balances.Late_Charges_Balance,
+      balances.Aditional_Charge_Balance,
+      balances.Advance_Balance,
+      totalBalance,
+      userId,
+      paymentId,
+    ],
+  );
+  if (result.affectedRows === 0) {
+    throw errorHandler(500, "Failed to record penalty waiver");
+  }
+}
+
+function logPenaltyWaiverForCustomer(req, ticket, ticketId, waiver) {
+  if (!(waiver?.amount > 0)) return;
+  createCustomerLogOnTicketPenality(
+    "TICKET PENALTY WAIVER",
+    `Penalty of ${roundMoney(waiver.amount).toFixed(2)} waived on ticket No: ${ticket.Ticket_No}. Reason: ${waiver.reason}`,
+    ticket.Customer_idCustomer,
+    req.userId,
+    { ticketId, branchId: req.branchId },
+  );
+}
 
 async function abortPawningPaymentPrepare(prepareToken, accessToken) {
   if (!prepareToken) return;
@@ -828,6 +919,16 @@ export const createPaymentForTicket = async (req, res, next) => {
     const timeDiff = Math.abs(today - ticketDate);
     const dayCount = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
 
+    let penaltyWaiver;
+    try {
+      penaltyWaiver = await resolvePenaltyWaiver(
+        req,
+        ticketLog[0].Late_Charges_Balance,
+      );
+    } catch (waiverError) {
+      return next(waiverError);
+    }
+
     let remainingPayment = paymentAmount;
     let {
       Interest_Balance,
@@ -836,6 +937,17 @@ export const createPaymentForTicket = async (req, res, next) => {
       Aditional_Charge_Balance,
       Advance_Balance,
     } = ticketLog[0];
+    Late_Charges_Balance =
+      (parseFloat(Late_Charges_Balance) || 0) - penaltyWaiver.amount;
+    const balancesAfterWaiver = {
+      Interest_Balance,
+      Service_Charge_Balance,
+      Late_Charges_Balance,
+      Aditional_Charge_Balance,
+      Advance_Balance,
+    };
+    const totalBalanceAfterWaiver =
+      parseFloat(ticketLog[0].Total_Balance || 0) - penaltyWaiver.amount;
 
     let paidInterest = 0;
     let paidServiceCharge = 0;
@@ -880,9 +992,17 @@ export const createPaymentForTicket = async (req, res, next) => {
     Advance_Balance = result.balance;
     remainingPayment = result.remaining;
 
+    if (remainingPayment > 0.005) {
+      return next(
+        errorHandler(
+          400,
+          `Part payment exceeds the outstanding balance by ${roundMoney(remainingPayment).toFixed(2)}`,
+        ),
+      );
+    }
+
     const Total_Balance =
-      parseFloat(ticketLog[0].Total_Balance || 0) -
-      parseFloat(paymentAmount || 0);
+      totalBalanceAfterWaiver - parseFloat(paymentAmount || 0);
 
     const data = {
       paymentType: "part",
@@ -893,6 +1013,8 @@ export const createPaymentForTicket = async (req, res, next) => {
       paidLateCharges: paidLateCharges,
       paidServiceCharge: paidServiceCharge,
       paidAdditionalCharges: paidAdditionalCharges,
+      waivedLateCharges: roundMoney(penaltyWaiver.amount),
+      penaltyWaiverReason: penaltyWaiver.reason,
       ticketNo: existingTicket[0].Ticket_No,
       userId: req.userId,
       companyId: req.companyId,
@@ -946,6 +1068,18 @@ export const createPaymentForTicket = async (req, res, next) => {
       }
 
       createdTicketPaymentId = ticketPaymentResult.insertId;
+
+      if (penaltyWaiver.amount > 0) {
+        await insertPenaltyWaiverTicketLog(connection, {
+          ticketId,
+          paymentId: createdTicketPaymentId,
+          paymentLabel: "part payment",
+          waiver: penaltyWaiver,
+          balances: balancesAfterWaiver,
+          totalBalance: totalBalanceAfterWaiver,
+          userId: req.userId,
+        });
+      }
 
       const [logResult] = await connection.query(
         "INSERT INTO ticket_log(Pawning_Ticket_idPawning_Ticket,Date_Time,Type,Description,Amount,Interest_Balance,Service_Charge_Balance,Late_Charges_Balance,Aditional_Charge_Balance,Advance_Balance,Total_Balance,User_idUser,Type_Id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -1008,6 +1142,8 @@ export const createPaymentForTicket = async (req, res, next) => {
       return next(errorHandler(status, message));
     }
 
+    logPenaltyWaiverForCustomer(req, existingTicket[0], ticketId, penaltyWaiver);
+
     sendPawningSmsSafely({
       branchId: req.branchId,
       templateName: "Customer Part Payment",
@@ -1034,6 +1170,7 @@ export const createPaymentForTicket = async (req, res, next) => {
       paidLateCharges,
       paidAdditionalCharges,
       paidAdvance,
+      penaltyWaived: penaltyWaiver.amount,
       paymentType: "PART PAYMENT",
       description: `Customer Payment(Ticket No:${existingTicket[0].Ticket_No})`,
       ticketNo: existingTicket[0].Ticket_No,
@@ -1117,12 +1254,19 @@ export const createTicketRenewalPayment = async (req, res, next) => {
         );
       }
 
+      const penaltyWaiver = await resolvePenaltyWaiver(
+        req,
+        ticketLog[0].Late_Charges_Balance,
+      );
+
       // First check payment amount is equal or greater than the ticket's other charges sum
-      const otherChargesTotal =
+      const otherChargesTotal = roundMoney(
         (parseFloat(ticketLog[0].Interest_Balance) || 0) +
-        (parseFloat(ticketLog[0].Service_Charge_Balance) || 0) +
-        (parseFloat(ticketLog[0].Late_Charges_Balance) || 0) +
-        (parseFloat(ticketLog[0].Aditional_Charge_Balance) || 0);
+          (parseFloat(ticketLog[0].Service_Charge_Balance) || 0) +
+          (parseFloat(ticketLog[0].Late_Charges_Balance) || 0) +
+          (parseFloat(ticketLog[0].Aditional_Charge_Balance) || 0) -
+          penaltyWaiver.amount,
+      );
 
       if (paymentAmount < otherChargesTotal) {
         await connection.rollback();
@@ -1179,6 +1323,17 @@ export const createTicketRenewalPayment = async (req, res, next) => {
         Aditional_Charge_Balance,
         Advance_Balance,
       } = ticketLog[0];
+      Late_Charges_Balance =
+        (parseFloat(Late_Charges_Balance) || 0) - penaltyWaiver.amount;
+      const balancesAfterWaiver = {
+        Interest_Balance,
+        Service_Charge_Balance,
+        Late_Charges_Balance,
+        Aditional_Charge_Balance,
+        Advance_Balance,
+      };
+      const totalBalanceAfterWaiver =
+        parseFloat(ticketLog[0].Total_Balance || 0) - penaltyWaiver.amount;
 
       let paidInterest = 0;
       let paidServiceCharge = 0;
@@ -1228,10 +1383,16 @@ export const createTicketRenewalPayment = async (req, res, next) => {
       Advance_Balance = result.balance;
       remainingPayment = result.remaining;
 
+      if (remainingPayment > 0.005) {
+        throw errorHandler(
+          400,
+          `Renewal payment exceeds the outstanding balance by ${roundMoney(remainingPayment).toFixed(2)}`,
+        );
+      }
+
       // Total Balance
       const Total_Balance =
-        parseFloat(ticketLog[0].Total_Balance || 0) -
-        parseFloat(paymentAmount || 0);
+        totalBalanceAfterWaiver - parseFloat(paymentAmount || 0);
 
       const data = {
         paymentType: "renewal",
@@ -1242,6 +1403,8 @@ export const createTicketRenewalPayment = async (req, res, next) => {
         paidLateCharges: paidLateCharges,
         paidServiceCharge: paidServiceCharge,
         paidAdditionalCharges: paidAdditionalCharges,
+        waivedLateCharges: roundMoney(penaltyWaiver.amount),
+        penaltyWaiverReason: penaltyWaiver.reason,
         ticketNo: existingTicket[0].Ticket_No,
         userId: req.userId,
         companyId: req.companyId,
@@ -1264,7 +1427,7 @@ export const createTicketRenewalPayment = async (req, res, next) => {
           error?.response?.message ||
           error?.message ||
           "Failed to prepare ticket renewal payment accounting";
-        return next(errorHandler(status, message));
+        throw errorHandler(status, message);
       }
 
       // get the day count by from today date to ticket Date_Time
@@ -1294,6 +1457,18 @@ export const createTicketRenewalPayment = async (req, res, next) => {
       }
 
       createdTicketPaymentId = ticketPaymentResult.insertId;
+
+      if (penaltyWaiver.amount > 0) {
+        await insertPenaltyWaiverTicketLog(connection, {
+          ticketId,
+          paymentId: createdTicketPaymentId,
+          paymentLabel: "renewal payment",
+          waiver: penaltyWaiver,
+          balances: balancesAfterWaiver,
+          totalBalance: totalBalanceAfterWaiver,
+          userId: req.userId,
+        });
+      }
 
       // Insert ticket log record
       const [logResult] = await connection.query(
@@ -1358,6 +1533,8 @@ export const createTicketRenewalPayment = async (req, res, next) => {
 
       connection.release();
 
+      logPenaltyWaiverForCustomer(req, existingTicket[0], ticketId, penaltyWaiver);
+
       // time for get sms template for ticket renewal and send the sms data to acc center
       sendPawningSmsSafely({
         branchId: req.branchId,
@@ -1383,6 +1560,7 @@ export const createTicketRenewalPayment = async (req, res, next) => {
         paidLateCharges,
         paidAdditionalCharges,
         paidAdvance,
+        penaltyWaived: penaltyWaiver.amount,
         paymentType: "RENEWAL PAYMENT",
         description: `Customer Payment(Ticket No:${existingTicket[0].Ticket_No})`,
         ticketNo: existingTicket[0].Ticket_No,
@@ -1411,6 +1589,9 @@ export const createTicketRenewalPayment = async (req, res, next) => {
           innerError?.message ||
           "Payment saved but accounting sync failed; retry or contact support.";
         return next(errorHandler(502, msg));
+      }
+      if (innerError?.statusCode) {
+        return next(innerError);
       }
       return next(errorHandler(500, "Internal Server Error"));
     }
@@ -1516,7 +1697,13 @@ export const createTicketSettlementPayment = async (req, res, next) => {
         earlySettlementCharge = applyEarlySettlementEffect(rawAmount);
       }
 
-      const totalBal = parseFloat(ticketLog[0].Total_Balance) || 0;
+      const penaltyWaiver = await resolvePenaltyWaiver(
+        req,
+        ticketLog[0].Late_Charges_Balance,
+      );
+
+      const totalBal =
+        (parseFloat(ticketLog[0].Total_Balance) || 0) - penaltyWaiver.amount;
       const esType = String(earlySettlementChargeType || "").toLowerCase();
       let settlementAmountRequired = totalBal;
       if (esType === "discount") {
@@ -1528,7 +1715,7 @@ export const createTicketSettlementPayment = async (req, res, next) => {
       const payAmount = parseFloat(paymentAmount);
       if (
         !Number.isFinite(payAmount) ||
-        payAmount + 1e-6 < settlementAmountRequired
+        payAmount + 0.005 < roundMoney(settlementAmountRequired)
       ) {
         await connection.rollback();
         connection.release();
@@ -1560,6 +1747,15 @@ export const createTicketSettlementPayment = async (req, res, next) => {
         Aditional_Charge_Balance,
         Advance_Balance,
       } = ticketLog[0];
+      Late_Charges_Balance =
+        (parseFloat(Late_Charges_Balance) || 0) - penaltyWaiver.amount;
+      const balancesAfterWaiver = {
+        Interest_Balance,
+        Service_Charge_Balance,
+        Late_Charges_Balance,
+        Aditional_Charge_Balance,
+        Advance_Balance,
+      };
 
       let paidInterest = 0;
       let paidServiceCharge = 0;
@@ -1610,6 +1806,17 @@ export const createTicketSettlementPayment = async (req, res, next) => {
       paidEarlySettlement = result.paid;
       remainingPayment = result.remaining;
 
+      if (remainingPayment > 0.005) {
+        await connection.rollback();
+        connection.release();
+        return next(
+          errorHandler(
+            400,
+            `Settlement payment exceeds the settlement amount by ${roundMoney(remainingPayment).toFixed(2)}`,
+          ),
+        );
+      }
+
       // call acc center double entries api
 
       const data = {
@@ -1621,6 +1828,9 @@ export const createTicketSettlementPayment = async (req, res, next) => {
         paidLateCharges: paidLateCharges,
         paidServiceCharge: paidServiceCharge,
         paidAdditionalCharges: paidAdditionalCharges,
+        paidEarlySettlement: paidEarlySettlement,
+        waivedLateCharges: roundMoney(penaltyWaiver.amount),
+        penaltyWaiverReason: penaltyWaiver.reason,
         ticketNo: existingTicket[0].Ticket_No,
         userId: req.userId,
         companyId: req.companyId,
@@ -1656,10 +1866,20 @@ export const createTicketSettlementPayment = async (req, res, next) => {
 
       createdTicketPaymentId = ticketPaymentResult.insertId;
 
+      if (penaltyWaiver.amount > 0) {
+        await insertPenaltyWaiverTicketLog(connection, {
+          ticketId,
+          paymentId: createdTicketPaymentId,
+          paymentLabel: "settlement",
+          waiver: penaltyWaiver,
+          balances: balancesAfterWaiver,
+          totalBalance: totalBal,
+          userId: req.userId,
+        });
+      }
+
       // Calculate Total Balance logic for Settlement
-      const Total_Balance =
-        parseFloat(ticketLog[0].Total_Balance || 0) -
-        parseFloat(paymentAmount || 0);
+      const Total_Balance = totalBal - parseFloat(paymentAmount || 0);
 
       // insert settlement record into ticket log table
       const [logResult] = await connection.query(
@@ -1751,6 +1971,8 @@ export const createTicketSettlementPayment = async (req, res, next) => {
 
       connection.release();
 
+      logPenaltyWaiverForCustomer(req, existingTicket[0], ticketId, penaltyWaiver);
+
       // time for get sms template for ticket settlement and send the sms data to acc center
       sendPawningSmsSafely({
         branchId: req.branchId,
@@ -1779,6 +2001,7 @@ export const createTicketSettlementPayment = async (req, res, next) => {
         paidAdditionalCharges,
         paidAdvance,
         paidEarlySettlement,
+        penaltyWaived: penaltyWaiver.amount,
         paymentType: "SETTLEMENT PAYMENT",
         description: `Customer Settlement Payment(Ticket No:${existingTicket[0].Ticket_No})`,
         ticketNo: existingTicket[0].Ticket_No,
@@ -1802,6 +2025,7 @@ export const createTicketSettlementPayment = async (req, res, next) => {
           paidAdditionalCharges,
           paidAdvance,
           paidEarlySettlement,
+          penaltyWaived: roundMoney(penaltyWaiver.amount),
           excessAmount: remainingPayment,
         },
         printData,
@@ -1821,6 +2045,9 @@ export const createTicketSettlementPayment = async (req, res, next) => {
           innerError?.message ||
           "Payment saved but accounting sync failed; retry or contact support.";
         return next(errorHandler(502, msg));
+      }
+      if (innerError?.statusCode) {
+        return next(innerError);
       }
       return next(errorHandler(500, "Internal Server Error"));
     }

@@ -618,8 +618,9 @@ const processOriginalInterest = async (
  * Resolve the late charge stages to accrue for a ticket.
  * A single configured stage, or a flat (non-staged) late charge percentage,
  * becomes one stage that accrues daily from its start day.
- * Two or more stages repeat on each monthly anniversary of the maturity date.
- * The last stage keeps any days left in that month. See lateChargeCycle.js.
+ * Two or more stages step up on each monthly anniversary of the maturity date:
+ * each stage rate is the cycle total, and only the increase is added when the
+ * stage begins. See lateChargeCycle.js.
  */
 const resolveLateChargeStages = (ticket) => {
   const numberOfStages = parseFloat(ticket.numberOfLateChargeStages) || 0;
@@ -796,8 +797,8 @@ const processLateChargeStages = async (
   let penaltyAmountTotal = 0;
 
   // One charge per due stage on this calendar day. The caller walks each day,
-  // so a missed run still catches up. Multi-stage schedules restart on the
-  // maturity anniversary, so stage 1 is charged again next month.
+  // so a missed run still catches up. Multi-stage schedules add only the
+  // step-up when a stage begins and restart on the maturity anniversary.
   for (const stage of dueStages) {
     const description = `${dateStr} - Late Charge Stage ${stage.num}`;
     const [existing] = await queryRunner.query(
@@ -808,8 +809,7 @@ const processLateChargeStages = async (
 
     const log = await getLatestLog(ticketId, queryRunner);
     const balances = withAdvance(ticket, buildBalancesFromLog(log));
-    const penaltyAmount =
-      (balances.advance * stage.rate) / 100 / (stage.divisor || 1);
+    const penaltyAmount = (balances.advance * stage.rate) / 100;
     if (!(penaltyAmount > 0)) continue;
 
     if (!skipCustomerLogs) {

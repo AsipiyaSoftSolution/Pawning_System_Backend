@@ -129,7 +129,7 @@ async function getBranchPerformance(branchIds) {
     await Promise.all([
       pool.query(
         `SELECT pt.Branch_idBranch AS branchId,
-                COUNT(*) AS newLoansCount,
+           COUNT(*) AS newLoansCount,
                 COALESCE(SUM(CAST(pt.Pawning_Advance_Amount AS DECIMAL(18,2))), 0) AS newLoansValue
          FROM pawning_ticket pt
          WHERE pt.Branch_idBranch IN (?)
@@ -366,8 +366,8 @@ const handlers = {
   },
 
   redemptions: async (branchIds) => {
-    const [rows] = await pool.query(
-      `SELECT
+      const [rows] = await pool.query(
+        `SELECT 
          COUNT(*) AS redemptionsCount,
          COALESCE(SUM(CAST(p.Advance_Payment AS DECIMAL(18,2))), 0) AS redemptionsValue
        FROM payment p
@@ -431,8 +431,8 @@ const handlers = {
   },
 
   wtd_new_loans: async (branchIds) => {
-    const [rows] = await pool.query(
-      `SELECT
+      const [rows] = await pool.query(
+        `SELECT 
          COUNT(*) AS newLoansCount,
          COALESCE(SUM(CAST(pt.Pawning_Advance_Amount AS DECIMAL(18,2))), 0) AS wtdNewLoansValue
        FROM pawning_ticket pt
@@ -893,10 +893,10 @@ const handlers = {
          AND ${ticketDateExpr} >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
          AND IFNULL(pt.Status, '0') NOT IN ('-1')
        GROUP BY ${ticketDateExpr}
-       ORDER BY date ASC`,
+         ORDER BY date ASC`,
       [branchIds],
-    );
-    const [redemptionRows] = await pool.query(
+      );
+      const [redemptionRows] = await pool.query(
       `SELECT ${paymentDateExpr} AS date,
               COALESCE(SUM(CAST(p.Amount AS DECIMAL(18,2))), 0) AS redemptions
        FROM payment p
@@ -905,16 +905,16 @@ const handlers = {
          AND ${paymentDateExpr} >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
          AND UPPER(p.Type) LIKE '%SETTLEMENT%'
        GROUP BY ${paymentDateExpr}
-       ORDER BY date ASC`,
+         ORDER BY date ASC`,
       [branchIds],
-    );
-    const dateMap = {};
+      );
+      const dateMap = {};
     loanRows.forEach((r) => {
       const d = r.date ? String(r.date).slice(0, 10) : null;
       if (!d) return;
       dateMap[d] = { date: d, loans: num(r.loans), redemptions: 0 };
-    });
-    redemptionRows.forEach((r) => {
+      });
+      redemptionRows.forEach((r) => {
       const d = r.date ? String(r.date).slice(0, 10) : null;
       if (!d) return;
       if (dateMap[d]) dateMap[d].redemptions = num(r.redemptions);

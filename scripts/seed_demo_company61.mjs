@@ -231,7 +231,9 @@ const PRODUCTS = [
         stage3StartDate: 61,
         stage3EndDate: "Until Settlement",
         stage3Interest: 2.5,
-        // Late charge: 1% once on the maturity date, then 0.1%/day afterwards.
+        // Late charge stages repeat on each monthly anniversary of maturity.
+        // 1% on the anniversary, 0.1% the next day, then the same two charges
+        // again next month.
         numberOfLateChargeStages: 2,
         lateChargeStage1: 1.0,
         lateChargeStage1StartDate: 0,
@@ -270,6 +272,7 @@ const PRODUCTS = [
       status: "Active",
       chargeType: "Charge For Product",
       percentage: 0,
+      // Same monthly repeat: 2% on the anniversary, 0.2% the next day.
       numberOfLateChargeStages: 2,
       lateChargeStage1: 2.0,
       lateChargeStage1StartDate: 0,
@@ -454,6 +457,8 @@ const PRODUCTS = [
       status: "Active",
       chargeType: "Charge For Product",
       percentage: 0,
+      // Repeats on each monthly anniversary: 1.5% on day 0, 0.1% on day 1,
+      // 0.2% on day 16, and 0.3% on day 31 when that month is long enough.
       numberOfLateChargeStages: 4,
       lateChargeStage1: 1.5,
       lateChargeStage1StartDate: 0,

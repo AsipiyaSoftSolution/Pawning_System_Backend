@@ -808,7 +808,8 @@ const processLateChargeStages = async (
 
     const log = await getLatestLog(ticketId, queryRunner);
     const balances = withAdvance(ticket, buildBalancesFromLog(log));
-    const penaltyAmount = (balances.advance * stage.rate) / 100;
+    const penaltyAmount =
+      (balances.advance * stage.rate) / 100 / (stage.divisor || 1);
     if (!(penaltyAmount > 0)) continue;
 
     if (!skipCustomerLogs) {

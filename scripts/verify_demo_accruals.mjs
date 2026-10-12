@@ -11,6 +11,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import { pool, pool2 } from "../utils/db.js";
+import { stagesDueOnLateChargeDate } from "../utils/lateChargeCycle.js";
 
 const TICKET_PREFIX = "MCI-";
 const TOLERANCE = 0.01;
@@ -93,55 +94,76 @@ function expectedInterest(ticket, advance, today) {
   };
 }
 
+function lateChargeStagesOf(ticket) {
+  const stageCount = parseInt(ticket.numberOfLateChargeStages, 10) || 0;
+  if (stageCount < 1) {
+    const rate = num(ticket.Late_charge_Presentage);
+    if (rate <= 0) return [];
+    return [{ num: 1, startDay: 0, endDay: 0, rate }];
+  }
+
+  const stages = [];
+  for (let s = 1; s <= stageCount; s += 1) {
+    stages.push({
+      num: s,
+      startDay: num(ticket[`lateChargeStage${s}StartDate`]),
+      endDay: num(ticket[`lateChargeStage${s}EndDate`]),
+      rate: num(ticket[`lateChargeStage${s}`]),
+    });
+  }
+  return stages;
+}
+
 function expectedPenalty(ticket, advance, today) {
   const maturity = startOfDay(ticket.Maturity_date);
   if (today <= maturity) return { amount: 0, entries: 0, detail: "not matured" };
 
-  const stageCount = parseInt(ticket.numberOfLateChargeStages, 10) || 0;
+  const stages = lateChargeStagesOf(ticket);
+  if (stages.length === 0) {
+    return { amount: 0, entries: 0, detail: "no late charge" };
+  }
 
-  if (stageCount < 1) {
-    const rate = num(ticket.Late_charge_Presentage);
-    if (rate <= 0) return { amount: 0, entries: 0, detail: "no late charge" };
-    const days = daysBetween(today, maturity) + 1;
-    const daily = (advance * rate) / 100;
+  const elapsed = daysBetween(today, maturity);
+
+  if (stages.length < 2) {
+    const stage = stages[0];
+    const start = num(stage.startDay);
+    if (!(stage.rate > 0) || elapsed < start) {
+      return { amount: 0, entries: 0, detail: "no late charge" };
+    }
+    const days = elapsed - start + 1;
+    const daily = (advance * stage.rate) / 100;
     return {
       amount: daily * days,
       entries: days,
-      detail: `flat ${rate}%/day x ${days}d`,
+      detail: `flat ${stage.rate}%/day x ${days}d`,
     };
   }
 
   let amount = 0;
   let entries = 0;
-  const parts = [];
-
-  for (let s = 1; s < stageCount; s += 1) {
-    const startDay = num(ticket[`lateChargeStage${s}StartDate`]);
-    if (daysBetween(today, maturity) < startDay) continue;
-    const rate = num(ticket[`lateChargeStage${s}`]);
-    if (rate <= 0) continue;
-    const charge = (advance * rate) / 100;
-    amount += charge;
-    entries += 1;
-    parts.push(`stage ${s} one-off ${rate}% = ${charge.toFixed(2)}`);
+  const counts = {};
+  for (let day = 0; day <= elapsed; day += 1) {
+    const onDate = new Date(maturity);
+    onDate.setDate(onDate.getDate() + day);
+    for (const stage of stagesDueOnLateChargeDate(stages, onDate, maturity)) {
+      amount += (advance * stage.rate) / 100;
+      entries += 1;
+      counts[stage.num] = (counts[stage.num] || 0) + 1;
+    }
   }
 
-  const lastStart = num(ticket[`lateChargeStage${stageCount}StartDate`]);
-  const lastRate = num(ticket[`lateChargeStage${stageCount}`]);
-  const lastStartDate = new Date(maturity);
-  lastStartDate.setDate(lastStartDate.getDate() + lastStart);
-  if (lastRate > 0 && today >= lastStartDate) {
-    const days = daysBetween(today, lastStartDate) + 1;
-    // The final late charge stage rate is already a daily rate.
-    const daily = (advance * lastRate) / 100;
-    amount += daily * days;
-    entries += days;
-    parts.push(
-      `stage ${stageCount} daily ${lastRate}% x ${days}d = ${(daily * days).toFixed(2)}`,
+  const parts = stages
+    .filter((stage) => counts[stage.num])
+    .map(
+      (stage) =>
+        `stage ${stage.num} ${stage.rate}% x ${counts[stage.num]}`,
     );
-  }
-
-  return { amount, entries, detail: parts.join(" + ") || "no late charge" };
+  return {
+    amount,
+    entries,
+    detail: `each month; ${parts.join(" + ") || "no late charge"}`,
+  };
 }
 
 async function actualTotals(ticketId, type) {

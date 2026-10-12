@@ -147,7 +147,7 @@ function expectedPenalty(ticket, advance, today) {
     const onDate = new Date(maturity);
     onDate.setDate(onDate.getDate() + day);
     for (const stage of stagesDueOnLateChargeDate(stages, onDate, maturity)) {
-      amount += (advance * stage.rate) / 100;
+      amount += (advance * stage.rate) / 100 / (stage.divisor || 1);
       entries += 1;
       counts[stage.num] = (counts[stage.num] || 0) + 1;
     }

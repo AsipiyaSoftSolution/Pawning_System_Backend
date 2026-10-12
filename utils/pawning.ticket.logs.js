@@ -2,6 +2,7 @@ import { pool } from "../utils/db.js";
 import { createCustomerLogOnTicketPenality } from "./customer.logs.js";
 import { pawningPaymentsApi } from "../api/accountCenterApi.js";
 import { usesStagedInterest } from "./pawningProductConstants.js";
+import { stagesDueOnLateChargeDate } from "./lateChargeCycle.js";
 
 // Helper: record accounting entries for accrued interest
 const recordInterestAccountingEntries = async (
@@ -615,8 +616,10 @@ const processOriginalInterest = async (
 
 /**
  * Resolve the late charge stages to accrue for a ticket.
- * A single configured stage, or a product with a flat (non-staged) late charge
- * percentage, both become one stage that accrues daily from the maturity date.
+ * A single configured stage, or a flat (non-staged) late charge percentage,
+ * becomes one stage that accrues daily from its start day.
+ * Two or more stages repeat on each monthly anniversary of the maturity date.
+ * The last stage keeps any days left in that month. See lateChargeCycle.js.
  */
 const resolveLateChargeStages = (ticket) => {
   const numberOfStages = parseFloat(ticket.numberOfLateChargeStages) || 0;
@@ -785,111 +788,33 @@ const processLateChargeStages = async (
 
   const skipAccounting = options.skipAccounting === true;
   const skipCustomerLogs = options.skipCustomerLogs === true;
-  const oneTimeStages = stages.slice(0, -1);
-  const lastStage = stages[stages.length - 1];
-  const daysSinceMaturity = daysBetween(today, maturityDate);
+  const dueStages = stagesDueOnLateChargeDate(stages, today, maturityDate);
+  if (dueStages.length === 0) return { inserted: false, amount: 0 };
 
+  const dateStr = toDateStr(today);
   let penaltyInserted = false;
   let penaltyAmountTotal = 0;
 
-  // ── One-time penalties for stages 1 … N-1 ─────────────────
-  // Stage 1 startDay is always 0 → fires on first day after maturity
-  for (const stage of oneTimeStages) {
-    if (daysSinceMaturity < stage.startDay) continue;
-    if (!(stage.rate > 0)) continue;
-
+  // One charge per due stage on this calendar day. The caller walks each day,
+  // so a missed run still catches up. Multi-stage schedules restart on the
+  // maturity anniversary, so stage 1 is charged again next month.
+  for (const stage of dueStages) {
+    const description = `${dateStr} - Late Charge Stage ${stage.num}`;
     const [existing] = await queryRunner.query(
-      "SELECT 1 FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? AND Type = 'PENALTY' AND Description LIKE ?",
-      [ticketId, `%Late Charge Stage ${stage.num}%`],
-    );
-    if (existing.length > 0) continue;
-
-    const stageDate = new Date(maturityDate);
-    stageDate.setDate(stageDate.getDate() + stage.startDay);
-    const stageDateStr = toDateStr(stageDate);
-
-    const log = await getLatestLog(ticketId, queryRunner);
-    const balances = withAdvance(ticket, buildBalancesFromLog(log));
-    const penaltyAmount = (balances.advance * stage.rate) / 100;
-    const description = `${stageDateStr} - Late Charge Stage ${stage.num}`;
-
-    if (!skipCustomerLogs) {
-      await createCustomerLogOnTicketPenality(
-        "TICKET PENALTY",
-        `Penalty of ${penaltyAmount} added to ticket ID ${ticketId} on ${stageDateStr} (Late Charge Stage ${stage.num})`,
-        ticket.Customer_idCustomer,
-        null,
-        {
-          ticketId,
-          branchId: ticket.Branch_idBranch,
-        },
-      );
-    }
-    await insertTicketLog(
-      ticketId,
-      "PENALTY",
-      description,
-      penaltyAmount,
-      balances,
-      0,
-      penaltyAmount,
-      queryRunner,
-    );
-    if (!skipAccounting) {
-      await recordPenaltyAccountingEntries(
-        ticket,
-        penaltyAmount,
-        `${description} penalty accrual`,
-      );
-    }
-
-    penaltyInserted = true;
-    penaltyAmountTotal += penaltyAmount;
-  }
-
-  // ── Daily penalty for last stage ──────────────────────────
-  if (daysSinceMaturity < lastStage.startDay) {
-    return { inserted: penaltyInserted, amount: penaltyAmountTotal };
-  }
-  if (!(lastStage.rate > 0)) {
-    return { inserted: penaltyInserted, amount: penaltyAmountTotal };
-  }
-
-  const lastStageStartDate = new Date(maturityDate);
-  lastStageStartDate.setDate(lastStageStartDate.getDate() + lastStage.startDay);
-
-  // Find where to resume from
-  const [lastDailyLog] = await queryRunner.query(
-    "SELECT Description FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? AND Type = 'PENALTY' AND Description LIKE ? ORDER BY idTicket_Log DESC LIMIT 1",
-    [ticketId, `%Late Charge Stage ${lastStage.num}%`],
-  );
-
-  let startDate = new Date(lastStageStartDate);
-  if (lastDailyLog.length > 0) {
-    const lastDate = toStartOfDay(lastDailyLog[0].Description.split(" - ")[0]);
-    startDate = new Date(lastDate);
-    startDate.setDate(startDate.getDate() + 1);
-  }
-
-  // lastStage.rate is already a daily rate — no division needed
-  for (let d = new Date(startDate); d <= today; d.setDate(d.getDate() + 1)) {
-    const dateStr = toDateStr(d);
-    const description = `${dateStr} - Late Charge Stage ${lastStage.num}`;
-
-    const [existing] = await queryRunner.query(
-      "SELECT 1 FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? AND Type = 'PENALTY' AND Description = ?",
+      "SELECT 1 FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? AND Type = 'PENALTY' AND Description = ? LIMIT 1",
       [ticketId, description],
     );
     if (existing.length > 0) continue;
 
     const log = await getLatestLog(ticketId, queryRunner);
     const balances = withAdvance(ticket, buildBalancesFromLog(log));
-    const penaltyAmount = (balances.advance * lastStage.rate) / 100;
+    const penaltyAmount = (balances.advance * stage.rate) / 100;
+    if (!(penaltyAmount > 0)) continue;
 
     if (!skipCustomerLogs) {
       await createCustomerLogOnTicketPenality(
         "TICKET PENALTY",
-        `Penalty of ${penaltyAmount} added to ticket ID ${ticketId} on ${dateStr}`,
+        `Penalty of ${penaltyAmount} added to ticket ID ${ticketId} on ${dateStr} (Late Charge Stage ${stage.num})`,
         ticket.Customer_idCustomer,
         null,
         {

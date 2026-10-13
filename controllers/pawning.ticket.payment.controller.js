@@ -653,6 +653,11 @@ export const getTicketDataById = async (req, res, next) => {
     }
     ticketCharges[0].loanSettlementAmount = loanSettlementAmount;
 
+    const [migratedMark] = await pool.query(
+      "SELECT idTicket_Log FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? AND Type = 'CREATE' AND Description LIKE 'Migrated ticket%' LIMIT 1",
+      [ticketData[0].idPawning_Ticket],
+    );
+
     res.status(200).json({
       success: true,
       ticketDetails: {
@@ -673,6 +678,7 @@ export const getTicketDataById = async (req, res, next) => {
         renewState:
           ticketData[0].Maturity_date < new Date().toISOString().split("T")[0],
         earlySettlementChargeType,
+        isMigrated: migratedMark.length > 0,
       },
     });
   } catch (error) {
@@ -1623,7 +1629,11 @@ export const createTicketSettlementPayment = async (req, res, next) => {
     if (!ticketId) {
       return next(errorHandler(400, "Ticket ID is required"));
     }
-    if (!paymentAmount || isNaN(paymentAmount) || paymentAmount <= 0) {
+    const customRequested = req.body?.customSettlement === true;
+    if (
+      !customRequested &&
+      (!paymentAmount || isNaN(paymentAmount) || paymentAmount <= 0)
+    ) {
       return next(
         errorHandler(400, "Valid settlement payment amount is required"),
       );
@@ -1712,7 +1722,27 @@ export const createTicketSettlementPayment = async (req, res, next) => {
         settlementAmountRequired = totalBal + earlySettlementCharge;
       }
 
+      const earlySettlementPayable =
+        esType === "charge" ? Math.max(0, earlySettlementCharge) : 0;
+
+      const [migratedRows] = await connection.query(
+        "SELECT idTicket_Log FROM ticket_log WHERE Pawning_Ticket_idPawning_Ticket = ? AND Type = 'CREATE' AND Description LIKE 'Migrated ticket%' LIMIT 1",
+        [ticketId],
+      );
+      const isMigratedTicket = migratedRows.length > 0;
+      if (customRequested && !isMigratedTicket) {
+        await connection.rollback();
+        connection.release();
+        return next(
+          errorHandler(
+            400,
+            "Custom settlement amounts are only available for migrated tickets",
+          ),
+        );
+      }
+
       const payAmount = parseFloat(paymentAmount);
+      if (!customRequested) {
       if (
         !Number.isFinite(payAmount) ||
         payAmount + 0.005 < roundMoney(settlementAmountRequired)
@@ -1728,9 +1758,7 @@ export const createTicketSettlementPayment = async (req, res, next) => {
           ),
         );
       }
-
-      const earlySettlementPayable =
-        esType === "charge" ? Math.max(0, earlySettlementCharge) : 0;
+      }
 
       // get the day count from today date to ticket Date_Time
       const today = new Date();
@@ -1739,7 +1767,9 @@ export const createTicketSettlementPayment = async (req, res, next) => {
       const dayCount = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
 
       // calculate payment allocation
-      let remainingPayment = paymentAmount;
+      let cashCollected = parseFloat(paymentAmount);
+      let remainingPayment = cashCollected;
+      let customSettlementReason = null;
       let {
         Interest_Balance,
         Service_Charge_Balance,
@@ -1764,6 +1794,84 @@ export const createTicketSettlementPayment = async (req, res, next) => {
       let paidAdvance = 0;
       let paidEarlySettlement = 0;
 
+      const systemSettlement = {
+        advance: roundMoney(Advance_Balance),
+        interest: roundMoney(Interest_Balance),
+        lateCharges: roundMoney(Late_Charges_Balance),
+        serviceCharge: roundMoney(Service_Charge_Balance),
+        additionalCharges: roundMoney(Aditional_Charge_Balance),
+        earlySettlement: roundMoney(earlySettlementPayable),
+      };
+
+      if (customRequested) {
+        const rawAmounts = req.body?.customAmounts || {};
+        const fields = [
+          ["advance", "Advance"],
+          ["interest", "Interest"],
+          ["lateCharges", "Late charges"],
+          ["serviceCharge", "Service charge"],
+          ["additionalCharges", "Other charges"],
+          ["earlySettlement", "Early settlement charge"],
+        ];
+        const collected = {};
+        for (const [key, label] of fields) {
+          const raw = rawAmounts[key] ?? 0;
+          const n = roundMoney(raw);
+          if (!Number.isFinite(Number(raw)) || n < 0) {
+            await connection.rollback();
+            connection.release();
+            return next(
+              errorHandler(400, `${label} must be zero or a positive amount`),
+            );
+          }
+          collected[key] = n;
+        }
+        const differs = fields.some(
+          ([key]) => Math.abs(systemSettlement[key] - collected[key]) > 0.009,
+        );
+        customSettlementReason = String(
+          req.body?.customSettlementReason ?? "",
+        ).trim();
+        if (differs && customSettlementReason.length < 3) {
+          await connection.rollback();
+          connection.release();
+          return next(
+            errorHandler(
+              400,
+              "A reason is required when the collected amounts differ from the recorded balances",
+            ),
+          );
+        }
+        customSettlementReason = customSettlementReason.slice(0, 200);
+        paidAdvance = collected.advance;
+        paidInterest = collected.interest;
+        paidLateCharges = collected.lateCharges;
+        paidServiceCharge = collected.serviceCharge;
+        paidAdditionalCharges = collected.additionalCharges;
+        paidEarlySettlement = collected.earlySettlement;
+        cashCollected = roundMoney(
+          paidAdvance +
+            paidInterest +
+            paidLateCharges +
+            paidServiceCharge +
+            paidAdditionalCharges +
+            paidEarlySettlement,
+        );
+        const recordedTotal = roundMoney(
+          systemSettlement.advance +
+            systemSettlement.interest +
+            systemSettlement.lateCharges +
+            systemSettlement.serviceCharge +
+            systemSettlement.additionalCharges +
+            systemSettlement.earlySettlement,
+        );
+        if (cashCollected <= 0 && recordedTotal <= 0) {
+          await connection.rollback();
+          connection.release();
+          return next(errorHandler(400, "There is no balance to settle"));
+        }
+        remainingPayment = 0;
+      } else {
       function safePay(balance, remaining) {
         balance = parseFloat(balance);
         balance = isNaN(balance) ? 0 : balance;
@@ -1816,13 +1924,22 @@ export const createTicketSettlementPayment = async (req, res, next) => {
           ),
         );
       }
+      }
 
       // call acc center double entries api
 
       const data = {
         paymentType: "settlement",
         toAccountId: toAccountId,
-        amount: paymentAmount,
+        amount: cashCollected,
+        customMigratedSettlement: customRequested,
+        customSettlementReason,
+        systemAdvance: systemSettlement.advance,
+        systemInterest: systemSettlement.interest,
+        systemLateCharges: systemSettlement.lateCharges,
+        systemServiceCharge: systemSettlement.serviceCharge,
+        systemAdditionalCharges: systemSettlement.additionalCharges,
+        systemEarlySettlement: systemSettlement.earlySettlement,
         paidAdvance: paidAdvance,
         paidInterest: paidInterest,
         paidLateCharges: paidLateCharges,
@@ -1848,9 +1965,11 @@ export const createTicketSettlementPayment = async (req, res, next) => {
       const [ticketPaymentResult] = await connection.query(
         "INSERT INTO payment(Date_time,Description,Ticket_no,Amount,User,Ticket_Date,Maturity_Date,Day_Count,Type,Pawning_Ticket_idPawning_Ticket) VALUES(NOW(),?,?,?,?,?,?,?,?,?)",
         [
-          `Customer Settlement Payment(Ticket No:${existingTicket[0].Ticket_No})`,
+          customRequested
+            ? `Customer Settlement Payment(Ticket No:${existingTicket[0].Ticket_No}) — custom amounts`
+            : `Customer Settlement Payment(Ticket No:${existingTicket[0].Ticket_No})`,
           existingTicket[0].Ticket_No,
-          paymentAmount,
+          cashCollected,
           req.userId,
           existingTicket[0].Date_Time,
           existingTicket[0].Maturity_date,
@@ -1878,8 +1997,14 @@ export const createTicketSettlementPayment = async (req, res, next) => {
         });
       }
 
-      // Calculate Total Balance logic for Settlement
-      const Total_Balance = totalBal - parseFloat(paymentAmount || 0);
+      // Custom settlement closes every recorded balance. The journal writes off
+      // the difference, so the ticket log must not keep a leftover total.
+      const Total_Balance = customRequested
+        ? 0
+        : totalBal - parseFloat(cashCollected || 0);
+      const settlementLogDescription = customRequested
+        ? `Custom migrated settlement. Payment ID: ${createdTicketPaymentId}. Reason: ${customSettlementReason || "Recorded amounts"}`
+        : `Settlement payment received. Payment ID: ${createdTicketPaymentId}`;
 
       // insert settlement record into ticket log table
       const [logResult] = await connection.query(
@@ -1888,8 +2013,8 @@ export const createTicketSettlementPayment = async (req, res, next) => {
           ticketId,
           new Date(),
           "SETTLEMENT",
-          `Settlement payment received. Payment ID: ${createdTicketPaymentId}`,
-          paymentAmount,
+          settlementLogDescription,
+          cashCollected,
           0,
           0,
           0,
@@ -1907,13 +2032,14 @@ export const createTicketSettlementPayment = async (req, res, next) => {
 
       // update payment table with breakdown
       const [updatePaymentResult] = await connection.query(
-        "UPDATE payment SET Interest_Payment = ?, Service_Charge_Payment = ?, Late_Charges_Payment = ?, Other_Charges_Payment = ?, Advance_Payment = ? WHERE id = ?",
+        "UPDATE payment SET Interest_Payment = ?, Service_Charge_Payment = ?, Late_Charges_Payment = ?, Other_Charges_Payment = ?, Advance_Payment = ?, Early_Charge_Payment = ? WHERE id = ?",
         [
           paidInterest || 0,
           paidServiceCharge || 0,
           paidLateCharges || 0,
           paidAdditionalCharges || 0,
           paidAdvance || 0,
+          paidEarlySettlement || 0,
           createdTicketPaymentId,
         ],
       );
@@ -1980,7 +2106,7 @@ export const createTicketSettlementPayment = async (req, res, next) => {
         accessToken: req.accessToken,
         placeholders: {
           Payment_Date: new Date().toISOString().split("T")[0],
-          Paid_Amount: paymentAmount,
+          Paid_Amount: cashCollected,
           Balance_Amount: Total_Balance,
           Maturity_Date: existingTicket[0].Maturity_date
             ? new Date(existingTicket[0].Maturity_date)
@@ -1994,7 +2120,7 @@ export const createTicketSettlementPayment = async (req, res, next) => {
 
       const printData = await buildPawningPaymentPrintRow({
         paymentId: createdTicketPaymentId,
-        paymentAmount,
+        paymentAmount: cashCollected,
         paidInterest,
         paidServiceCharge,
         paidLateCharges,
@@ -2018,7 +2144,7 @@ export const createTicketSettlementPayment = async (req, res, next) => {
         message:
           "Settlement payment created successfully. Ticket has been settled.",
         paymentBreakdown: {
-          totalPaid: paymentAmount,
+          totalPaid: cashCollected,
           paidInterest,
           paidServiceCharge,
           paidLateCharges,

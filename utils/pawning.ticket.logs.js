@@ -623,7 +623,7 @@ const processOriginalInterest = async (
  * becomes one stage that accrues daily from its start day.
  * How two or more stages are charged depends on the product's calculation
  * mode, which each ticket carries in Late_Charge_Calc_Mode. See
- * lateChargeCycle.js for the four modes.
+ * lateChargeCycle.js. The two modes are once_then_daily and step_up_monthly.
  */
 const resolveLateChargeStages = (ticket) => {
   const numberOfStages = parseFloat(ticket.numberOfLateChargeStages) || 0;

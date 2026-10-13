@@ -81,19 +81,6 @@ test("once_then_daily charges early stages once and the last stage daily", () =>
   close(percentThrough(weekly, mode, 29), 3 + 2 * 8);
 });
 
-test("daily_per_stage charges the covering stage's full rate every day", () => {
-  const mode = "daily_per_stage";
-  assert.deepEqual(due(weekly, mode, 0).map((s) => [s.num, s.rate]), [[1, 0.5]]);
-  assert.deepEqual(due(weekly, mode, 7).map((s) => [s.num, s.rate]), [[1, 0.5]]);
-  assert.deepEqual(due(weekly, mode, 8).map((s) => [s.num, s.rate]), [[2, 1]]);
-  assert.deepEqual(due(weekly, mode, 14).map((s) => [s.num, s.rate]), [[2, 1]]);
-  assert.deepEqual(due(weekly, mode, 15).map((s) => [s.num, s.rate]), [[3, 1.5]]);
-  assert.deepEqual(due(weekly, mode, 22).map((s) => [s.num, s.rate]), [[4, 2]]);
-  assert.deepEqual(due(weekly, mode, 120).map((s) => [s.num, s.rate]), [[4, 2]]);
-  // 8 days at 0.5, 7 at 1, 7 at 1.5, then 2 on days 22 and 23.
-  close(percentThrough(weekly, mode, 23), 8 * 0.5 + 7 * 1 + 7 * 1.5 + 2 * 2);
-});
-
 test("step_up_monthly adds only the increase and restarts each month", () => {
   const mode = "step_up_monthly";
   assert.deepEqual(due(weekly, mode, 0).map((s) => [s.num, s.rate]), [[1, 0.5]]);
@@ -119,25 +106,6 @@ test("step_up_monthly never charges a negative step", () => {
   ];
   assert.deepEqual(due(stages, "step_up_monthly", 0).map((s) => s.rate), [2]);
   assert.deepEqual(due(stages, "step_up_monthly", 7), []);
-});
-
-test("split_monthly spreads each stage rate over its days", () => {
-  const mode = "split_monthly";
-  const day0 = due(weekly, mode, 0)[0];
-  const day7 = due(weekly, mode, 7)[0];
-  const day8 = due(weekly, mode, 8)[0];
-  const day22 = due(weekly, mode, 22)[0];
-  assert.equal(day0.num, 1);
-  close(day0.rate, 0.5 / 8);
-  assert.equal(day7.num, 1);
-  assert.equal(day8.num, 2);
-  close(day8.rate, 1 / 7);
-  assert.equal(day22.num, 4);
-  close(day22.rate, 2 / 8);
-  assert.equal(due(weekly, mode, 29)[0].num, 4);
-  assert.equal(due(weekly, mode, 30)[0].num, 1);
-  // One full 30-day month adds 0.5 + 1 + 1.5 + 2.
-  close(percentThrough(weekly, mode, 29), 5);
 });
 
 test("missing start days are taken from the previous end day in every mode", () => {
@@ -184,6 +152,5 @@ test("a zero rate stage charges nothing", () => {
     { num: 2, startDay: 8, endDay: 0, rate: 1 },
   ];
   assert.deepEqual(due(stages, "once_then_daily", 0), []);
-  assert.deepEqual(due(stages, "daily_per_stage", 0), []);
-  assert.deepEqual(due(stages, "split_monthly", 0), []);
+  assert.deepEqual(due(stages, "step_up_monthly", 0), []);
 });

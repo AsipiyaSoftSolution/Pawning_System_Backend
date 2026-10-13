@@ -9,20 +9,11 @@
  *       Stages 1..N-1 are charged once, on the day the stage begins. The last
  *       stage is charged every day until the ticket is settled. Never restarts.
  *
- *   daily_per_stage
- *       Every day the stage that covers that day is charged its full rate.
- *       The last stage runs until settlement. Never restarts.
- *
  *   step_up_monthly
  *       The rate of each stage is the TOTAL late charge owed once the ticket
  *       reaches that stage. When a stage begins, only the increase over the
  *       previous stage is added. The schedule restarts on every monthly
  *       anniversary of the maturity date.
- *
- *   split_monthly
- *       The rate of each stage is the charge for that whole stage. It is spread
- *       evenly over the days of the stage, and the schedule restarts on every
- *       monthly anniversary of the maturity date.
  *
  * A single stage (and a flat, non-staged percentage) is always a daily percent
  * from its start day until settlement, whatever the mode.
@@ -34,23 +25,18 @@
  */
 
 export const LATE_CHARGE_MODE_ONCE_THEN_DAILY = "once_then_daily";
-export const LATE_CHARGE_MODE_DAILY_PER_STAGE = "daily_per_stage";
 export const LATE_CHARGE_MODE_STEP_UP_MONTHLY = "step_up_monthly";
-export const LATE_CHARGE_MODE_SPLIT_MONTHLY = "split_monthly";
 
 export const LATE_CHARGE_MODES = [
   LATE_CHARGE_MODE_ONCE_THEN_DAILY,
-  LATE_CHARGE_MODE_DAILY_PER_STAGE,
   LATE_CHARGE_MODE_STEP_UP_MONTHLY,
-  LATE_CHARGE_MODE_SPLIT_MONTHLY,
 ];
 
 export const DEFAULT_LATE_CHARGE_MODE = LATE_CHARGE_MODE_ONCE_THEN_DAILY;
 
-/** Modes whose schedule restarts every month after maturity. */
+/** True when the schedule restarts every month after maturity. */
 export const isMonthlyLateChargeMode = (mode) =>
-  mode === LATE_CHARGE_MODE_STEP_UP_MONTHLY ||
-  mode === LATE_CHARGE_MODE_SPLIT_MONTHLY;
+  mode === LATE_CHARGE_MODE_STEP_UP_MONTHLY;
 
 /** Unknown, empty or missing values fall back to the original behaviour. */
 export function normalizeLateChargeMode(value) {
@@ -157,19 +143,6 @@ function onceThenDaily(normalized, day) {
   return due;
 }
 
-function dailyPerStage(normalized, day) {
-  for (let i = 0; i < normalized.length; i += 1) {
-    const stage = normalized[i];
-    const next = normalized[i + 1];
-    const windowEnd =
-      next && next.startDay > stage.startDay ? next.startDay : Infinity;
-    if (day < stage.startDay || day >= windowEnd) continue;
-    const rate = Number(stage.rate) || 0;
-    return rate > 0 ? [{ ...stage, rate, totalRate: rate }] : [];
-  }
-  return [];
-}
-
 function stepUpMonthly(normalized, cycle) {
   let previousTotal = 0;
   const due = [];
@@ -183,24 +156,6 @@ function stepUpMonthly(normalized, cycle) {
     due.push({ ...stage, rate: stepUp, totalRate: total });
   }
   return due;
-}
-
-function splitMonthly(normalized, cycle) {
-  for (let i = 0; i < normalized.length; i += 1) {
-    const stage = normalized[i];
-    const next = normalized[i + 1];
-    let windowEnd = cycle.length;
-    if (next && next.startDay > stage.startDay) windowEnd = next.startDay;
-    if (windowEnd > cycle.length) windowEnd = cycle.length;
-    if (cycle.dayInCycle < stage.startDay || cycle.dayInCycle >= windowEnd) {
-      continue;
-    }
-    const total = Number(stage.rate) || 0;
-    const days = windowEnd - stage.startDay;
-    const rate = total / (days > 0 ? days : 1);
-    return rate > 0 ? [{ ...stage, rate, totalRate: total }] : [];
-  }
-  return [];
 }
 
 /**
@@ -220,18 +175,9 @@ export function stagesDueOnLateChargeDate(
   if (stages.length < 2) return singleStageDue(stages[0], day);
 
   const normalized = withDerivedStarts(stages);
-  switch (normalizeLateChargeMode(mode)) {
-    case LATE_CHARGE_MODE_DAILY_PER_STAGE:
-      return dailyPerStage(normalized, day);
-    case LATE_CHARGE_MODE_STEP_UP_MONTHLY: {
-      const cycle = monthCycle(maturityDate, onDate);
-      return cycle ? stepUpMonthly(normalized, cycle) : [];
-    }
-    case LATE_CHARGE_MODE_SPLIT_MONTHLY: {
-      const cycle = monthCycle(maturityDate, onDate);
-      return cycle ? splitMonthly(normalized, cycle) : [];
-    }
-    default:
-      return onceThenDaily(normalized, day);
+  if (normalizeLateChargeMode(mode) === LATE_CHARGE_MODE_STEP_UP_MONTHLY) {
+    const cycle = monthCycle(maturityDate, onDate);
+    return cycle ? stepUpMonthly(normalized, cycle) : [];
   }
+  return onceThenDaily(normalized, day);
 }

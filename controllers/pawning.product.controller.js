@@ -12,6 +12,20 @@ import {
   normalizeProductCode,
   validatePawningProductPayload,
 } from "../utils/pawningProductValidation.js";
+import { normalizeLateChargeMode } from "../utils/lateChargeCycle.js";
+
+/**
+ * The calculation mode a request asks for, or null when it did not send one
+ * (so an update keeps the stored mode). Validation has already rejected
+ * unknown values.
+ */
+const requestedLateChargeMode = (data) => {
+  const raw = data?.lateCharge?.calcMode;
+  if (raw === undefined || raw === null || String(raw).trim() === "") {
+    return null;
+  }
+  return normalizeLateChargeMode(raw);
+};
 
 /** Flat plans historically stored NULL; treat that as "default". */
 const resolveInterestApplicableMethod = (value) =>
@@ -224,6 +238,7 @@ export const getPawningProductById = async (req, res, next) => {
         lateChargeStage4StartDate,
         lateChargeStage4EndDate,
         numberOfLateChargeStages,
+        Late_Charge_Calc_Mode,
         early_settlement_stage1_start_day,
         early_settlement_stage1_end_day,
         early_settlement_stage1_value,
@@ -377,6 +392,7 @@ export const getPawningProductById = async (req, res, next) => {
         status: product.Late_Charge_Status === "1" ? "Active" : "Inactive",
         chargeType: product.Late_Charge_Create_As,
         percentage: product.Late_Charge,
+        calcMode: normalizeLateChargeMode(product.Late_Charge_Calc_Mode),
         // Add late charge stage fields ONLY when it is Charge For Product
         ...(product.Late_Charge_Create_As === "Charge For Product" && {
           lateChargeStage1: product.lateChargeStage1,
@@ -770,7 +786,7 @@ export async function createOnePawningProductForBranch(
   const lateChargePresentage = data.lateCharge?.percentage || 0;
 
   const [result] = await connection.query(
-    "INSERT INTO pawning_product (Branch_idBranch,Name,Product_Code,Service_Charge,Service_Charge_Create_As,Service_Charge_Value_type,Service_Charge_Value,Early_Settlement_Charge_Create_As,Late_Charge_Status,Late_Charge_Create_As,Late_Charge,Interest_Method,Last_Updated_User,Last_Updated_Time,lateChargeStage1,lateChargeStage2,lateChargeStage3,lateChargeStage4,lateChargeStage1StartDate,lateChargeStage1EndDate,lateChargeStage2StartDate,lateChargeStage2EndDate,lateChargeStage3StartDate,lateChargeStage3EndDate,lateChargeStage4StartDate,lateChargeStage4EndDate,numberOfLateChargeStages) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    "INSERT INTO pawning_product (Branch_idBranch,Name,Product_Code,Service_Charge,Service_Charge_Create_As,Service_Charge_Value_type,Service_Charge_Value,Early_Settlement_Charge_Create_As,Late_Charge_Status,Late_Charge_Create_As,Late_Charge,Interest_Method,Last_Updated_User,Last_Updated_Time,lateChargeStage1,lateChargeStage2,lateChargeStage3,lateChargeStage4,lateChargeStage1StartDate,lateChargeStage1EndDate,lateChargeStage2StartDate,lateChargeStage2EndDate,lateChargeStage3StartDate,lateChargeStage3EndDate,lateChargeStage4StartDate,lateChargeStage4EndDate,numberOfLateChargeStages,Late_Charge_Calc_Mode) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
     [
       branchId,
       data.productName || "Unnamed Product",
@@ -803,6 +819,7 @@ export async function createOnePawningProductForBranch(
       data.lateCharge?.lateChargeStage4StartDate || null,
       normalizeStageEnd(data.lateCharge?.lateChargeStage4EndDate),
       data.lateCharge?.numberOfLateChargeStages || 0,
+      requestedLateChargeMode(data) || normalizeLateChargeMode(null),
     ],
   );
 
@@ -1392,7 +1409,8 @@ export const updatePawningProductById = async (req, res, next) => {
         lateChargeStage3EndDate = ?,
         lateChargeStage4StartDate = ?,
         lateChargeStage4EndDate = ?,
-        numberOfLateChargeStages = ?
+        numberOfLateChargeStages = ?,
+        Late_Charge_Calc_Mode = COALESCE(?, Late_Charge_Calc_Mode)
       WHERE idPawning_Product = ?`,
       [
         data.productName,
@@ -1425,6 +1443,7 @@ export const updatePawningProductById = async (req, res, next) => {
         data.lateCharge?.lateChargeStage4StartDate || null,
         normalizeStageEnd(data.lateCharge?.lateChargeStage4EndDate),
         data.lateCharge?.numberOfLateChargeStages || 0,
+        requestedLateChargeMode(data),
         idPawning_Product,
       ],
     );

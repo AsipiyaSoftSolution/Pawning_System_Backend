@@ -11,7 +11,10 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import { pool, pool2 } from "../utils/db.js";
-import { stagesDueOnLateChargeDate } from "../utils/lateChargeCycle.js";
+import {
+  normalizeLateChargeMode,
+  stagesDueOnLateChargeDate,
+} from "../utils/lateChargeCycle.js";
 
 const TICKET_PREFIX = "MCI-";
 const TOLERANCE = 0.01;
@@ -146,7 +149,12 @@ function expectedPenalty(ticket, advance, today) {
   for (let day = 0; day <= elapsed; day += 1) {
     const onDate = new Date(maturity);
     onDate.setDate(onDate.getDate() + day);
-    for (const stage of stagesDueOnLateChargeDate(stages, onDate, maturity)) {
+    for (const stage of stagesDueOnLateChargeDate(
+      stages,
+      onDate,
+      maturity,
+      ticket.Late_Charge_Calc_Mode,
+    )) {
       amount += (advance * stage.rate) / 100;
       entries += 1;
       counts[stage.num] = (counts[stage.num] || 0) + 1;
@@ -162,7 +170,7 @@ function expectedPenalty(ticket, advance, today) {
   return {
     amount,
     entries,
-    detail: `each month; ${parts.join(" + ") || "no late charge"}`,
+    detail: `${normalizeLateChargeMode(ticket.Late_Charge_Calc_Mode)}; ${parts.join(" + ") || "no late charge"}`,
   };
 }
 

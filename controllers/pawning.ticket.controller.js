@@ -22,6 +22,7 @@ import {
 } from "../utils/pawningLetterTemplateFields.js";
 import { getRequestAccessToken } from "../utils/requestAuth.js";
 import { usesStagedInterest } from "../utils/pawningProductConstants.js";
+import { normalizeLateChargeMode } from "../utils/lateChargeCycle.js";
 import { computeInterestApplyOnDate } from "../utils/pawningInterestSchedule.js";
 
 /** Fetch company_customer data by Pawning customer ids via Account Center subsystem API */
@@ -405,7 +406,7 @@ export const createPawningTicket = async (req, res, next) => {
 
     // get the ticket's product service charge type and other data
     const [productData] = await connection.query(
-      "SELECT Service_Charge_Create_As,Interest_Method,Service_Charge_Value,Service_Charge_Value_Type,Late_Charge_Create_As,Late_Charge_Status,Late_Charge,Early_Settlement_Charge_Create_As FROM pawning_product WHERE idPawning_Product = ?",
+      "SELECT Service_Charge_Create_As,Interest_Method,Service_Charge_Value,Service_Charge_Value_Type,Late_Charge_Create_As,Late_Charge_Status,Late_Charge,Late_Charge_Calc_Mode,Early_Settlement_Charge_Create_As FROM pawning_product WHERE idPawning_Product = ?",
       [data.ticketData.productId],
     );
 
@@ -736,7 +737,7 @@ export const createPawningTicket = async (req, res, next) => {
 
     // Insert into pawning_ticket table
     const [result] = await connection.query(
-      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount,Service_Charge_Type,Service_Charge_Rate,Early_Settlement_Charge_Balance,Additiona_Charges_Balance,Service_Charge_Balance,Late_Charge_Balance,Interest_Amount_Balance,Balance_Amount,Interest_Rate_Duration,stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,Status,service_charge_paid_by_customer,service_charge_paid_from_pawning_advance,noOfStages,lateChargeStage1,lateChargeStage2,lateChargeStage3,lateChargeStage4,lateChargeStage1StartDate,lateChargeStage2StartDate,lateChargeStage3StartDate,lateChargeStage4StartDate,lateChargeStage1EndDate,lateChargeStage2EndDate,lateChargeStage3EndDate,lateChargeStage4EndDate,numberOfLateChargeStages,early_settlement_effect_type,early_settlement_stage1_start_day,early_settlement_stage1_end_day,early_settlement_stage1_value,early_settlement_stage1_value_type,early_settlement_stage2_start_day,early_settlement_stage2_end_day,early_settlement_stage2_value,early_settlement_stage2_value_type,early_settlement_stage3_start_day,early_settlement_stage3_end_day,early_settlement_stage3_value,early_settlement_stage3_value_type,early_settlement_stage4_start_day,early_settlement_stage4_end_day,early_settlement_stage4_value,early_settlement_stage4_value_type) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO pawning_ticket (Ticket_No,SEQ_No,Date_Time,Customer_idCustomer,Period_Type,Period,Maturity_date,Gross_Weight,Assessed_Value,Net_Weight,Payble_Value,Pawning_Advance_Amount,Interest_Rate,Service_charge_Amount,Late_charge_Presentage,Interest_apply_on,User_idUser,Branch_idBranch,Pawning_Product_idPawning_Product,Total_Amount,Service_Charge_Type,Service_Charge_Rate,Early_Settlement_Charge_Balance,Additiona_Charges_Balance,Service_Charge_Balance,Late_Charge_Balance,Interest_Amount_Balance,Balance_Amount,Interest_Rate_Duration,stage1StartDate,stage1EndDate,stage2StartDate,stage2EndDate,stage3StartDate,stage3EndDate,stage4StartDate,stage4EndDate,stage1Interest,stage2Interest,stage3Interest,stage4Interest,Status,service_charge_paid_by_customer,service_charge_paid_from_pawning_advance,noOfStages,lateChargeStage1,lateChargeStage2,lateChargeStage3,lateChargeStage4,lateChargeStage1StartDate,lateChargeStage2StartDate,lateChargeStage3StartDate,lateChargeStage4StartDate,lateChargeStage1EndDate,lateChargeStage2EndDate,lateChargeStage3EndDate,lateChargeStage4EndDate,numberOfLateChargeStages,Late_Charge_Calc_Mode,early_settlement_effect_type,early_settlement_stage1_start_day,early_settlement_stage1_end_day,early_settlement_stage1_value,early_settlement_stage1_value_type,early_settlement_stage2_start_day,early_settlement_stage2_end_day,early_settlement_stage2_value,early_settlement_stage2_value_type,early_settlement_stage3_start_day,early_settlement_stage3_end_day,early_settlement_stage3_value,early_settlement_stage3_value_type,early_settlement_stage4_start_day,early_settlement_stage4_end_day,early_settlement_stage4_value,early_settlement_stage4_value_type) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [
         data.ticketData.ticketNo,
         data.ticketData.grantSeqNo,
@@ -796,6 +797,7 @@ export const createPawningTicket = async (req, res, next) => {
         lateChargeData[0]?.lateChargeStage3EndDate || null,
         lateChargeData[0]?.lateChargeStage4EndDate || null,
         lateChargeData[0]?.numberOfLateChargeStages || 0,
+        normalizeLateChargeMode(productData[0].Late_Charge_Calc_Mode),
         es.early_settlement_effect_type ?? null,
         es.early_settlement_stage1_start_day ?? null,
         es.early_settlement_stage1_end_day ?? null,
@@ -1760,7 +1762,7 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
     }
 
     const [productRows] = await pool.query(
-      "SELECT Late_Charge_Create_As, Late_Charge_Status, Late_Charge, lateChargeStage1, lateChargeStage2, lateChargeStage3, lateChargeStage4, lateChargeStage1StartDate, lateChargeStage2StartDate, lateChargeStage3StartDate, lateChargeStage4StartDate, lateChargeStage1EndDate, lateChargeStage2EndDate, lateChargeStage3EndDate, lateChargeStage4EndDate, numberOfLateChargeStages FROM pawning_product WHERE idPawning_Product = ?",
+      "SELECT Late_Charge_Create_As, Late_Charge_Status, Late_Charge, lateChargeStage1, lateChargeStage2, lateChargeStage3, lateChargeStage4, lateChargeStage1StartDate, lateChargeStage2StartDate, lateChargeStage3StartDate, lateChargeStage4StartDate, lateChargeStage1EndDate, lateChargeStage2EndDate, lateChargeStage3EndDate, lateChargeStage4EndDate, numberOfLateChargeStages, Late_Charge_Calc_Mode FROM pawning_product WHERE idPawning_Product = ?",
       [productId],
     );
 
@@ -1865,6 +1867,7 @@ export const getTicketGrantSummaryData = async (req, res, next) => {
       serviceChargeType,
       interestApplicableMethod: filteredPlan.interestApplicableMethod || null,
       lateChargeCreateAs: product.Late_Charge_Create_As || null,
+      lateChargeCalcMode: normalizeLateChargeMode(product.Late_Charge_Calc_Mode),
     });
   } catch (error) {
     console.error("Error in getTicketGrantSummaryData:", error);

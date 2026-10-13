@@ -88,6 +88,19 @@ async function fetchBranchNamesByIds(branchIds, accessToken) {
   }
 }
 
+/**
+ * Account Center wraps the NIC in % for LIKE. Callers also pass a pattern
+ * from formatSearchPattern, and a second wrap escapes those % signs so the
+ * search looks for a literal percent in the NIC and matches nothing.
+ */
+function plainNicForAccountCenterLookup(nic) {
+  return String(nic || "")
+    .replace(/^%+|%+$/g, "")
+    .replace(/\\%/g, "")
+    .replace(/\\_/g, "")
+    .trim();
+}
+
 /** Find isPawningUserId list by NIC via Account Center subsystem API (company_customer) */
 async function findPawningIdsByNicFromAccCenter(
   nic,
@@ -95,10 +108,11 @@ async function findPawningIdsByNicFromAccCenter(
   branchId,
   accessToken,
 ) {
-  if (!nic || !companyId || !accessToken) return [];
+  const plainNic = plainNicForAccountCenterLookup(nic);
+  if (!plainNic || !companyId || !accessToken) return [];
   try {
     const res = await subsystemApi.findPawningIdsByNic(
-      nic,
+      plainNic,
       companyId,
       branchId,
       accessToken,
@@ -126,6 +140,40 @@ async function fetchCustomerStatusFromAccCenter(
     console.error("fetchCustomerStatusFromAccCenter:", e);
     return null;
   }
+}
+
+/** Product id, product name, and ticket number filters shared by ticket lists. */
+function appendTicketListSearchFilters(
+  baseWhereConditions,
+  countParams,
+  dataParams,
+  { product, productId, ticketNo },
+) {
+  let where = baseWhereConditions;
+  if (productId) {
+    const id = parseInt(productId, 10);
+    if (!Number.isInteger(id) || id <= 0) {
+      return { error: "Invalid product" };
+    }
+    where += " AND pt.Pawning_Product_idPawning_Product = ?";
+    countParams.push(id);
+    dataParams.push(id);
+  } else if (product) {
+    const sanitizedProduct = `%${String(product).replace(/[%_\\]/g, "\\$&")}%`;
+    where += " AND pp.Name LIKE ?";
+    countParams.push(sanitizedProduct);
+    dataParams.push(sanitizedProduct);
+  }
+
+  const ticket = String(ticketNo || "").trim();
+  if (ticket) {
+    const sanitizedTicket = `%${ticket.replace(/[%_\\]/g, "\\$&")}%`;
+    where += " AND pt.Ticket_No LIKE ?";
+    countParams.push(sanitizedTicket);
+    dataParams.push(sanitizedTicket);
+  }
+
+  return { where };
 }
 
 /** Get company settings (is_Ticket_Approve_After_Create) via Account Center subsystem API */
@@ -3983,7 +4031,8 @@ export const activatePawningTicket = async (req, res, next) => {
 // send active (1) pawning tickets
 export const sendActiveTickets = async (req, res, next) => {
   try {
-    const { product, start_date, end_date, nic, branchId } = req.query;
+    const { product, productId, start_date, end_date, nic, branchId, ticketNo } =
+      req.query;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
@@ -4034,14 +4083,16 @@ export const sendActiveTickets = async (req, res, next) => {
       dataParams = [req.branchId];
     }
 
-    // Add filter conditions dynamically
-    if (product) {
-      // Sanitize product name for LIKE query
-      const sanitizedProduct = `%${product.replace(/[%_\\]/g, "\\$&")}%`;
-      baseWhereConditions += " AND pp.Name LIKE ?";
-      countParams.push(sanitizedProduct);
-      dataParams.push(sanitizedProduct);
+    const activeSearch = appendTicketListSearchFilters(
+      baseWhereConditions,
+      countParams,
+      dataParams,
+      { product, productId, ticketNo },
+    );
+    if (activeSearch.error) {
+      return next(errorHandler(400, activeSearch.error));
     }
+    baseWhereConditions = activeSearch.where;
 
     if (start_date) {
       // Validate date format (YYYY-MM-DD)
@@ -4189,7 +4240,8 @@ export const sendActiveTickets = async (req, res, next) => {
 // send settled (2) pawning tickets
 export const sendSettledTickets = async (req, res, next) => {
   try {
-    const { product, start_date, end_date, nic, branchId } = req.query;
+    const { product, productId, start_date, end_date, nic, branchId, ticketNo } =
+      req.query;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
@@ -4240,14 +4292,16 @@ export const sendSettledTickets = async (req, res, next) => {
       dataParams = [req.branchId];
     }
 
-    // Add filter conditions dynamically
-    if (product) {
-      // Sanitize product name for LIKE query
-      const sanitizedProduct = `%${product.replace(/[%_\\]/g, "\\$&")}%`;
-      baseWhereConditions += " AND pp.Name LIKE ?";
-      countParams.push(sanitizedProduct);
-      dataParams.push(sanitizedProduct);
+    const settledSearch = appendTicketListSearchFilters(
+      baseWhereConditions,
+      countParams,
+      dataParams,
+      { product, productId, ticketNo },
+    );
+    if (settledSearch.error) {
+      return next(errorHandler(400, settledSearch.error));
     }
+    baseWhereConditions = settledSearch.where;
 
     if (start_date) {
       // Validate date format (YYYY-MM-DD)
@@ -4395,7 +4449,8 @@ export const sendSettledTickets = async (req, res, next) => {
 // send overdue (3) pawning tickets
 export const sendOverdueTickets = async (req, res, next) => {
   try {
-    const { product, start_date, end_date, nic, branchId } = req.query;
+    const { product, productId, start_date, end_date, nic, branchId, ticketNo } =
+      req.query;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
@@ -4446,14 +4501,16 @@ export const sendOverdueTickets = async (req, res, next) => {
       dataParams = [req.branchId];
     }
 
-    // Add filter conditions dynamically
-    if (product) {
-      // Sanitize product name for LIKE query
-      const sanitizedProduct = `%${product.replace(/[%_\\]/g, "\\$&")}%`;
-      baseWhereConditions += " AND pp.Name LIKE ?";
-      countParams.push(sanitizedProduct);
-      dataParams.push(sanitizedProduct);
+    const overdueSearch = appendTicketListSearchFilters(
+      baseWhereConditions,
+      countParams,
+      dataParams,
+      { product, productId, ticketNo },
+    );
+    if (overdueSearch.error) {
+      return next(errorHandler(400, overdueSearch.error));
     }
+    baseWhereConditions = overdueSearch.where;
 
     if (start_date) {
       // Validate date format (YYYY-MM-DD)

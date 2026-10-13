@@ -1,16 +1,64 @@
 /**
- * Late-charge stage schedule.
+ * Late-charge schedule, one function per calculation mode.
  *
- * One stage, or a flat percentage stored as one stage, is a daily percent of
- * the advance from its start day until settlement.
+ * A product chooses how its late-charge stages behave. The choice is stored on
+ * pawning_product.Late_Charge_Calc_Mode and copied onto each ticket when it is
+ * created, so editing a product never changes tickets already issued.
  *
- * Two or more stages work as a step-up that restarts on the maturity
- * anniversary each month. The rate entered for a stage is the total late
- * charge owed for the cycle once the ticket reaches that stage. When a stage
- * begins, only the difference from the previous stage is added. With 0.5, 1,
- * 1.5 and 2 the ticket owes 0.5% in week 1, 1% in week 2, 1.5% in week 3 and
- * 2% from week 4 until the same date next month, then the cycle starts again.
+ *   once_then_daily  (default, the original behaviour)
+ *       Stages 1..N-1 are charged once, on the day the stage begins. The last
+ *       stage is charged every day until the ticket is settled. Never restarts.
+ *
+ *   daily_per_stage
+ *       Every day the stage that covers that day is charged its full rate.
+ *       The last stage runs until settlement. Never restarts.
+ *
+ *   step_up_monthly
+ *       The rate of each stage is the TOTAL late charge owed once the ticket
+ *       reaches that stage. When a stage begins, only the increase over the
+ *       previous stage is added. The schedule restarts on every monthly
+ *       anniversary of the maturity date.
+ *
+ *   split_monthly
+ *       The rate of each stage is the charge for that whole stage. It is spread
+ *       evenly over the days of the stage, and the schedule restarts on every
+ *       monthly anniversary of the maturity date.
+ *
+ * A single stage (and a flat, non-staged percentage) is always a daily percent
+ * from its start day until settlement, whatever the mode.
+ *
+ * `stagesDueOnLateChargeDate` returns the stages to charge on one calendar day.
+ * On every returned stage `rate` is the percent of the advance to charge that
+ * day; callers compute advance * rate / 100 and need no further division.
+ * `totalRate` carries the stage's own configured rate for reporting.
  */
+
+export const LATE_CHARGE_MODE_ONCE_THEN_DAILY = "once_then_daily";
+export const LATE_CHARGE_MODE_DAILY_PER_STAGE = "daily_per_stage";
+export const LATE_CHARGE_MODE_STEP_UP_MONTHLY = "step_up_monthly";
+export const LATE_CHARGE_MODE_SPLIT_MONTHLY = "split_monthly";
+
+export const LATE_CHARGE_MODES = [
+  LATE_CHARGE_MODE_ONCE_THEN_DAILY,
+  LATE_CHARGE_MODE_DAILY_PER_STAGE,
+  LATE_CHARGE_MODE_STEP_UP_MONTHLY,
+  LATE_CHARGE_MODE_SPLIT_MONTHLY,
+];
+
+export const DEFAULT_LATE_CHARGE_MODE = LATE_CHARGE_MODE_ONCE_THEN_DAILY;
+
+/** Modes whose schedule restarts every month after maturity. */
+export const isMonthlyLateChargeMode = (mode) =>
+  mode === LATE_CHARGE_MODE_STEP_UP_MONTHLY ||
+  mode === LATE_CHARGE_MODE_SPLIT_MONTHLY;
+
+/** Unknown, empty or missing values fall back to the original behaviour. */
+export function normalizeLateChargeMode(value) {
+  const text = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  return LATE_CHARGE_MODES.includes(text) ? text : DEFAULT_LATE_CHARGE_MODE;
+}
 
 function startOfDay(value) {
   if (value instanceof Date) {
@@ -29,7 +77,7 @@ function startOfDay(value) {
 }
 
 function daysBetween(dateA, dateB) {
-  return Math.floor((startOfDay(dateA) - startOfDay(dateB)) / 86400000);
+  return Math.round((startOfDay(dateA) - startOfDay(dateB)) / 86400000);
 }
 
 function addCalendarMonths(date, months) {
@@ -46,6 +94,7 @@ function addCalendarMonths(date, months) {
   return target;
 }
 
+/** Position of `onDate` inside the monthly cycle that began on a maturity anniversary. */
 function monthCycle(maturityDate, onDate) {
   const on = startOfDay(onDate);
   const origin = startOfDay(maturityDate);
@@ -66,6 +115,7 @@ function monthCycle(maturityDate, onDate) {
   };
 }
 
+/** Fill start days that were saved as 0 or left blank from the previous stage's end day. */
 function withDerivedStarts(stages) {
   let previousEnd = null;
   return stages.map((stage, index) => {
@@ -87,32 +137,40 @@ function withDerivedStarts(stages) {
   });
 }
 
-/**
- * Charges due on `onDate`.
- *
- * A single stage returns itself every day with its daily rate.
- * Two or more stages return a stage only on the day it begins in the monthly
- * cycle. The returned `rate` is the step-up, meaning this stage's total minus
- * the total of the stage before it. `totalRate` is the stage's own total.
- */
-export function stagesDueOnLateChargeDate(stages, onDate, maturityDate) {
-  if (!Array.isArray(stages) || stages.length === 0) return [];
-  const day = daysBetween(onDate, maturityDate);
-  if (!Number.isFinite(day) || day < 0) return [];
+function singleStageDue(stage, day) {
+  const start = Number(stage.startDay) || 0;
+  const rate = Number(stage.rate) || 0;
+  if (day >= start && rate > 0) return [{ ...stage, rate, totalRate: rate }];
+  return [];
+}
 
-  if (stages.length < 2) {
-    const stage = stages[0];
-    const start = Number(stage.startDay) || 0;
-    if (day >= start && Number(stage.rate) > 0) {
-      return [{ ...stage, totalRate: Number(stage.rate) }];
-    }
-    return [];
+function onceThenDaily(normalized, day) {
+  const due = [];
+  const lastIndex = normalized.length - 1;
+  normalized.forEach((stage, index) => {
+    const rate = Number(stage.rate) || 0;
+    if (!(rate > 0)) return;
+    const isLast = index === lastIndex;
+    const charged = isLast ? day >= stage.startDay : day === stage.startDay;
+    if (charged) due.push({ ...stage, rate, totalRate: rate });
+  });
+  return due;
+}
+
+function dailyPerStage(normalized, day) {
+  for (let i = 0; i < normalized.length; i += 1) {
+    const stage = normalized[i];
+    const next = normalized[i + 1];
+    const windowEnd =
+      next && next.startDay > stage.startDay ? next.startDay : Infinity;
+    if (day < stage.startDay || day >= windowEnd) continue;
+    const rate = Number(stage.rate) || 0;
+    return rate > 0 ? [{ ...stage, rate, totalRate: rate }] : [];
   }
+  return [];
+}
 
-  const cycle = monthCycle(maturityDate, onDate);
-  if (!cycle) return [];
-
-  const normalized = withDerivedStarts(stages);
+function stepUpMonthly(normalized, cycle) {
   let previousTotal = 0;
   const due = [];
   for (const stage of normalized) {
@@ -125,4 +183,55 @@ export function stagesDueOnLateChargeDate(stages, onDate, maturityDate) {
     due.push({ ...stage, rate: stepUp, totalRate: total });
   }
   return due;
+}
+
+function splitMonthly(normalized, cycle) {
+  for (let i = 0; i < normalized.length; i += 1) {
+    const stage = normalized[i];
+    const next = normalized[i + 1];
+    let windowEnd = cycle.length;
+    if (next && next.startDay > stage.startDay) windowEnd = next.startDay;
+    if (windowEnd > cycle.length) windowEnd = cycle.length;
+    if (cycle.dayInCycle < stage.startDay || cycle.dayInCycle >= windowEnd) {
+      continue;
+    }
+    const total = Number(stage.rate) || 0;
+    const days = windowEnd - stage.startDay;
+    const rate = total / (days > 0 ? days : 1);
+    return rate > 0 ? [{ ...stage, rate, totalRate: total }] : [];
+  }
+  return [];
+}
+
+/**
+ * Stages to charge on `onDate`, for a ticket that matured on `maturityDate`.
+ * `mode` is one of LATE_CHARGE_MODES; anything else behaves as the default.
+ */
+export function stagesDueOnLateChargeDate(
+  stages,
+  onDate,
+  maturityDate,
+  mode = DEFAULT_LATE_CHARGE_MODE,
+) {
+  if (!Array.isArray(stages) || stages.length === 0) return [];
+  const day = daysBetween(onDate, maturityDate);
+  if (!Number.isFinite(day) || day < 0) return [];
+
+  if (stages.length < 2) return singleStageDue(stages[0], day);
+
+  const normalized = withDerivedStarts(stages);
+  switch (normalizeLateChargeMode(mode)) {
+    case LATE_CHARGE_MODE_DAILY_PER_STAGE:
+      return dailyPerStage(normalized, day);
+    case LATE_CHARGE_MODE_STEP_UP_MONTHLY: {
+      const cycle = monthCycle(maturityDate, onDate);
+      return cycle ? stepUpMonthly(normalized, cycle) : [];
+    }
+    case LATE_CHARGE_MODE_SPLIT_MONTHLY: {
+      const cycle = monthCycle(maturityDate, onDate);
+      return cycle ? splitMonthly(normalized, cycle) : [];
+    }
+    default:
+      return onceThenDaily(normalized, day);
+  }
 }

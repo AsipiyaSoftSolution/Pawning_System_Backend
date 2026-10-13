@@ -2,7 +2,10 @@ import { pool } from "../utils/db.js";
 import { createCustomerLogOnTicketPenality } from "./customer.logs.js";
 import { pawningPaymentsApi } from "../api/accountCenterApi.js";
 import { usesStagedInterest } from "./pawningProductConstants.js";
-import { stagesDueOnLateChargeDate } from "./lateChargeCycle.js";
+import {
+  normalizeLateChargeMode,
+  stagesDueOnLateChargeDate,
+} from "./lateChargeCycle.js";
 
 // Helper: record accounting entries for accrued interest
 const recordInterestAccountingEntries = async (
@@ -618,9 +621,9 @@ const processOriginalInterest = async (
  * Resolve the late charge stages to accrue for a ticket.
  * A single configured stage, or a flat (non-staged) late charge percentage,
  * becomes one stage that accrues daily from its start day.
- * Two or more stages step up on each monthly anniversary of the maturity date:
- * each stage rate is the cycle total, and only the increase is added when the
- * stage begins. See lateChargeCycle.js.
+ * How two or more stages are charged depends on the product's calculation
+ * mode, which each ticket carries in Late_Charge_Calc_Mode. See
+ * lateChargeCycle.js for the four modes.
  */
 const resolveLateChargeStages = (ticket) => {
   const numberOfStages = parseFloat(ticket.numberOfLateChargeStages) || 0;
@@ -648,7 +651,7 @@ const hydrateTicketLateChargeFromProduct = async (ticket, queryRunner) => {
             lateChargeStage3StartDate, lateChargeStage4StartDate,
             lateChargeStage1EndDate, lateChargeStage2EndDate,
             lateChargeStage3EndDate, lateChargeStage4EndDate,
-            numberOfLateChargeStages
+            numberOfLateChargeStages, Late_Charge_Calc_Mode
      FROM pawning_product WHERE idPawning_Product = ? LIMIT 1`,
     [productId],
   );
@@ -693,8 +696,13 @@ const hydrateTicketLateChargeFromProduct = async (ticket, queryRunner) => {
       source[`lateChargeStage${i}EndDate`] ?? null;
   }
 
+  ticket.Late_Charge_Calc_Mode = normalizeLateChargeMode(
+    product.Late_Charge_Calc_Mode,
+  );
+
   await queryRunner.query(
     `UPDATE pawning_ticket SET
+       Late_Charge_Calc_Mode = ?,
        Late_charge_Presentage = ?, numberOfLateChargeStages = ?,
        lateChargeStage1 = ?, lateChargeStage2 = ?, lateChargeStage3 = ?, lateChargeStage4 = ?,
        lateChargeStage1StartDate = ?, lateChargeStage2StartDate = ?,
@@ -703,6 +711,7 @@ const hydrateTicketLateChargeFromProduct = async (ticket, queryRunner) => {
        lateChargeStage3EndDate = ?, lateChargeStage4EndDate = ?
      WHERE idPawning_Ticket = ?`,
     [
+      ticket.Late_Charge_Calc_Mode,
       ticket.Late_charge_Presentage,
       ticket.numberOfLateChargeStages,
       ticket.lateChargeStage1,
@@ -789,7 +798,12 @@ const processLateChargeStages = async (
 
   const skipAccounting = options.skipAccounting === true;
   const skipCustomerLogs = options.skipCustomerLogs === true;
-  const dueStages = stagesDueOnLateChargeDate(stages, today, maturityDate);
+  const dueStages = stagesDueOnLateChargeDate(
+    stages,
+    today,
+    maturityDate,
+    normalizeLateChargeMode(ticket.Late_Charge_Calc_Mode),
+  );
   if (dueStages.length === 0) return { inserted: false, amount: 0 };
 
   const dateStr = toDateStr(today);

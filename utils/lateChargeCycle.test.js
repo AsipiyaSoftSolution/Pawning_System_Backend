@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { stagesDueOnLateChargeDate } from "./lateChargeCycle.js";
+import {
+  DEFAULT_LATE_CHARGE_MODE,
+  LATE_CHARGE_MODES,
+  normalizeLateChargeMode,
+  stagesDueOnLateChargeDate,
+} from "./lateChargeCycle.js";
 
 const weekly = [
   { num: 1, startDay: 0, endDay: 7, rate: 0.5 },
@@ -9,6 +14,8 @@ const weekly = [
   { num: 4, startDay: 22, endDay: 0, rate: 2 },
 ];
 
+const MATURITY = "2026-04-01";
+
 function addDays(ymd, offset) {
   const [year, month, day] = ymd.split("-").map(Number);
   const date = new Date(year, month - 1, day);
@@ -16,95 +23,167 @@ function addDays(ymd, offset) {
   return date;
 }
 
-function due(stages, maturity, offset) {
+function due(stages, mode, offset, maturity = MATURITY) {
   return stagesDueOnLateChargeDate(
     stages,
     addDays(maturity, offset),
     maturity,
+    mode,
   );
 }
 
-/** Total percent owed after walking every day from maturity through `offset`. */
-function totalThrough(stages, maturity, offset) {
+/** Percent of the advance charged from maturity through `lastOffset`. */
+function percentThrough(stages, mode, lastOffset, maturity = MATURITY) {
   let percent = 0;
-  for (let day = 0; day <= offset; day += 1) {
-    for (const stage of due(stages, maturity, day)) percent += stage.rate;
+  for (let offset = 0; offset <= lastOffset; offset += 1) {
+    for (const stage of due(stages, mode, offset, maturity)) {
+      percent += stage.rate;
+    }
   }
   return percent;
 }
 
-test("the total steps up to the current week rate for all days since maturity", () => {
-  const maturity = "2026-09-24";
-  assert.equal(totalThrough(weekly, maturity, 0), 0.5);
-  assert.equal(totalThrough(weekly, maturity, 7), 0.5);
-  assert.equal(totalThrough(weekly, maturity, 8), 1);
-  assert.equal(totalThrough(weekly, maturity, 14), 1);
-  assert.equal(totalThrough(weekly, maturity, 15), 1.5);
-  assert.equal(totalThrough(weekly, maturity, 21), 1.5);
-  assert.equal(totalThrough(weekly, maturity, 22), 2);
-  assert.equal(totalThrough(weekly, maturity, 29), 2);
+const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} != ${b}`);
+
+test("mode names are validated and default to the original behaviour", () => {
+  assert.equal(DEFAULT_LATE_CHARGE_MODE, "once_then_daily");
+  assert.equal(normalizeLateChargeMode(undefined), "once_then_daily");
+  assert.equal(normalizeLateChargeMode(null), "once_then_daily");
+  assert.equal(normalizeLateChargeMode(""), "once_then_daily");
+  assert.equal(normalizeLateChargeMode("nonsense"), "once_then_daily");
+  assert.equal(normalizeLateChargeMode(" Step_Up_Monthly "), "step_up_monthly");
+  for (const mode of LATE_CHARGE_MODES) {
+    assert.equal(normalizeLateChargeMode(mode), mode);
+  }
 });
 
-test("only the difference is added when a stage begins", () => {
-  const maturity = "2026-09-24";
+test("a missing or unknown mode behaves as once_then_daily", () => {
   assert.deepEqual(
-    due(weekly, maturity, 0).map((s) => [s.num, s.rate]),
-    [[1, 0.5]],
+    due(weekly, undefined, 22).map((s) => s.num),
+    due(weekly, "once_then_daily", 22).map((s) => s.num),
   );
   assert.deepEqual(
-    due(weekly, maturity, 8).map((s) => [s.num, s.rate]),
-    [[2, 0.5]],
+    due(weekly, "garbage", 5).map((s) => s.num),
+    due(weekly, "once_then_daily", 5).map((s) => s.num),
   );
-  assert.deepEqual(
-    due(weekly, maturity, 15).map((s) => [s.num, s.rate]),
-    [[3, 0.5]],
-  );
-  assert.deepEqual(
-    due(weekly, maturity, 22).map((s) => [s.num, s.rate]),
-    [[4, 0.5]],
-  );
-  assert.deepEqual(due(weekly, maturity, 5), []);
-  assert.deepEqual(due(weekly, maturity, 25), []);
 });
 
-test("the cycle restarts on the monthly anniversary", () => {
-  const maturity = "2026-09-24";
-  // 24 Sep + 1 month = 24 Oct, which is 30 days after maturity.
-  assert.equal(due(weekly, maturity, 30)[0].num, 1);
-  assert.equal(due(weekly, maturity, 30)[0].rate, 0.5);
-  assert.equal(due(weekly, maturity, 38)[0].num, 2);
-  assert.equal(totalThrough(weekly, maturity, 59), 4);
+test("once_then_daily charges early stages once and the last stage daily", () => {
+  const mode = "once_then_daily";
+  assert.deepEqual(due(weekly, mode, 0).map((s) => [s.num, s.rate]), [[1, 0.5]]);
+  assert.deepEqual(due(weekly, mode, 3), []);
+  assert.deepEqual(due(weekly, mode, 8).map((s) => [s.num, s.rate]), [[2, 1]]);
+  assert.deepEqual(due(weekly, mode, 15).map((s) => [s.num, s.rate]), [[3, 1.5]]);
+  assert.deepEqual(due(weekly, mode, 22).map((s) => [s.num, s.rate]), [[4, 2]]);
+  assert.deepEqual(due(weekly, mode, 23).map((s) => [s.num, s.rate]), [[4, 2]]);
+  assert.deepEqual(due(weekly, mode, 90).map((s) => [s.num, s.rate]), [[4, 2]]);
+  // 0.5 + 1 + 1.5 once, then 2 each day from day 22 to day 29.
+  close(percentThrough(weekly, mode, 29), 3 + 2 * 8);
 });
 
-test("missing start days are taken from the previous end day", () => {
+test("daily_per_stage charges the covering stage's full rate every day", () => {
+  const mode = "daily_per_stage";
+  assert.deepEqual(due(weekly, mode, 0).map((s) => [s.num, s.rate]), [[1, 0.5]]);
+  assert.deepEqual(due(weekly, mode, 7).map((s) => [s.num, s.rate]), [[1, 0.5]]);
+  assert.deepEqual(due(weekly, mode, 8).map((s) => [s.num, s.rate]), [[2, 1]]);
+  assert.deepEqual(due(weekly, mode, 14).map((s) => [s.num, s.rate]), [[2, 1]]);
+  assert.deepEqual(due(weekly, mode, 15).map((s) => [s.num, s.rate]), [[3, 1.5]]);
+  assert.deepEqual(due(weekly, mode, 22).map((s) => [s.num, s.rate]), [[4, 2]]);
+  assert.deepEqual(due(weekly, mode, 120).map((s) => [s.num, s.rate]), [[4, 2]]);
+  // 8 days at 0.5, 7 at 1, 7 at 1.5, then 2 on days 22 and 23.
+  close(percentThrough(weekly, mode, 23), 8 * 0.5 + 7 * 1 + 7 * 1.5 + 2 * 2);
+});
+
+test("step_up_monthly adds only the increase and restarts each month", () => {
+  const mode = "step_up_monthly";
+  assert.deepEqual(due(weekly, mode, 0).map((s) => [s.num, s.rate]), [[1, 0.5]]);
+  assert.deepEqual(due(weekly, mode, 3), []);
+  assert.deepEqual(due(weekly, mode, 8).map((s) => [s.num, s.rate]), [[2, 0.5]]);
+  assert.deepEqual(due(weekly, mode, 15).map((s) => [s.num, s.rate]), [[3, 0.5]]);
+  assert.deepEqual(due(weekly, mode, 22).map((s) => [s.num, s.rate]), [[4, 0.5]]);
+  assert.deepEqual(due(weekly, mode, 29), []);
+  // Total owed reaches each stage's rate: 0.5, 1, 1.5, 2.
+  close(percentThrough(weekly, mode, 7), 0.5);
+  close(percentThrough(weekly, mode, 14), 1);
+  close(percentThrough(weekly, mode, 21), 1.5);
+  close(percentThrough(weekly, mode, 29), 2);
+  // The month restarts on the anniversary (April 1 -> May 1 is 30 days).
+  assert.deepEqual(due(weekly, mode, 30).map((s) => [s.num, s.rate]), [[1, 0.5]]);
+  close(percentThrough(weekly, mode, 59), 4);
+});
+
+test("step_up_monthly never charges a negative step", () => {
+  const stages = [
+    { num: 1, startDay: 0, endDay: 6, rate: 2 },
+    { num: 2, startDay: 7, endDay: 0, rate: 1 },
+  ];
+  assert.deepEqual(due(stages, "step_up_monthly", 0).map((s) => s.rate), [2]);
+  assert.deepEqual(due(stages, "step_up_monthly", 7), []);
+});
+
+test("split_monthly spreads each stage rate over its days", () => {
+  const mode = "split_monthly";
+  const day0 = due(weekly, mode, 0)[0];
+  const day7 = due(weekly, mode, 7)[0];
+  const day8 = due(weekly, mode, 8)[0];
+  const day22 = due(weekly, mode, 22)[0];
+  assert.equal(day0.num, 1);
+  close(day0.rate, 0.5 / 8);
+  assert.equal(day7.num, 1);
+  assert.equal(day8.num, 2);
+  close(day8.rate, 1 / 7);
+  assert.equal(day22.num, 4);
+  close(day22.rate, 2 / 8);
+  assert.equal(due(weekly, mode, 29)[0].num, 4);
+  assert.equal(due(weekly, mode, 30)[0].num, 1);
+  // One full 30-day month adds 0.5 + 1 + 1.5 + 2.
+  close(percentThrough(weekly, mode, 29), 5);
+});
+
+test("missing start days are taken from the previous end day in every mode", () => {
   const stages = [
     { num: 1, startDay: 0, endDay: 7, rate: 0.5 },
     { num: 2, startDay: 0, endDay: 14, rate: 1 },
     { num: 3, startDay: 0, endDay: 21, rate: 1.5 },
     { num: 4, startDay: 0, endDay: 0, rate: 2 },
   ];
-  const maturity = "2026-04-01";
-  assert.equal(due(stages, maturity, 8)[0].num, 2);
-  assert.equal(due(stages, maturity, 15)[0].num, 3);
-  assert.equal(due(stages, maturity, 22)[0].num, 4);
+  for (const mode of LATE_CHARGE_MODES) {
+    assert.ok(due(stages, mode, 8).length > 0, `${mode} day 8`);
+    assert.equal(due(stages, mode, 8)[0].num, 2, `${mode} day 8 stage`);
+    assert.equal(due(stages, mode, 15)[0].num, 3, `${mode} day 15 stage`);
+    assert.equal(due(stages, mode, 22)[0].num, 4, `${mode} day 22 stage`);
+  }
 });
 
-test("a lower later stage never adds a negative charge", () => {
-  const stages = [
-    { num: 1, startDay: 0, endDay: 7, rate: 1 },
-    { num: 2, startDay: 8, endDay: 0, rate: 0.5 },
-  ];
-  assert.deepEqual(due(stages, "2026-04-01", 8), []);
-});
-
-test("a single stage stays a daily charge", () => {
+test("a single stage is a daily charge in every mode", () => {
   const daily = [{ num: 1, startDay: 0, endDay: 0, rate: 0.0667 }];
-  const maturity = "2026-04-01";
-  assert.equal(due(daily, maturity, 0)[0].rate, 0.0667);
-  assert.equal(due(daily, maturity, 29)[0].rate, 0.0667);
-  assert.equal(due(daily, maturity, 40)[0].rate, 0.0667);
+  for (const mode of LATE_CHARGE_MODES) {
+    for (const offset of [0, 1, 29, 30, 120]) {
+      const charged = due(daily, mode, offset);
+      assert.equal(charged.length, 1, `${mode} day ${offset}`);
+      assert.equal(charged[0].rate, 0.0667);
+    }
+  }
 });
 
-test("no charge before the maturity date", () => {
-  assert.deepEqual(due(weekly, "2026-04-01", -1), []);
+test("a single stage honours its start day", () => {
+  const delayed = [{ num: 1, startDay: 3, endDay: 0, rate: 1 }];
+  assert.deepEqual(due(delayed, "once_then_daily", 2), []);
+  assert.equal(due(delayed, "once_then_daily", 3).length, 1);
+});
+
+test("no charge before the maturity date in any mode", () => {
+  for (const mode of LATE_CHARGE_MODES) {
+    assert.deepEqual(due(weekly, mode, -1), [], mode);
+  }
+});
+
+test("a zero rate stage charges nothing", () => {
+  const stages = [
+    { num: 1, startDay: 0, endDay: 7, rate: 0 },
+    { num: 2, startDay: 8, endDay: 0, rate: 1 },
+  ];
+  assert.deepEqual(due(stages, "once_then_daily", 0), []);
+  assert.deepEqual(due(stages, "daily_per_stage", 0), []);
+  assert.deepEqual(due(stages, "split_monthly", 0), []);
 });

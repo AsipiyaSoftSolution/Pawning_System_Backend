@@ -5,6 +5,7 @@ import {
   isUntilSettlement,
   isValidInterestMethod,
 } from "./pawningProductConstants.js";
+import { LATE_CHARGE_MODES } from "./lateChargeCycle.js";
 
 const MAX_STAGES = 4;
 
@@ -140,6 +141,20 @@ export const validatePawningProductPayload = (data) => {
   if (!isValidInterestMethod(data.interestMethod)) {
     errors.push(
       `Interest method must be "${INTEREST_METHOD_PERIOD}" or "${INTEREST_METHOD_AMOUNT}".`,
+    );
+  }
+
+  // Optional: omitted means "keep the current mode" on update and the default
+  // on create. A value that is present must be one we know how to calculate.
+  const calcMode = data.lateCharge?.calcMode;
+  if (
+    calcMode !== undefined &&
+    calcMode !== null &&
+    calcMode !== "" &&
+    !LATE_CHARGE_MODES.includes(String(calcMode).trim().toLowerCase())
+  ) {
+    errors.push(
+      `Late charge calculation mode must be one of: ${LATE_CHARGE_MODES.join(", ")}.`,
     );
   }
 

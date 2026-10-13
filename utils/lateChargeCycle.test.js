@@ -24,32 +24,56 @@ function due(stages, maturity, offset) {
   );
 }
 
-test("a week rate is split across the days in that stage", () => {
-  const maturity = "2026-04-01";
-  const day0 = due(weekly, maturity, 0)[0];
-  const day7 = due(weekly, maturity, 7)[0];
-  const day8 = due(weekly, maturity, 8)[0];
-  const day22 = due(weekly, maturity, 22)[0];
-  const day29 = due(weekly, maturity, 29)[0];
-  const day30 = due(weekly, maturity, 30)[0];
-
-  assert.equal(day0.num, 1);
-  assert.equal(day0.divisor, 8);
-  assert.equal(day7.num, 1);
-  assert.equal(day7.divisor, 8);
-  assert.equal(day8.num, 2);
-  assert.equal(day8.divisor, 7);
-  assert.equal(day22.num, 4);
-  assert.equal(day22.divisor, 8);
-  assert.equal(day29.num, 4);
-  assert.equal(day30.num, 1);
-
+/** Total percent owed after walking every day from maturity through `offset`. */
+function totalThrough(stages, maturity, offset) {
   let percent = 0;
-  for (let offset = 0; offset < 30; offset += 1) {
-    const stage = due(weekly, maturity, offset)[0];
-    percent += stage.rate / stage.divisor;
+  for (let day = 0; day <= offset; day += 1) {
+    for (const stage of due(stages, maturity, day)) percent += stage.rate;
   }
-  assert.ok(Math.abs(percent - 5) < 0.000001);
+  return percent;
+}
+
+test("the total steps up to the current week rate for all days since maturity", () => {
+  const maturity = "2026-09-24";
+  assert.equal(totalThrough(weekly, maturity, 0), 0.5);
+  assert.equal(totalThrough(weekly, maturity, 7), 0.5);
+  assert.equal(totalThrough(weekly, maturity, 8), 1);
+  assert.equal(totalThrough(weekly, maturity, 14), 1);
+  assert.equal(totalThrough(weekly, maturity, 15), 1.5);
+  assert.equal(totalThrough(weekly, maturity, 21), 1.5);
+  assert.equal(totalThrough(weekly, maturity, 22), 2);
+  assert.equal(totalThrough(weekly, maturity, 29), 2);
+});
+
+test("only the difference is added when a stage begins", () => {
+  const maturity = "2026-09-24";
+  assert.deepEqual(
+    due(weekly, maturity, 0).map((s) => [s.num, s.rate]),
+    [[1, 0.5]],
+  );
+  assert.deepEqual(
+    due(weekly, maturity, 8).map((s) => [s.num, s.rate]),
+    [[2, 0.5]],
+  );
+  assert.deepEqual(
+    due(weekly, maturity, 15).map((s) => [s.num, s.rate]),
+    [[3, 0.5]],
+  );
+  assert.deepEqual(
+    due(weekly, maturity, 22).map((s) => [s.num, s.rate]),
+    [[4, 0.5]],
+  );
+  assert.deepEqual(due(weekly, maturity, 5), []);
+  assert.deepEqual(due(weekly, maturity, 25), []);
+});
+
+test("the cycle restarts on the monthly anniversary", () => {
+  const maturity = "2026-09-24";
+  // 24 Sep + 1 month = 24 Oct, which is 30 days after maturity.
+  assert.equal(due(weekly, maturity, 30)[0].num, 1);
+  assert.equal(due(weekly, maturity, 30)[0].rate, 0.5);
+  assert.equal(due(weekly, maturity, 38)[0].num, 2);
+  assert.equal(totalThrough(weekly, maturity, 59), 4);
 });
 
 test("missing start days are taken from the previous end day", () => {
@@ -65,12 +89,20 @@ test("missing start days are taken from the previous end day", () => {
   assert.equal(due(stages, maturity, 22)[0].num, 4);
 });
 
-test("a single stage stays a daily charge and is not divided", () => {
+test("a lower later stage never adds a negative charge", () => {
+  const stages = [
+    { num: 1, startDay: 0, endDay: 7, rate: 1 },
+    { num: 2, startDay: 8, endDay: 0, rate: 0.5 },
+  ];
+  assert.deepEqual(due(stages, "2026-04-01", 8), []);
+});
+
+test("a single stage stays a daily charge", () => {
   const daily = [{ num: 1, startDay: 0, endDay: 0, rate: 0.0667 }];
   const maturity = "2026-04-01";
-  assert.equal(due(daily, maturity, 0)[0].divisor, 1);
-  assert.equal(due(daily, maturity, 29)[0].divisor, 1);
-  assert.equal(due(daily, maturity, 40)[0].num, 1);
+  assert.equal(due(daily, maturity, 0)[0].rate, 0.0667);
+  assert.equal(due(daily, maturity, 29)[0].rate, 0.0667);
+  assert.equal(due(daily, maturity, 40)[0].rate, 0.0667);
 });
 
 test("no charge before the maturity date", () => {

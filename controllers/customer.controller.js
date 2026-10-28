@@ -10,6 +10,51 @@ import {
 import { getRequestAccessToken } from "../utils/requestAuth.js";
 import { parse } from "path";
 
+async function loadAccountCenterCustomerNotes(accountCenterCusId) {
+  const empty = {
+    currentNotesBySystem: {},
+    noteHistory: [],
+    latestPawningNote: null,
+  };
+  if (!accountCenterCusId) return empty;
+
+  try {
+    const [rows] = await pool2.query(
+      `SELECT n.idCustomer_Note, n.Note, n.Asipiya_Software, n.action, n.created_at,
+              u.full_name AS userName
+       FROM customer_note n
+       LEFT JOIN user u ON u.idUser = n.Company_User_idCompany_User
+       WHERE n.Company_Customer_idCompany_Customer = ?
+       ORDER BY n.created_at DESC, n.idCustomer_Note DESC`,
+      [accountCenterCusId],
+    );
+    const noteHistory = rows.map((row) => ({
+      id: row.idCustomer_Note,
+      note: row.Note,
+      asipiyaSoftware: row.Asipiya_Software,
+      action: row.action,
+      createdAt: row.created_at,
+      userName: row.userName || null,
+    }));
+    const currentNotesBySystem = {};
+    for (const item of noteHistory) {
+      const key = String(item.asipiyaSoftware || "").trim().toLowerCase();
+      if (!key || currentNotesBySystem[key]) continue;
+      currentNotesBySystem[key] = item;
+    }
+    return {
+      currentNotesBySystem,
+      noteHistory,
+      latestPawningNote: currentNotesBySystem.pawning?.note || null,
+    };
+  } catch (error) {
+    if (error?.code !== "ER_NO_SUCH_TABLE") {
+      console.warn("Could not load customer notes:", error?.message);
+    }
+    return empty;
+  }
+}
+
 const customerLog = async (idCustomer, date, type, Description, userId) => {
   try {
     // customer_log lives in Account Center as company_customer_log (pool2)
@@ -902,10 +947,30 @@ export const getCustomerById = async (req, res, next) => {
       }
     }
 
+    const storedNotes = await loadAccountCenterCustomerNotes(
+      pawningCustomer.accountCenterCusId,
+    );
+    const apiNotes = accCenterCustomerData?.currentNotesBySystem || {};
+    const currentNotesBySystem =
+      Object.keys(storedNotes.currentNotesBySystem).length > 0
+        ? storedNotes.currentNotesBySystem
+        : apiNotes;
+    const noteHistory =
+      storedNotes.noteHistory.length > 0
+        ? storedNotes.noteHistory
+        : accCenterCustomerData?.noteHistory || [];
+
     // Merge ACC Center data with pawning-specific data
     const customer = {
       // Spread all account center fields first (if available)
       ...(accCenterCustomerData || {}),
+      currentNotesBySystem,
+      noteHistory,
+      Customer_Note:
+        currentNotesBySystem.pawning?.note ??
+        storedNotes.latestPawningNote ??
+        accCenterCustomerData?.Customer_Note ??
+        null,
       // Override/add pawning-specific fields
       idCustomer: pawningCustomer.idCustomer, // Primary ID (pawning customer ID)
       accountCenterCusId: pawningCustomer.accountCenterCusId,

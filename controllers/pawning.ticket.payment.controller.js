@@ -1645,9 +1645,10 @@ export const createTicketSettlementPayment = async (req, res, next) => {
     // Get connections from both pools
     connection = await pool.getConnection();
 
-    // Start transactions on both connections
-    await connection.beginTransaction();
+    // Prepare Account Center token before opening the local transaction
+    // (same pattern as part payment) so a slow AC/Redis call does not hold locks.
     let pawningCommitted = false;
+    let txnStarted = false;
     let createdTicketPaymentId;
 
     try {
@@ -1658,14 +1659,12 @@ export const createTicketSettlementPayment = async (req, res, next) => {
       );
 
       if (existingTicket.length === 0) {
-        await connection.rollback();
         connection.release();
         return next(errorHandler(404, "No ticket found for the given ID"));
       }
 
       // check if ticket is already settled
       if (existingTicket[0].Status === "2") {
-        await connection.rollback();
         connection.release();
         return next(errorHandler(400, "Ticket is already settled"));
       }
@@ -1677,7 +1676,6 @@ export const createTicketSettlementPayment = async (req, res, next) => {
       );
 
       if (ticketLog.length === 0) {
-        await connection.rollback();
         connection.release();
         return next(
           errorHandler(500, "No ticket log found for the given ticket"),
@@ -1731,7 +1729,6 @@ export const createTicketSettlementPayment = async (req, res, next) => {
       );
       const isMigratedTicket = migratedRows.length > 0;
       if (customRequested && !isMigratedTicket) {
-        await connection.rollback();
         connection.release();
         return next(
           errorHandler(
@@ -1747,7 +1744,6 @@ export const createTicketSettlementPayment = async (req, res, next) => {
         !Number.isFinite(payAmount) ||
         payAmount + 0.005 < roundMoney(settlementAmountRequired)
       ) {
-        await connection.rollback();
         connection.release();
         return next(
           errorHandler(
@@ -1818,7 +1814,6 @@ export const createTicketSettlementPayment = async (req, res, next) => {
           const raw = rawAmounts[key] ?? 0;
           const n = roundMoney(raw);
           if (!Number.isFinite(Number(raw)) || n < 0) {
-            await connection.rollback();
             connection.release();
             return next(
               errorHandler(400, `${label} must be zero or a positive amount`),
@@ -1833,7 +1828,6 @@ export const createTicketSettlementPayment = async (req, res, next) => {
           req.body?.customSettlementReason ?? "",
         ).trim();
         if (differs && customSettlementReason.length < 3) {
-          await connection.rollback();
           connection.release();
           return next(
             errorHandler(
@@ -1866,7 +1860,6 @@ export const createTicketSettlementPayment = async (req, res, next) => {
             systemSettlement.earlySettlement,
         );
         if (cashCollected <= 0 && recordedTotal <= 0) {
-          await connection.rollback();
           connection.release();
           return next(errorHandler(400, "There is no balance to settle"));
         }
@@ -1915,7 +1908,6 @@ export const createTicketSettlementPayment = async (req, res, next) => {
       remainingPayment = result.remaining;
 
       if (remainingPayment > 0.005) {
-        await connection.rollback();
         connection.release();
         return next(
           errorHandler(
@@ -1960,6 +1952,26 @@ export const createTicketSettlementPayment = async (req, res, next) => {
         currentReceiptBookNumber,
         currentVoucherNumber,
       };
+
+      try {
+        const prep =
+          await pawningPaymentsApi.prepareTicketPaymentsDoubleEntries(
+            data,
+            req.accessToken,
+          );
+        prepareToken = prep.prepareToken;
+      } catch (error) {
+        connection.release();
+        const status = error?.status || error?.response?.status || 500;
+        const message =
+          error?.response?.message ||
+          error?.message ||
+          "Failed to prepare ticket settlement payment accounting";
+        return next(errorHandler(status, message));
+      }
+
+      await connection.beginTransaction();
+      txnStarted = true;
 
       // insert into the payment table (pool)
       const [ticketPaymentResult] = await connection.query(
@@ -2058,23 +2070,6 @@ export const createTicketSettlementPayment = async (req, res, next) => {
         throw errorHandler(500, "Failed to update ticket status");
       }
 
-      // Prepare AC payload as late as possible so prepareToken does not expire.
-      try {
-        const prep =
-          await pawningPaymentsApi.prepareTicketPaymentsDoubleEntries(
-            data,
-            req.accessToken,
-          );
-        prepareToken = prep.prepareToken;
-      } catch (error) {
-        const status = error?.status || error?.response?.status || 500;
-        const message =
-          error?.response?.message ||
-          error?.message ||
-          "Failed to prepare ticket settlement payment accounting";
-        throw errorHandler(status, message);
-      }
-
       // Commit local pawning transaction first
       await connection.commit();
       pawningCommitted = true;
@@ -2157,8 +2152,10 @@ export const createTicketSettlementPayment = async (req, res, next) => {
         printData,
       });
     } catch (innerError) {
-      if (!pawningCommitted) {
+      if (!pawningCommitted && txnStarted) {
         await connection.rollback();
+      }
+      if (!pawningCommitted) {
         await abortPawningPaymentPrepare(prepareToken, req.accessToken);
       }
       connection.release();
@@ -2179,7 +2176,11 @@ export const createTicketSettlementPayment = async (req, res, next) => {
     }
   } catch (error) {
     if (connection) {
-      await connection.rollback();
+      try {
+        await connection.rollback();
+      } catch {
+        /* connection may not be in a transaction yet */
+      }
       connection.release();
     }
     console.error("Error creating settlement payment for ticket:", error);

@@ -60,6 +60,7 @@ export const accCenterPost = async (endpoint, data, accessToken) => {
       apiError.response = error.response.data;
       throw apiError;
     } else if (error.request) {
+      console.log("ACC Center API request made but no response received:", error);
       // Request was made but no response received
       const networkError = new Error("ACC Center API is not reachable");
       networkError.status = 503;

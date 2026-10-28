@@ -5,7 +5,7 @@ import axios from "axios";
  * @param {string} accessToken - The JWT access token from cookies
  * @returns {axios.AxiosInstance} Configured axios instance
  */
-export const createAccCenterApiClient = (accessToken) => {
+export const createAccCenterApiClient = (accessToken, options = {}) => {
   const baseURL = process.env.ACCOUNT_CENTER_API_URL;
 
   if (!baseURL) {
@@ -29,12 +29,44 @@ export const createAccCenterApiClient = (accessToken) => {
     );
   }
 
+  const timeout =
+    Number(options.timeout) > 0
+      ? Number(options.timeout)
+      : Number(process.env.ACCOUNT_CENTER_API_TIMEOUT_MS) || 30000;
+
   return axios.create({
     baseURL,
-    timeout: 30000, // 30 seconds
+    timeout,
     headers,
   });
 };
+
+function mapAccCenterRequestError(error) {
+  if (error.response) {
+    const apiError = new Error(
+      error.response.data?.message || "ACC Center API request failed",
+    );
+    apiError.status = error.response.status;
+    apiError.response = error.response.data;
+    return apiError;
+  }
+
+  if (error.request) {
+    const timedOut =
+      error.code === "ECONNABORTED" ||
+      /timeout/i.test(String(error.message || ""));
+    const networkError = new Error(
+      timedOut
+        ? "Account Center request timed out. Please retry the payment."
+        : "ACC Center API is not reachable",
+    );
+    networkError.status = 503;
+    networkError.code = error.code;
+    return networkError;
+  }
+
+  return error;
+}
 
 /**
  * Make a POST request to ACC Center API
@@ -44,31 +76,19 @@ export const createAccCenterApiClient = (accessToken) => {
  * @returns {Promise<any>} The response data
  * @throws {Error} If the request fails
  */
-export const accCenterPost = async (endpoint, data, accessToken) => {
+export const accCenterPost = async (endpoint, data, accessToken, options = {}) => {
   try {
-    const apiClient = createAccCenterApiClient(accessToken);
+    const apiClient = createAccCenterApiClient(accessToken, options);
     const response = await apiClient.post(endpoint, data);
     return response.data;
   } catch (error) {
-    // Re-throw with more context for better error handling
-    if (error.response) {
-      // ACC Center API returned an error response
-      const apiError = new Error(
-        error.response.data?.message || "ACC Center API request failed",
+    if (error.request && !error.response) {
+      console.log(
+        "ACC Center API request made but no response received:",
+        error,
       );
-      apiError.status = error.response.status;
-      apiError.response = error.response.data;
-      throw apiError;
-    } else if (error.request) {
-      console.log("ACC Center API request made but no response received:", error);
-      // Request was made but no response received
-      const networkError = new Error("ACC Center API is not reachable");
-      networkError.status = 503;
-      throw networkError;
-    } else {
-      // Other errors (configuration, etc.)
-      throw error;
     }
+    throw mapAccCenterRequestError(error);
   }
 };
 
@@ -79,26 +99,13 @@ export const accCenterPost = async (endpoint, data, accessToken) => {
  * @returns {Promise<any>} The response data
  * @throws {Error} If the request fails
  */
-export const accCenterGet = async (endpoint, accessToken) => {
+export const accCenterGet = async (endpoint, accessToken, options = {}) => {
   try {
-    const apiClient = createAccCenterApiClient(accessToken);
+    const apiClient = createAccCenterApiClient(accessToken, options);
     const response = await apiClient.get(endpoint);
     return response.data;
   } catch (error) {
-    if (error.response) {
-      const apiError = new Error(
-        error.response.data?.message || "ACC Center API request failed",
-      );
-      apiError.status = error.response.status;
-      apiError.response = error.response.data;
-      throw apiError;
-    } else if (error.request) {
-      const networkError = new Error("ACC Center API is not reachable");
-      networkError.status = 503;
-      throw networkError;
-    } else {
-      throw error;
-    }
+    throw mapAccCenterRequestError(error);
   }
 };
 
@@ -110,26 +117,13 @@ export const accCenterGet = async (endpoint, accessToken) => {
  * @returns {Promise<any>} The response data
  * @throws {Error} If the request fails
  */
-export const accCenterPut = async (endpoint, data, accessToken) => {
+export const accCenterPut = async (endpoint, data, accessToken, options = {}) => {
   try {
-    const apiClient = createAccCenterApiClient(accessToken);
+    const apiClient = createAccCenterApiClient(accessToken, options);
     const response = await apiClient.put(endpoint, data);
     return response.data;
   } catch (error) {
-    if (error.response) {
-      const apiError = new Error(
-        error.response.data?.message || "ACC Center API request failed",
-      );
-      apiError.status = error.response.status;
-      apiError.response = error.response.data;
-      throw apiError;
-    } else if (error.request) {
-      const networkError = new Error("ACC Center API is not reachable");
-      networkError.status = 503;
-      throw networkError;
-    } else {
-      throw error;
-    }
+    throw mapAccCenterRequestError(error);
   }
 };
 
@@ -140,25 +134,12 @@ export const accCenterPut = async (endpoint, data, accessToken) => {
  * @returns {Promise<any>} The response data
  * @throws {Error} If the request fails
  */
-export const accCenterDelete = async (endpoint, accessToken) => {
+export const accCenterDelete = async (endpoint, accessToken, options = {}) => {
   try {
-    const apiClient = createAccCenterApiClient(accessToken);
+    const apiClient = createAccCenterApiClient(accessToken, options);
     const response = await apiClient.delete(endpoint);
     return response.data;
   } catch (error) {
-    if (error.response) {
-      const apiError = new Error(
-        error.response.data?.message || "ACC Center API request failed",
-      );
-      apiError.status = error.response.status;
-      apiError.response = error.response.data;
-      throw apiError;
-    } else if (error.request) {
-      const networkError = new Error("ACC Center API is not reachable");
-      networkError.status = 503;
-      throw networkError;
-    } else {
-      throw error;
-    }
+    throw mapAccCenterRequestError(error);
   }
 };

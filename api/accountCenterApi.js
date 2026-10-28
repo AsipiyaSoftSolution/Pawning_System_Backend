@@ -280,6 +280,10 @@ export const subsystemApi = {
     ),
 };
 
+// Ticket payment prepare/commit can wait on Redis + journals; use a longer budget.
+const PAWNING_PAYMENT_AC_TIMEOUT_MS =
+  Number(process.env.PAWNING_PAYMENT_AC_TIMEOUT_MS) || 90000;
+
 // Pawning Payments
 export const pawningPaymentsApi = {
   /** Phase 1: Account Center validates and stores payload; no journal posted yet. */
@@ -288,6 +292,7 @@ export const pawningPaymentsApi = {
       "/double-entries/pawning-ticket-payments-double-entries/prepare",
       data,
       accessToken,
+      { timeout: PAWNING_PAYMENT_AC_TIMEOUT_MS },
     ),
 
   /** Phase 2: Post journals after Pawning DB commit (same payload as prepare). */
@@ -296,6 +301,7 @@ export const pawningPaymentsApi = {
       "/double-entries/pawning-ticket-payments-double-entries/commit",
       { prepareToken },
       accessToken,
+      { timeout: PAWNING_PAYMENT_AC_TIMEOUT_MS },
     ),
 
   /** Drop prepare token without posting (Pawning rolled back). */
@@ -304,6 +310,7 @@ export const pawningPaymentsApi = {
       "/double-entries/pawning-ticket-payments-double-entries/abort",
       { prepareToken },
       accessToken,
+      { timeout: PAWNING_PAYMENT_AC_TIMEOUT_MS },
     ),
 
   ticketInterestDoubleEntries: (data, accessToken) => {
